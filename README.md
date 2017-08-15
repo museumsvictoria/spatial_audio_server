@@ -1,6 +1,6 @@
 # Beyond Perception - audio_server
 
-An Audio Server for Scienceworks' Beyond Perception Exhibition
+An Audio Server and GUI for Scienceworks' Beyond Perception Exhibition.
 
 
 ## Overview
@@ -27,7 +27,7 @@ The audio server runs on a single machine and is responsible for the following:
 - Audio Analysis - Over network to target installation computers via OSC
 
 
-## Code - Rust
+## Rust
 
 All code is written in [The Rust Programming
 Language](https://www.rust-lang.org/) for real-time performance, memory safety,
