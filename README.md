@@ -14,6 +14,8 @@ The audio server runs on a single machine and is responsible for the following:
 - Runs the generative audio system.
 - Runs the control GUI.
 
+View the [Data Flow Overview here](https://drive.google.com/file/d/0BxN4WMjkFY_cM2R5WTM2dmx2V0U/view?usp=sharing).
+
 ### INPUTS
 
 - Installation Interactions:
