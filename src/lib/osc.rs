@@ -1,6 +1,6 @@
 
 pub mod input {
-    use interaction::Interaction;
+    use interaction::{self, Interaction};
     use rosc::{self, OscMessage, OscPacket};
     use std;
     use std::net::{UdpSocket, SocketAddr, SocketAddrV4};
@@ -11,17 +11,14 @@ pub mod input {
         -> (mpsc::Receiver<(SocketAddr, OscMessage)>, mpsc::Receiver<Interaction>)
     {
         let (msg_tx, msg_rx) = mpsc::channel();
-        let (interaction_tx, interaction_rx) = mpsc::channel();
+        let (interaction_gui_tx, interaction_gui_rx) = mpsc::channel();
+        //let (interaction_tx, interaction_rx) = mpsc::channel();
 
         std::thread::Builder::new()
             .name("osc_in".into())
             .spawn(move || {
-
                 let socket = UdpSocket::bind(addr).unwrap();
-                println!("Listening to {}", addr);
-
                 let mut buffer = [0u8; rosc::decoder::MTU];
-
                 loop {
                     let (size, addr) = match socket.recv_from(&mut buffer) {
                         Ok(ok) => ok,
@@ -47,18 +44,22 @@ pub mod input {
                     };
 
                     // Forward messages to GUI thread for displaying in the log.
-                    //
-                    // No worries if the GUI channel is closed, the interaction channel is the one
-                    // we care about most.
-                    msg_tx.send((addr, message)).ok();
+                    msg_tx.send((addr, message.clone())).ok();
 
-                    // TODO: OSC -> Interaction
+                    // OSC -> Interaction
+                    let interaction = match interaction::from_osc(&message) {
+                        Some(interaction) => interaction,
+                        None => continue,
+                    };
+
+                    // Forward interactions to the GUI thread for displaying in the log.
+                    interaction_gui_tx.send(interaction).ok();
                 }
 
             })
             .unwrap();
 
-        (msg_rx, interaction_rx)
+        (msg_rx, interaction_gui_rx)
     }
 }
 

@@ -6,6 +6,7 @@ use conrod::backend::glium::{glium, Renderer};
 use conrod::event::Input;
 use conrod::render::OwnedPrimitives;
 use image;
+use interaction::Interaction;
 use metres::Metres;
 use rosc::OscMessage;
 use std;
@@ -30,6 +31,7 @@ struct Gui<'a> {
 /// Messages received by the GUI thread.
 pub enum Message {
     Osc(SocketAddr, OscMessage),
+    Interaction(Interaction),
     Input(Input),
 }
 
@@ -38,11 +40,14 @@ struct State {
     config: Config,
     // The camera over the 2D floorplan.
     camera: Camera,
-    // A log of the most recently received OSC messages (for testing/debugging/monitoring).
+    // A log of the most recently received OSC messages for testing/debugging/monitoring.
     osc_log: OscLog,
+    // A log of the most recently received Interactions for testing/debugging/monitoring.
+    interaction_log: InteractionLog,
     // Menu states.
     side_menu_is_open: bool,
     osc_log_is_open: bool,
+    interaction_log_is_open: bool,
 }
 
 impl<'a> Deref for Gui<'a> {
@@ -96,15 +101,6 @@ struct Camera {
     zoom: Scalar,
 }
 
-struct OscLog {
-    // Newest to oldest is stored front to back respectively.
-    deque: VecDeque<(SocketAddr, OscMessage)>,
-    // The index of the oldest message currently stored in the deque.
-    start_index: usize,
-    // The max number of messages stored in the log at one time.
-    limit: usize,
-}
-
 impl Camera {
     /// Convert from metres to the GUI scalar value.
     fn metres_to_scalar(&self, Metres(metres): Metres) -> Scalar {
@@ -117,10 +113,22 @@ impl Camera {
     }
 }
 
-impl OscLog {
+struct Log<T> {
+    // Newest to oldest is stored front to back respectively.
+    deque: VecDeque<T>,
+    // The index of the oldest message currently stored in the deque.
+    start_index: usize,
+    // The max number of messages stored in the log at one time.
+    limit: usize,
+}
+
+type OscLog = Log<(SocketAddr, OscMessage)>;
+type InteractionLog = Log<Interaction>;
+
+impl<T> Log<T> {
     // Construct an OscLog that stores the given max number of messages.
     fn with_limit(limit: usize) -> Self {
-        OscLog {
+        Log {
             deque: VecDeque::new(),
             start_index: 0,
             limit,
@@ -128,14 +136,16 @@ impl OscLog {
     }
 
     // Push a new OSC message to the log.
-    fn push_msg(&mut self, addr: SocketAddr, msg: OscMessage) {
-        self.deque.push_front((addr, msg));
+    fn push_msg(&mut self, msg: T) {
+        self.deque.push_front(msg);
         while self.deque.len() > self.limit {
             self.deque.pop_back();
             self.start_index += 1;
         }
     }
+}
 
+impl OscLog {
     // Format the log in a single string of messages.
     fn format(&self) -> String {
         let mut s = String::new();
@@ -157,8 +167,22 @@ impl OscLog {
     }
 }
 
-impl Deref for OscLog {
-    type Target = VecDeque<(SocketAddr, OscMessage)>;
+impl InteractionLog {
+    // Format the log in a single string of messages.
+    fn format(&self) -> String {
+        let mut s = String::new();
+        let mut index = self.start_index + self.deque.len();
+        for &interaction in &self.deque {
+            let line = format!("{}: {:?}\n", index, interaction);
+            s.push_str(&line);
+            index -= 1;
+        }
+        s
+    }
+}
+
+impl<T> Deref for Log<T> {
+    type Target = VecDeque<T>;
     fn deref(&self) -> &Self::Target {
         &self.deque
     }
@@ -209,6 +233,7 @@ pub fn spawn(
     display: &glium::Display,
     events_loop_proxy: glium::glutin::EventsLoopProxy,
     osc_msg_rx: mpsc::Receiver<(SocketAddr, OscMessage)>,
+    interaction_rx: mpsc::Receiver<Interaction>,
 ) -> (Renderer, ImageMap, mpsc::Sender<Message>, mpsc::Receiver<OwnedPrimitives>) {
     // Use the width and height of the display as the initial size for the Ui.
     let (display_w, display_h) = display.gl_window().get_inner_size_points().unwrap();
@@ -239,9 +264,11 @@ pub fn spawn(
             position: cgmath::Point2 { x: Metres(0.0), y: Metres(0.0) },
             zoom: 0.0,
         },
-        osc_log: OscLog::with_limit(config.osc_log_limit),
+        osc_log: Log::with_limit(config.osc_log_limit),
+        interaction_log: Log::with_limit(config.interaction_log_limit),
         side_menu_is_open: true,
         osc_log_is_open: true,
+        interaction_log_is_open: true,
     };
 
     // A renderer from conrod primitives to the OpenGL display.
@@ -258,6 +285,19 @@ pub fn spawn(
         .spawn(move || {
             for (addr, msg) in osc_msg_rx {
                 if msg_tx_clone.send(Message::Osc(addr, msg)).is_err() {
+                    break;
+                }
+            }
+        })
+        .unwrap();
+
+    // Spawn a thread that converts the Interaction messages to GUI messages.
+    let msg_tx_clone = msg_tx.clone();
+    std::thread::Builder::new()
+        .name("interaction_to_gui_msg".into())
+        .spawn(move || {
+            for interaction in interaction_rx {
+                if msg_tx_clone.send(Message::Interaction(interaction)).is_err() {
                     break;
                 }
             }
@@ -292,7 +332,10 @@ pub fn spawn(
                 needs_update = false;
                 for msg in msgs.drain(..) {
                     match msg {
-                        Message::Osc(addr, osc) => state.osc_log.push_msg(addr, osc),
+                        Message::Osc(addr, osc) =>
+                            state.osc_log.push_msg((addr, osc)),
+                        Message::Interaction(interaction) =>
+                            state.interaction_log.push_msg(interaction),
                         Message::Input(input) => {
                             ui.handle_event(input);
                             needs_update = true;
@@ -361,6 +404,11 @@ widget_ids! {
         osc_log_text,
         osc_log_scrollbar_y,
         osc_log_scrollbar_x,
+        // Interaction Log.
+        interaction_log,
+        interaction_log_text,
+        interaction_log_scrollbar_y,
+        interaction_log_scrollbar_x,
 
         // The floorplan image and the canvas on which it is placed.
         floorplan_canvas,
@@ -375,7 +423,9 @@ fn set_side_menu_widgets(gui: &mut Gui) {
     fn collapsible_area(is_open: bool, text: &str, side_menu_id: widget::Id)
         -> widget::CollapsibleArea
     {
-        widget::CollapsibleArea::new(is_open, text).w_of(side_menu_id).h(30.0)
+        widget::CollapsibleArea::new(is_open, text)
+            .w_of(side_menu_id)
+            .h(30.0)
     }
 
     // Begin building a basic info text block.
@@ -418,15 +468,64 @@ fn set_side_menu_widgets(gui: &mut Gui) {
 
             // Scrollbars.
             widget::Scrollbar::y_axis(area.id)
+                .color(color::LIGHT_CHARCOAL)
                 .auto_hide(false)
                 .set(gui.ids.osc_log_scrollbar_y, gui);
             widget::Scrollbar::x_axis(area.id)
+                .color(color::LIGHT_CHARCOAL)
                 .auto_hide(true)
                 .set(gui.ids.osc_log_scrollbar_x, gui);
 
             area.id
         } else {
             gui.ids.osc_log
+        }
+    };
+
+    // The log of received Interactions.
+    let last_area_id = {
+        let is_open = gui.state.interaction_log_is_open;
+        let log_canvas_h = 300.0;
+        let (area, event) = collapsible_area(is_open, "Interaction Log", gui.ids.side_menu)
+            .align_middle_x_of(gui.ids.side_menu)
+            .down_from(last_area_id, 0.0)
+            .set(gui.ids.interaction_log, gui);
+        if let Some(event) = event {
+            gui.state.interaction_log_is_open = event.is_open();
+        }
+
+        if let Some(area) = area {
+            // The canvas on which the log will be placed.
+            let canvas = widget::Canvas::new()
+                .scroll_kids()
+                .pad(10.0)
+                .h(log_canvas_h);
+            area.set(canvas, gui);
+
+            // The text widget used to display the log.
+            let log_string = match gui.state.interaction_log.len() {
+                0 => format!("No interactions received yet.\nListening on port {}...",
+                             gui.state.config.osc_input_port),
+                _ => gui.state.interaction_log.format(),
+            };
+            info_text(&log_string)
+                .top_left_of(area.id)
+                .kid_area_w_of(area.id)
+                .set(gui.ids.interaction_log_text, gui);
+
+            // Scrollbars.
+            widget::Scrollbar::y_axis(area.id)
+                .color(color::LIGHT_CHARCOAL)
+                .auto_hide(false)
+                .set(gui.ids.interaction_log_scrollbar_y, gui);
+            widget::Scrollbar::x_axis(area.id)
+                .color(color::LIGHT_CHARCOAL)
+                .auto_hide(true)
+                .set(gui.ids.interaction_log_scrollbar_x, gui);
+
+            area.id
+        } else {
+            gui.ids.interaction_log
         }
     };
 }
@@ -470,7 +569,8 @@ fn set_widgets(gui: &mut Gui) {
     for _click in widget::Button::new()
         .w_h(side_menu_w, CLOSED_SIDE_MENU_W)
         .mid_top_of(gui.ids.side_menu)
-        .color(color::BLACK)
+        //.color(color::BLACK)
+        .color(color::rgb(0.07, 0.08, 0.09))
         .set(gui.ids.side_menu_button, gui)
     {
         gui.state.side_menu_is_open = !side_menu_is_open;

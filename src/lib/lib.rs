@@ -45,7 +45,7 @@ pub fn run() {
 
     // Spawn the OSC input thread.
     let osc_input_addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), config.osc_input_port);
-    let (osc_msg_rx, interaction_rx) = osc::input::spawn(osc_input_addr);
+    let (osc_msg_rx, interaction_gui_rx) = osc::input::spawn(osc_input_addr);
 
     // Spawn the GUI thread.
     //
@@ -55,7 +55,7 @@ pub fn run() {
     // `gui_render_rx` channel.
     let proxy = events_loop.create_proxy();
     let (mut renderer, image_map, gui_msg_tx, gui_render_rx) =
-        gui::spawn(&assets, config, &display, proxy, osc_msg_rx);
+        gui::spawn(&assets, config, &display, proxy, osc_msg_rx, interaction_gui_rx);
 
     // Run the event loop.
     let mut closed = false;
