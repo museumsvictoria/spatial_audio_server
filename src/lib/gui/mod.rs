@@ -1,11 +1,17 @@
+use cgmath;
+use config::Config;
 use conrod::{self, color, text, widget, Colorable, Positionable, Scalar, Sizeable, UiBuilder,
              UiCell, Widget};
 use conrod::backend::glium::{glium, Renderer};
 use conrod::event::Input;
 use conrod::render::OwnedPrimitives;
 use image;
+use metres::Metres;
+use rosc::OscMessage;
 use std;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::sync::mpsc;
 
@@ -21,9 +27,22 @@ struct Gui<'a> {
     state: &'a mut State,
 }
 
+/// Messages received by the GUI thread.
+pub enum Message {
+    Osc(SocketAddr, OscMessage),
+    Input(Input),
+}
+
 struct State {
+    // The loaded config file.
+    config: Config,
+    // The camera over the 2D floorplan.
     camera: Camera,
+    // A log of the most recently received OSC messages (for testing/debugging/monitoring).
+    osc_log: OscLog,
+    // Menu states.
     side_menu_is_open: bool,
+    osc_log_is_open: bool,
 }
 
 impl<'a> Deref for Gui<'a> {
@@ -61,16 +80,88 @@ struct Fonts {
 // A 2D camera used to navigate around the floorplan visualisation.
 #[derive(Debug)]
 struct Camera {
+    // The number of floorplan pixels per metre.
+    floorplan_pixels_per_metre: f64,
     // The position of the camera over the floorplan.
     //
     // [0.0, 0.0] - the centre of the floorplan.
-    xy: [Scalar; 2],
+    position: cgmath::Point2<Metres>,
     // The higher the zoom, the closer the floorplan appears.
     //
-    // 1.0 - 100% zoom.
-    // 2.0 - 200% zoom.
-    // 0.0 - infinite zoom out.
+    // The zoom can be multiplied by a distance in metres to get the equivalent distance as a GUI
+    // scalar value.
+    //
+    // 1.0 - Original resolution.
+    // 0.5 - 50% view.
     zoom: Scalar,
+}
+
+struct OscLog {
+    // Newest to oldest is stored front to back respectively.
+    deque: VecDeque<(SocketAddr, OscMessage)>,
+    // The index of the oldest message currently stored in the deque.
+    start_index: usize,
+    // The max number of messages stored in the log at one time.
+    limit: usize,
+}
+
+impl Camera {
+    /// Convert from metres to the GUI scalar value.
+    fn metres_to_scalar(&self, Metres(metres): Metres) -> Scalar {
+        self.zoom * metres * self.floorplan_pixels_per_metre
+    }
+
+    /// Convert from the GUI scalar value to metres.
+    fn scalar_to_metres(&self, scalar: Scalar) -> Metres {
+        Metres((scalar / self.zoom) / self.floorplan_pixels_per_metre)
+    }
+}
+
+impl OscLog {
+    // Construct an OscLog that stores the given max number of messages.
+    fn with_limit(limit: usize) -> Self {
+        OscLog {
+            deque: VecDeque::new(),
+            start_index: 0,
+            limit,
+        }
+    }
+
+    // Push a new OSC message to the log.
+    fn push_msg(&mut self, addr: SocketAddr, msg: OscMessage) {
+        self.deque.push_front((addr, msg));
+        while self.deque.len() > self.limit {
+            self.deque.pop_back();
+            self.start_index += 1;
+        }
+    }
+
+    // Format the log in a single string of messages.
+    fn format(&self) -> String {
+        let mut s = String::new();
+        let mut index = self.start_index + self.deque.len();
+        for &(ref addr, ref msg) in &self.deque {
+            let addr_string = format!("{}: [{}{}]\n", index, addr, msg.addr);
+            s.push_str(&addr_string);
+
+            // Arguments.
+            if let Some(ref args) = msg.args {
+                for arg in args {
+                    s.push_str(&format!("    {:?}\n", arg));
+                }
+            }
+
+            index -= 1;
+        }
+        s
+    }
+}
+
+impl Deref for OscLog {
+    type Target = VecDeque<(SocketAddr, OscMessage)>;
+    fn deref(&self) -> &Self::Target {
+        &self.deque
+    }
 }
 
 /// The directory in which all fonts are stored.
@@ -114,9 +205,11 @@ fn insert_image(path: &Path, display: &glium::Display, image_map: &mut ImageMap)
 /// when a received `Message` would require redrawing the GUI.
 pub fn spawn(
     assets: &Path,
+    config: Config,
     display: &glium::Display,
     events_loop_proxy: glium::glutin::EventsLoopProxy,
-) -> (Renderer, ImageMap, mpsc::Sender<Input>, mpsc::Receiver<OwnedPrimitives>) {
+    osc_msg_rx: mpsc::Receiver<(SocketAddr, OscMessage)>,
+) -> (Renderer, ImageMap, mpsc::Sender<Message>, mpsc::Receiver<OwnedPrimitives>) {
     // Use the width and height of the display as the initial size for the Ui.
     let (display_w, display_h) = display.gl_window().get_inner_size_points().unwrap();
     let ui_dimensions = [display_w as Scalar, display_h as Scalar];
@@ -139,48 +232,72 @@ pub fn spawn(
 
     // State that is specific to the GUI itself.
     let mut state = State {
+        config,
+        // TODO: Possibly load camera from file.
         camera: Camera {
-            xy: [0.0, 0.0],
+            floorplan_pixels_per_metre: config.floorplan_pixels_per_metre,
+            position: cgmath::Point2 { x: Metres(0.0), y: Metres(0.0) },
             zoom: 0.0,
         },
+        osc_log: OscLog::with_limit(config.osc_log_limit),
         side_menu_is_open: true,
+        osc_log_is_open: true,
     };
 
     // A renderer from conrod primitives to the OpenGL display.
     let renderer = Renderer::new(display).unwrap();
 
     // Channels for communication with the main thread.
-    let (input_tx, input_rx) = mpsc::channel();
+    let (msg_tx, msg_rx) = mpsc::channel();
     let (render_tx, render_rx) = mpsc::channel();
 
+    // Spawn a thread that converts the OSC messages to GUI messages.
+    let msg_tx_clone = msg_tx.clone();
+    std::thread::Builder::new()
+        .name("osc_to_gui_msg".into())
+        .spawn(move || {
+            for (addr, msg) in osc_msg_rx {
+                if msg_tx_clone.send(Message::Osc(addr, msg)).is_err() {
+                    break;
+                }
+            }
+        })
+        .unwrap();
+
+    // Spawn the main GUI thread.
     std::thread::Builder::new()
         .name("conrod_gui".into())
         .spawn(move || {
+
             // Many widgets require another frame to finish drawing after clicks or hovers, so we
             // insert an update into the conrod loop using this `bool` after each event.
             let mut needs_update = true;
+
+            // A buffer for collecting OSC messages.
+            let mut msgs = Vec::new();
+
             'conrod: loop {
 
-                // Collect any pending inputs.
-                let mut inputs = Vec::new();
-                while let Ok(event) = input_rx.try_recv() {
-                    inputs.push(event);
-                }
+                // Collect any pending messages.
+                msgs.extend(msg_rx.try_iter());
 
-                // If there are no inputs pending, wait for them.
-                if inputs.is_empty() && !needs_update {
-                    match input_rx.recv() {
-                        Ok(event) => inputs.push(event),
+                // If there are no messages pending, wait for them.
+                if msgs.is_empty() && !needs_update {
+                    match msg_rx.recv() {
+                        Ok(msg) => msgs.push(msg),
                         Err(_) => break 'conrod,
                     };
                 }
 
                 needs_update = false;
-
-                // Handle the received user input.
-                for input in inputs {
-                    ui.handle_event(input);
-                    needs_update = true;
+                for msg in msgs.drain(..) {
+                    match msg {
+                        Message::Osc(addr, osc) => state.osc_log.push_msg(addr, osc),
+                        Message::Input(input) => {
+                            ui.handle_event(input);
+                            needs_update = true;
+                        },
+                    }
                 }
 
                 // Instantiate the widgets.
@@ -208,7 +325,7 @@ pub fn spawn(
         })
         .unwrap();
 
-    (renderer, image_map, input_tx, render_rx)
+    (renderer, image_map, msg_tx, render_rx)
 }
 
 /// Draws the given `primitives` to the given `Display`.
@@ -239,6 +356,11 @@ widget_ids! {
         side_menu_button_line_top,
         side_menu_button_line_middle,
         side_menu_button_line_bottom,
+        // OSC Log.
+        osc_log,
+        osc_log_text,
+        osc_log_scrollbar_y,
+        osc_log_scrollbar_x,
 
         // The floorplan image and the canvas on which it is placed.
         floorplan_canvas,
@@ -262,6 +384,51 @@ fn set_side_menu_widgets(gui: &mut Gui) {
             .font_size(12)
             .line_spacing(6.0)
     }
+
+    // The log of received OSC messages.
+    let last_area_id = {
+        let is_open = gui.state.osc_log_is_open;
+        let log_canvas_h = 300.0;
+        let (area, event) = collapsible_area(is_open, "OSC Input Log", gui.ids.side_menu)
+            .align_middle_x_of(gui.ids.side_menu)
+            .down_from(gui.ids.side_menu_button, 0.0)
+            .set(gui.ids.osc_log, gui);
+        if let Some(event) = event {
+            gui.state.osc_log_is_open = event.is_open();
+        }
+        if let Some(area) = area {
+
+            // The canvas on which the log will be placed.
+            let canvas = widget::Canvas::new()
+                .scroll_kids()
+                .pad(10.0)
+                .h(log_canvas_h);
+            area.set(canvas, gui);
+
+            // The text widget used to display the log.
+            let log_string = match gui.state.osc_log.len() {
+                0 => format!("No messages received yet.\nListening on port {}...",
+                             gui.state.config.osc_input_port),
+                _ => gui.state.osc_log.format(),
+            };
+            info_text(&log_string)
+                .top_left_of(area.id)
+                .kid_area_w_of(area.id)
+                .set(gui.ids.osc_log_text, gui);
+
+            // Scrollbars.
+            widget::Scrollbar::y_axis(area.id)
+                .auto_hide(false)
+                .set(gui.ids.osc_log_scrollbar_y, gui);
+            widget::Scrollbar::x_axis(area.id)
+                .auto_hide(true)
+                .set(gui.ids.osc_log_scrollbar_x, gui);
+
+            area.id
+        } else {
+            gui.ids.osc_log
+        }
+    };
 }
 
 // Update all widgets in the GUI with the given state.
@@ -283,7 +450,7 @@ fn set_widgets(gui: &mut Gui) {
     // The menu bar is collapsed by default, and shows three lines at the top.
     // Pressing these three lines opens the menu, revealing a list of options.
     const CLOSED_SIDE_MENU_W: conrod::Scalar = 40.0;
-    const OPEN_SIDE_MENU_W: conrod::Scalar = 200.0;
+    const OPEN_SIDE_MENU_W: conrod::Scalar = 300.0;
     let side_menu_is_open = gui.state.side_menu_is_open;
     let side_menu_w = match side_menu_is_open {
         false => CLOSED_SIDE_MENU_W,
@@ -337,8 +504,9 @@ fn set_widgets(gui: &mut Gui) {
     // The canvas on which the floorplan will be displayed.
     let background_rect = gui.rect_of(gui.ids.background).unwrap();
     let floorplan_canvas_w = background_rect.w() - side_menu_w;
+    let floorplan_canvas_h = background_rect.h();
     widget::Canvas::new()
-        .w_h(floorplan_canvas_w, background_rect.h())
+        .w_h(floorplan_canvas_w, floorplan_canvas_h)
         .h_of(gui.ids.background)
         .color(color::WHITE)
         .align_right_of(gui.ids.background)
@@ -346,14 +514,64 @@ fn set_widgets(gui: &mut Gui) {
         .crop_kids()
         .set(gui.ids.floorplan_canvas, gui);
 
-    let scale_w = floorplan_canvas_w / gui.images.floorplan.width;
-    let scale_h = background_rect.h() / gui.images.floorplan.height;
-    let scale = scale_w.min(scale_h);
-    let floorplan_w = scale * gui.images.floorplan.width;
-    let floorplan_h = scale * gui.images.floorplan.height;
+    let floorplan_pixels_per_metre = gui.state.camera.floorplan_pixels_per_metre;
+    let metres_from_floorplan_pixels = |px| Metres(px / floorplan_pixels_per_metre);
+    let metres_to_floorplan_pixels = |Metres(m)| m * floorplan_pixels_per_metre;
+
+    let floorplan_w_metres = metres_from_floorplan_pixels(gui.images.floorplan.width);
+    let floorplan_h_metres = metres_from_floorplan_pixels(gui.images.floorplan.height);
+
+    // The amount which the image must be scaled to fill the floorplan_canvas while preserving
+    // aspect ratio.
+    let full_scale_w = floorplan_canvas_w / gui.images.floorplan.width;
+    let full_scale_h = floorplan_canvas_h / gui.images.floorplan.height;
+    let floorplan_w = full_scale_w * gui.images.floorplan.width;
+    let floorplan_h = full_scale_h * gui.images.floorplan.height;
+
+    // If the floorplan was scrolled, adjust the camera zoom.
+    let total_scroll = gui.widget_input(gui.ids.floorplan)
+        .scrolls()
+        .fold(0.0, |acc, scroll| acc + scroll.y);
+    gui.state.camera.zoom = (gui.state.camera.zoom - total_scroll / 200.0)
+        .max(full_scale_w.min(full_scale_h))
+        .min(1.0);
+
+    // Move the camera by clicking with the left mouse button and dragging.
+    let total_drag = gui.widget_input(gui.ids.floorplan)
+        .drags()
+        .left()
+        .map(|drag| drag.delta_xy)
+        .fold([0.0, 0.0], |acc, dt| [acc[0] + dt[0], acc[1] + dt[1]]);
+    gui.state.camera.position.x -= gui.state.camera.scalar_to_metres(total_drag[0]);
+    gui.state.camera.position.y -= gui.state.camera.scalar_to_metres(total_drag[1]);
+
+    // The part of the image visible from the camera.
+    let visible_w_m = gui.state.camera.scalar_to_metres(floorplan_canvas_w);
+    let visible_h_m = gui.state.camera.scalar_to_metres(floorplan_canvas_h);
+
+    // Clamp the camera's position so it doesn't go out of bounds.
+    let invisible_w_m = floorplan_w_metres - visible_w_m;
+    let invisible_h_m = floorplan_h_metres - visible_h_m;
+    let half_invisible_w_m = invisible_w_m * 0.5;
+    let half_invisible_h_m = invisible_h_m * 0.5;
+    let centre_x_m = floorplan_w_metres * 0.5;
+    let centre_y_m = floorplan_h_metres * 0.5;
+    let min_cam_x_m = centre_x_m - half_invisible_w_m;
+    let max_cam_x_m = centre_x_m + half_invisible_w_m;
+    let min_cam_y_m = centre_y_m - half_invisible_h_m;
+    let max_cam_y_m = centre_y_m + half_invisible_h_m;
+    gui.state.camera.position.x = gui.state.camera.position.x.max(min_cam_x_m).min(max_cam_x_m);
+    gui.state.camera.position.y = gui.state.camera.position.y.max(min_cam_y_m).min(max_cam_y_m);
+
+    let visible_x = metres_to_floorplan_pixels(gui.state.camera.position.x);
+    let visible_y = metres_to_floorplan_pixels(gui.state.camera.position.y);
+    let visible_w = metres_to_floorplan_pixels(visible_w_m);
+    let visible_h = metres_to_floorplan_pixels(visible_h_m);
+    let visible_rect = conrod::Rect::from_xy_dim([visible_x, visible_y], [visible_w, visible_h]);
 
     // Display the floorplan.
     widget::Image::new(gui.images.floorplan.id)
+        .source_rectangle(visible_rect)
         .w_h(floorplan_w, floorplan_h)
         .middle_of(gui.ids.floorplan_canvas)
         .set(gui.ids.floorplan, gui);
