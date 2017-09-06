@@ -75,7 +75,7 @@ pub fn from_osc(msg: &OscMessage) -> Option<Interaction> {
     const BP_PREFIX: &'static str = "/bp/";
 
     // If the address doesn't begin with the bp prefix, ignore it.
-    if BP_PREFIX != &msg.addr[..BP_PREFIX.len()] {
+    if msg.addr.len() <= BP_PREFIX.len() || BP_PREFIX != &msg.addr[..BP_PREFIX.len()] {
         return None;
     }
 
