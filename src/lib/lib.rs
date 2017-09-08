@@ -1,6 +1,5 @@
 extern crate cgmath;
 #[macro_use] extern crate conrod;
-extern crate cpal;
 #[macro_use] extern crate custom_derive;
 extern crate find_folder;
 extern crate image;
@@ -46,6 +45,17 @@ pub fn run() {
     // Spawn the OSC input thread.
     let osc_input_addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), config.osc_input_port);
     let (osc_msg_rx, interaction_gui_rx) = osc::input::spawn(osc_input_addr);
+
+    // Spawn the audio engine (rendering, processing, etc).
+    let audio_msg_tx = audio::spawn();
+
+    // Create the audio requester which transfers audio from the audio engine to the audio backend.
+    const FRAMES_PER_BUFFER: usize = 64;
+    let audio_requester = audio::Requester::new(audio_msg_tx, FRAMES_PER_BUFFER);
+
+    // Run the CPAL audio backend for interfacing with the audio device.
+    const SAMPLE_HZ: f64 = 44_100.0;
+    let cpal_voice = audio::backend::spawn(audio_requester, SAMPLE_HZ).unwrap();
 
     // Spawn the GUI thread.
     //
