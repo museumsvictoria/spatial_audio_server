@@ -12,6 +12,7 @@ name = "audio_server"
 path = "src/lib/lib.rs"
 
 [dependencies]
+atomic = "0.3"
 cgmath = "0.15"
 conrod = { version = "0.54", features = ["winit", "glium"] }
 cpal = "0.4"
