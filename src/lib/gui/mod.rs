@@ -1,7 +1,7 @@
 use cgmath;
 use config::Config;
-use conrod::{self, color, text, widget, Colorable, Positionable, Scalar, Sizeable, UiBuilder,
-             UiCell, Widget};
+use conrod::{self, color, text, widget, Colorable, FontSize, Labelable, Positionable, Scalar,
+             Sizeable, UiBuilder, UiCell, Widget};
 use conrod::backend::glium::{glium, Renderer};
 use conrod::event::Input;
 use conrod::render::OwnedPrimitives;
@@ -44,10 +44,15 @@ struct State {
     osc_log: OscLog,
     // A log of the most recently received Interactions for testing/debugging/monitoring.
     interaction_log: InteractionLog,
+    speaker_editor: SpeakerEditor,
     // Menu states.
     side_menu_is_open: bool,
     osc_log_is_open: bool,
     interaction_log_is_open: bool,
+}
+
+struct SpeakerEditor {
+    is_open: bool,
 }
 
 impl<'a> Deref for Gui<'a> {
@@ -264,11 +269,14 @@ pub fn spawn(
             position: cgmath::Point2 { x: Metres(0.0), y: Metres(0.0) },
             zoom: 0.0,
         },
+        speaker_editor: SpeakerEditor {
+            is_open: true,
+        },
         osc_log: Log::with_limit(config.osc_log_limit),
         interaction_log: Log::with_limit(config.interaction_log_limit),
         side_menu_is_open: true,
-        osc_log_is_open: true,
-        interaction_log_is_open: true,
+        osc_log_is_open: false,
+        interaction_log_is_open: false,
     };
 
     // A renderer from conrod primitives to the OpenGL display.
@@ -409,6 +417,10 @@ widget_ids! {
         interaction_log_text,
         interaction_log_scrollbar_y,
         interaction_log_scrollbar_x,
+        // Speaker Editor.
+        speaker_editor,
+        speaker_editor_list,
+        speaker_editor_add,
 
         // The floorplan image and the canvas on which it is placed.
         floorplan_canvas,
@@ -419,13 +431,15 @@ widget_ids! {
 // Set the widgets in the side menu.
 fn set_side_menu_widgets(gui: &mut Gui) {
 
+    const ITEM_HEIGHT: Scalar = 30.0;
+
     // Begin building a `CollapsibleArea` for the sidebar.
     fn collapsible_area(is_open: bool, text: &str, side_menu_id: widget::Id)
         -> widget::CollapsibleArea
     {
         widget::CollapsibleArea::new(is_open, text)
             .w_of(side_menu_id)
-            .h(30.0)
+            .h(ITEM_HEIGHT)
     }
 
     // Begin building a basic info text block.
@@ -435,13 +449,68 @@ fn set_side_menu_widgets(gui: &mut Gui) {
             .line_spacing(6.0)
     }
 
+    // Speaker Editor - for adding, editing and removing speakers.
+    let last_area_id = {
+        let is_open = gui.state.speaker_editor.is_open;
+        let speaker_editor_canvas_h = 300.0;
+
+        let (area, event) = collapsible_area(is_open, "Speaker Editor", gui.ids.side_menu)
+            .align_middle_x_of(gui.ids.side_menu)
+            .down_from(gui.ids.side_menu_button, 0.0)
+            .set(gui.ids.speaker_editor, gui);
+        if let Some(event) = event {
+            gui.state.speaker_editor.is_open = event.is_open();
+        }
+
+        if let Some(area) = area {
+            // The canvas on which the log will be placed.
+            let canvas = widget::Canvas::new()
+                .scroll_kids()
+                .pad(0.0)
+                .h(speaker_editor_canvas_h);
+            area.set(canvas, gui);
+
+            let num_items = 0;
+            let (mut events, scrollbar) = widget::ListSelect::single(num_items)
+                .item_size(ITEM_HEIGHT)
+                .h((ITEM_HEIGHT * num_items as Scalar).min(200.0))
+                .align_middle_x_of(area.id)
+                .align_top_of(area.id)
+                .set(gui.ids.speaker_editor_list, gui);
+
+            while let Some(event) = events.next(gui, |item| unimplemented!()) {
+                use conrod::widget::list_select::Event;
+                match event {
+                    Event::Item(item) => unimplemented!(),
+                    Event::Selection(_) => (),
+                    _ => (),
+                }
+            }
+
+            let plus_size = (ITEM_HEIGHT * 0.66) as FontSize;
+            widget::Button::new()
+                .color(color::DARK_CHARCOAL)
+                .label("+")
+                .label_font_size(plus_size)
+                .align_middle_x_of(area.id)
+                .down_from(gui.ids.speaker_editor_list, 0.0)
+                .w_of(area.id)
+                .parent(area.id)
+                .set(gui.ids.speaker_editor_add, gui);
+
+            area.id
+        } else {
+            gui.ids.speaker_editor
+        }
+    };
+
     // The log of received OSC messages.
     let last_area_id = {
         let is_open = gui.state.osc_log_is_open;
-        let log_canvas_h = 300.0;
+        let log_canvas_h = 200.0;
         let (area, event) = collapsible_area(is_open, "OSC Input Log", gui.ids.side_menu)
             .align_middle_x_of(gui.ids.side_menu)
-            .down_from(gui.ids.side_menu_button, 0.0)
+            .down_from(last_area_id, 0.0)
             .set(gui.ids.osc_log, gui);
         if let Some(event) = event {
             gui.state.osc_log_is_open = event.is_open();
@@ -485,7 +554,7 @@ fn set_side_menu_widgets(gui: &mut Gui) {
     // The log of received Interactions.
     let last_area_id = {
         let is_open = gui.state.interaction_log_is_open;
-        let log_canvas_h = 300.0;
+        let log_canvas_h = 200.0;
         let (area, event) = collapsible_area(is_open, "Interaction Log", gui.ids.side_menu)
             .align_middle_x_of(gui.ids.side_menu)
             .down_from(last_area_id, 0.0)
@@ -528,6 +597,7 @@ fn set_side_menu_widgets(gui: &mut Gui) {
             gui.ids.interaction_log
         }
     };
+
 }
 
 // Update all widgets in the GUI with the given state.
