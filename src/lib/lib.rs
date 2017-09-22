@@ -52,7 +52,7 @@ pub fn run() {
 
     // Create the audio requester which transfers audio from the audio engine to the audio backend.
     const FRAMES_PER_BUFFER: usize = 64;
-    let audio_requester = audio::Requester::new(audio_msg_tx, FRAMES_PER_BUFFER);
+    let audio_requester = audio::Requester::new(audio_msg_tx.clone(), FRAMES_PER_BUFFER);
 
     // Run the CPAL audio backend for interfacing with the audio device.
     const SAMPLE_HZ: f64 = 44_100.0;
@@ -66,7 +66,7 @@ pub fn run() {
     // `gui_render_rx` channel.
     let proxy = events_loop.create_proxy();
     let (mut renderer, image_map, gui_msg_tx, gui_render_rx) =
-        gui::spawn(&assets, config, &display, proxy, osc_msg_rx, interaction_gui_rx);
+        gui::spawn(&assets, config, &display, proxy, osc_msg_rx, interaction_gui_rx, audio_msg_tx);
 
     // Run the event loop.
     let mut closed = false;

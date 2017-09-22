@@ -5,6 +5,8 @@ use sample::Signal;
 use std;
 use std::collections::HashMap;
 use std::sync::mpsc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 pub use self::requester::Requester;
 
 pub mod backend;
@@ -35,7 +37,7 @@ pub enum Message {
     /// Remove a sound from the map.
     RemoveSound(SoundId),
     /// Add a new speaker to the map.
-    AddSpeaker(SpeakerId, Speaker),
+    AddSpeaker(SpeakerId, Arc<Speaker>),
     /// Remove a speaker from the map.
     RemoveSpeaker(SpeakerId),
 }
@@ -78,14 +80,16 @@ pub struct Sound {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-struct SpeakerId(u64);
+pub struct SpeakerId(pub u64);
 
 /// Represents a virtual output at some location within the space.
+///
+/// These parameters are atomics in order to safely share them with the GUI thread.
 pub struct Speaker {
     // The location of the speaker within the space.
-    point: Atomic<Point2<Metres>>,
+    pub point: Atomic<Point2<Metres>>,
     // The channel on which the output is rendered.
-    channel: usize,
+    pub channel: AtomicUsize,
 }
 
 
@@ -105,6 +109,10 @@ fn run(msg_rx: mpsc::Receiver<Message>) {
     for msg in msg_rx {
         match msg {
             Message::RequestAudio(buffer, sample_hz) => {
+                // For each sound, request `buffer.len()` number of frames and sum them onto the
+                // relevant output channels.
+                for (&sound_id, sound) in &sounds {
+                }
             },
 
             Message::AddSound(id, sound) => {
@@ -139,7 +147,7 @@ fn distance_2_to_amplitude(Metres(distance_2): Metres) -> Amplitude {
 fn find_closest_speakers(
     point: &Point2<Metres>,
     closest: &mut Vec<(Amplitude, SpeakerId)>,
-    speakers: &HashMap<SpeakerId, Speaker>,
+    speakers: &HashMap<SpeakerId, Arc<Speaker>>,
 ) {
     closest.clear();
     let point_f = Point2 { x: point.x.0, y: point.y.0 };

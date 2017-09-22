@@ -1,7 +1,9 @@
+use atomic::Atomic;
+use audio;
 use cgmath;
 use config::Config;
-use conrod::{self, color, text, widget, Colorable, FontSize, Labelable, Positionable, Scalar,
-             Sizeable, UiBuilder, UiCell, Widget};
+use conrod::{self, color, text, widget, Borderable, Colorable, FontSize, Labelable, Positionable,
+             Scalar, Sizeable, UiBuilder, UiCell, Widget};
 use conrod::backend::glium::{glium, Renderer};
 use conrod::event::Input;
 use conrod::render::OwnedPrimitives;
@@ -10,11 +12,13 @@ use interaction::Interaction;
 use metres::Metres;
 use rosc::OscMessage;
 use std;
+use std::sync::atomic;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
+use std::sync::atomic::AtomicUsize;
 
 mod theme;
 
@@ -24,7 +28,7 @@ struct Gui<'a> {
     /// The images used throughout the GUI.
     images: &'a Images,
     fonts: &'a Fonts,
-    ids: &'a Ids,
+    ids: &'a mut Ids,
     state: &'a mut State,
 }
 
@@ -53,6 +57,21 @@ struct State {
 
 struct SpeakerEditor {
     is_open: bool,
+    // The list of speaker outputs.
+    speakers: Vec<Speaker>,
+    // The index of the selected speaker.
+    selected: Option<usize>,
+    // The next ID to be used for a new speaker.
+    next_id: audio::SpeakerId,
+    // A channel for adding/removing speakers.
+    audio_msg_tx: mpsc::Sender<audio::Message>,
+}
+
+struct Speaker {
+    // Speaker state shared with the audio thread.
+    audio: Arc<audio::Speaker>,
+    name: String,
+    id: audio::SpeakerId,
 }
 
 impl<'a> Deref for Gui<'a> {
@@ -239,6 +258,7 @@ pub fn spawn(
     events_loop_proxy: glium::glutin::EventsLoopProxy,
     osc_msg_rx: mpsc::Receiver<(SocketAddr, OscMessage)>,
     interaction_rx: mpsc::Receiver<Interaction>,
+    audio_msg_tx: mpsc::Sender<audio::Message>,
 ) -> (Renderer, ImageMap, mpsc::Sender<Message>, mpsc::Receiver<OwnedPrimitives>) {
     // Use the width and height of the display as the initial size for the Ui.
     let (display_w, display_h) = display.gl_window().get_inner_size_points().unwrap();
@@ -247,7 +267,7 @@ pub fn spawn(
     let mut ui = UiBuilder::new(ui_dimensions).theme(theme).build();
 
     // The type containing the unique ID for each widget in the GUI.
-    let ids = Ids::new(ui.widget_id_generator());
+    let mut ids = Ids::new(ui.widget_id_generator());
 
     // Load and insert the fonts to be used.
     let font_path = fonts_directory(assets).join("NotoSans/NotoSans-Regular.ttf");
@@ -271,6 +291,10 @@ pub fn spawn(
         },
         speaker_editor: SpeakerEditor {
             is_open: true,
+            speakers: Vec::new(),
+            selected: None,
+            next_id: audio::SpeakerId(0),
+            audio_msg_tx,
         },
         osc_log: Log::with_limit(config.osc_log_limit),
         interaction_log: Log::with_limit(config.interaction_log_limit),
@@ -325,7 +349,6 @@ pub fn spawn(
             let mut msgs = Vec::new();
 
             'conrod: loop {
-
                 // Collect any pending messages.
                 msgs.extend(msg_rx.try_iter());
 
@@ -355,7 +378,7 @@ pub fn spawn(
                 {
                     let mut gui = Gui {
                         ui: ui.set_widgets(),
-                        ids: &ids,
+                        ids: &mut ids,
                         images: &images,
                         fonts: &fonts,
                         state: &mut state,
@@ -419,12 +442,20 @@ widget_ids! {
         interaction_log_scrollbar_x,
         // Speaker Editor.
         speaker_editor,
+        speaker_editor_no_speakers,
         speaker_editor_list,
         speaker_editor_add,
+        speaker_editor_remove,
+        speaker_editor_selected_canvas,
+        speaker_editor_selected_none,
+        speaker_editor_selected_name,
+        speaker_editor_selected_channel,
+        speaker_editor_selected_position,
 
         // The floorplan image and the canvas on which it is placed.
         floorplan_canvas,
         floorplan,
+        floorplan_speakers[],
     }
 }
 
@@ -432,6 +463,7 @@ widget_ids! {
 fn set_side_menu_widgets(gui: &mut Gui) {
 
     const ITEM_HEIGHT: Scalar = 30.0;
+    const SMALL_FONT_SIZE: FontSize = 12;
 
     // Begin building a `CollapsibleArea` for the sidebar.
     fn collapsible_area(is_open: bool, text: &str, side_menu_id: widget::Id)
@@ -445,14 +477,19 @@ fn set_side_menu_widgets(gui: &mut Gui) {
     // Begin building a basic info text block.
     fn info_text(text: &str) -> widget::Text {
         widget::Text::new(&text)
-            .font_size(12)
+            .font_size(SMALL_FONT_SIZE)
             .line_spacing(6.0)
     }
 
     // Speaker Editor - for adding, editing and removing speakers.
     let last_area_id = {
         let is_open = gui.state.speaker_editor.is_open;
-        let speaker_editor_canvas_h = 300.0;
+        const LIST_HEIGHT: Scalar = 140.0;
+        const PAD: Scalar = 6.0;
+        const TEXT_PAD: Scalar = 20.0;
+
+        const SELECTED_CANVAS_H: Scalar = ITEM_HEIGHT * 2.0 + PAD * 3.0;
+        let speaker_editor_canvas_h = LIST_HEIGHT + ITEM_HEIGHT + SELECTED_CANVAS_H;
 
         let (area, event) = collapsible_area(is_open, "Speaker Editor", gui.ids.side_menu)
             .align_middle_x_of(gui.ids.side_menu)
@@ -470,33 +507,233 @@ fn set_side_menu_widgets(gui: &mut Gui) {
                 .h(speaker_editor_canvas_h);
             area.set(canvas, gui);
 
-            let num_items = 0;
-            let (mut events, scrollbar) = widget::ListSelect::single(num_items)
-                .item_size(ITEM_HEIGHT)
-                .h((ITEM_HEIGHT * num_items as Scalar).min(200.0))
-                .align_middle_x_of(area.id)
-                .align_top_of(area.id)
-                .set(gui.ids.speaker_editor_list, gui);
+            // If there are no speakers, display a message saying how to add some.
+            if gui.state.speaker_editor.speakers.is_empty() {
+                widget::Text::new("Add some speaker outputs with the `+` button")
+                    .padded_w_of(area.id, TEXT_PAD)
+                    .mid_top_with_margin_on(area.id, TEXT_PAD)
+                    .font_size(SMALL_FONT_SIZE)
+                    .center_justify()
+                    .set(gui.ids.speaker_editor_no_speakers, gui);
 
-            while let Some(event) = events.next(gui, |item| unimplemented!()) {
-                use conrod::widget::list_select::Event;
-                match event {
-                    Event::Item(item) => unimplemented!(),
-                    Event::Selection(_) => (),
-                    _ => (),
+            // Otherwise display the speaker list.
+            } else {
+                let num_items = gui.state.speaker_editor.speakers.len();
+                let (mut events, scrollbar) = widget::ListSelect::single(num_items)
+                    .item_size(ITEM_HEIGHT)
+                    .h(LIST_HEIGHT)
+                    .align_middle_x_of(area.id)
+                    .align_top_of(area.id)
+                    .scrollbar_next_to()
+                    .set(gui.ids.speaker_editor_list, gui);
+
+                // If a speaker was removed, process it after the whole list is instantiated to avoid
+                // invalid indices.
+                let mut maybe_remove_index = None;
+
+                while let Some(event) = events.next(gui, |i| gui.state.speaker_editor.selected == Some(i)) {
+                    use conrod::widget::list_select::Event;
+                    match event {
+
+                        // Instantiate a button for each speaker.
+                        Event::Item(item) => {
+                            let selected = gui.state.speaker_editor.selected == Some(item.i);
+                            let label = {
+                                let speaker = &gui.state.speaker_editor.speakers[item.i];
+                                let channel = speaker.audio.channel.load(atomic::Ordering::Relaxed);
+                                let position = speaker.audio.point.load(atomic::Ordering::Relaxed);
+                                let label = format!("{} - CH {} - ({}mx, {}my)",
+                                                    speaker.name, channel,
+                                                    (position.x.0 * 100.0).trunc() / 100.0,
+                                                    (position.y.0 * 100.0).trunc() / 100.0);
+                                label
+                            };
+
+                            // Blue if selected, gray otherwise.
+                            let color = if selected { color::BLUE } else { color::CHARCOAL };
+
+                            // Use `Button`s for the selectable items.
+                            let button = widget::Button::new()
+                                .label(&label)
+                                .label_font_size(SMALL_FONT_SIZE)
+                                .color(color);
+                            item.set(button, gui);
+
+                            // If the button or any of its children are capturing the mouse, display
+                            // the `remove` button.
+                            let show_remove_button = gui.global_input().current.widget_capturing_mouse
+                                .map(|id| {
+                                    id == item.widget_id ||
+                                    gui.widget_graph()
+                                        .does_recursive_depth_edge_exist(item.widget_id, id)
+                                })
+                                .unwrap_or(false);
+
+                            if !show_remove_button {
+                                continue;
+                            }
+
+                            if widget::Button::new()
+                                .label("X")
+                                .label_font_size(SMALL_FONT_SIZE)
+                                .color(color::DARK_RED.alpha(0.5))
+                                .w_h(ITEM_HEIGHT, ITEM_HEIGHT)
+                                .align_right_of(item.widget_id)
+                                .align_middle_y_of(item.widget_id)
+                                .parent(item.widget_id)
+                                .set(gui.ids.speaker_editor_remove, gui)
+                                .was_clicked()
+                            {
+                                maybe_remove_index = Some(item.i);
+                                if selected {
+                                    gui.state.speaker_editor.selected = None;
+                                }
+                            }
+                        },
+
+                        // Update the selected speaker.
+                        Event::Selection(idx) => gui.state.speaker_editor.selected = Some(idx),
+
+                        _ => (),
+                    }
+                }
+
+                // The scrollbar for the list.
+                if let Some(s) = scrollbar { s.set(gui); }
+
+                // Remove a speaker if necessary.
+                if let Some(i) = maybe_remove_index {
+                    let speaker = gui.state.speaker_editor.speakers.remove(i);
+                    let msg = audio::Message::RemoveSpeaker(speaker.id);
+                    gui.state.speaker_editor.audio_msg_tx
+                        .send(msg)
+                        .expect("audio_mst_tx was closed");
                 }
             }
 
-            let plus_size = (ITEM_HEIGHT * 0.66) as FontSize;
-            widget::Button::new()
-                .color(color::DARK_CHARCOAL)
-                .label("+")
-                .label_font_size(plus_size)
-                .align_middle_x_of(area.id)
-                .down_from(gui.ids.speaker_editor_list, 0.0)
-                .w_of(area.id)
-                .parent(area.id)
-                .set(gui.ids.speaker_editor_add, gui);
+            // Only display the `add_speaker` button if there are less than `max` num channels.
+            let show_add_button = gui.state.speaker_editor.speakers.len() < audio::MAX_CHANNELS;
+
+            if show_add_button {
+                let plus_size = (ITEM_HEIGHT * 0.66) as FontSize;
+                if widget::Button::new()
+                    .color(color::rgb(0.1, 0.13, 0.15))
+                    .label("+")
+                    .label_font_size(plus_size)
+                    .align_middle_x_of(area.id)
+                    .mid_top_with_margin_on(area.id, LIST_HEIGHT)
+                    .w_of(area.id)
+                    .parent(area.id)
+                    .set(gui.ids.speaker_editor_add, gui)
+                    .was_clicked()
+                {
+                    let id = gui.state.speaker_editor.next_id;
+                    let name = format!("S{}", id.0);
+                    let channel = {
+                        // Search for the next available channel starting from 0.
+                        //
+                        // Note: This is a super naiive way of searching however there should never
+                        // be enough speakers to make it a problem.
+                        let mut channel = 0;
+                        'search: loop {
+                            for speaker in &gui.state.speaker_editor.speakers {
+                                if channel == speaker.audio.channel.load(atomic::Ordering::Relaxed) {
+                                    channel += 1;
+                                    continue 'search;
+                                }
+                            }
+                            break channel;
+                        }
+                    };
+                    let audio = Arc::new(audio::Speaker {
+                        point: Atomic::new(gui.state.camera.position),
+                        channel: AtomicUsize::new(channel),
+                    });
+                    let speaker = Speaker { id, name, audio };
+
+                    gui.state.speaker_editor.audio_msg_tx
+                        .send(audio::Message::AddSpeaker(speaker.id, speaker.audio.clone()))
+                        .expect("audio_msg_tx was closed");
+                    gui.state.speaker_editor.speakers.push(speaker);
+                    gui.state.speaker_editor.next_id = audio::SpeakerId(id.0.wrapping_add(1));
+                    gui.state.speaker_editor.selected = Some(gui.state.speaker_editor.speakers.len() - 1);
+                }
+            }
+
+            let area_rect = gui.rect_of(area.id).unwrap();
+            let start = area_rect.y.start;
+            let end = start + SELECTED_CANVAS_H;
+            let selected_canvas_y = conrod::Range { start, end };
+
+            widget::Canvas::new()
+                .pad(PAD)
+                .w_of(gui.ids.side_menu)
+                .h(SELECTED_CANVAS_H)
+                .y(selected_canvas_y.middle())
+                .align_middle_x_of(gui.ids.side_menu)
+                .set(gui.ids.speaker_editor_selected_canvas, gui);
+
+
+            // If a speaker is selected, display its info.
+            if let Some(i) = gui.state.speaker_editor.selected {
+                let Gui { ref mut state, ref mut ui, ref ids, .. } = *gui;
+                let speakers = &mut state.speaker_editor.speakers;
+
+                for event in widget::TextBox::new(&speakers[i].name)
+                    .mid_top_of(ids.speaker_editor_selected_canvas)
+                    .kid_area_w_of(ids.speaker_editor_selected_canvas)
+                    .parent(gui.ids.speaker_editor_selected_canvas)
+                    .h(ITEM_HEIGHT)
+                    .set(ids.speaker_editor_selected_name, ui)
+                {
+                    if let widget::text_box::Event::Update(string) = event {
+                        speakers[i].name = string;
+                    }
+                }
+
+                let channels: Vec<String> = (0..audio::MAX_CHANNELS)
+                    .map(|ch| {
+                        speakers
+                            .iter()
+                            .enumerate()
+                            .find(|&(ix, s)| i != ix && s.audio.channel.load(atomic::Ordering::Relaxed) == ch)
+                            .map(|(_ix, s)| format!("CH {} (swap with {})", ch, &s.name))
+                            .unwrap_or_else(|| format!("CH {}", ch))
+                    })
+                    .collect();
+                let selected = speakers[i].audio.channel.load(atomic::Ordering::Relaxed);
+
+                for index in widget::DropDownList::new(&channels, Some(selected))
+                    .down_from(ids.speaker_editor_selected_name, PAD)
+                    .align_middle_x_of(ids.side_menu)
+                    .kid_area_w_of(ids.speaker_editor_selected_canvas)
+                    .h(ITEM_HEIGHT)
+                    .parent(ids.speaker_editor_selected_canvas)
+                    .scrollbar_on_top()
+                    .max_visible_items(5)
+                    .border_color(color::LIGHT_CHARCOAL)
+                    .set(ids.speaker_editor_selected_channel, ui)
+                {
+                    speakers[i].audio.channel.store(index, atomic::Ordering::Relaxed);
+                    // If an existing speaker was assigned to `index`, swap it with the original
+                    // selection.
+                    let maybe_index = speakers.iter()
+                        .enumerate()
+                        .find(|&(ix, s)| i != ix && s.audio.channel.load(atomic::Ordering::Relaxed) == index);
+                    if let Some((ix, _)) = maybe_index {
+                        speakers[ix].audio.channel.store(selected, atomic::Ordering::Relaxed);
+                    }
+                }
+
+            // Otherwise no speaker is selected.
+            } else {
+                widget::Text::new("No speaker selected")
+                    .padded_w_of(area.id, TEXT_PAD)
+                    .mid_top_with_margin_on(gui.ids.speaker_editor_selected_canvas, TEXT_PAD)
+                    .font_size(SMALL_FONT_SIZE)
+                    .center_justify()
+                    .set(gui.ids.speaker_editor_selected_none, gui);
+            }
 
             area.id
         } else {
@@ -739,10 +976,92 @@ fn set_widgets(gui: &mut Gui) {
     let visible_h = metres_to_floorplan_pixels(visible_h_m);
     let visible_rect = conrod::Rect::from_xy_dim([visible_x, visible_y], [visible_w, visible_h]);
 
+    // If the left mouse button was clicked on the floorplan, deselect the speaker.
+    if gui.widget_input(gui.ids.floorplan).clicks().left().next().is_some() {
+        gui.state.speaker_editor.selected = None;
+    }
+
     // Display the floorplan.
     widget::Image::new(gui.images.floorplan.id)
         .source_rectangle(visible_rect)
         .w_h(floorplan_w, floorplan_h)
         .middle_of(gui.ids.floorplan_canvas)
         .set(gui.ids.floorplan, gui);
+
+    // Draw the speakers over the floorplan.
+    {
+        let Gui { ref mut ids, ref mut state, ref mut ui, .. } = *gui;
+
+        // Ensure there are enough IDs available.
+        let num_speakers = state.speaker_editor.speakers.len();
+        if ids.floorplan_speakers.len() < num_speakers {
+            let id_gen = &mut ui.widget_id_generator();
+            ids.floorplan_speakers.resize(num_speakers, id_gen);
+        }
+
+        // Display the `gui.state.speaker_editor.speakers` over the floorplan as circles.
+        let radius_min_m = state.config.min_speaker_radius_metres;
+        let radius_max_m = state.config.max_speaker_radius_metres;
+        let radius_min = state.camera.metres_to_scalar(radius_min_m);
+        let radius_max = state.camera.metres_to_scalar(radius_max_m);
+
+        let rel_point_to_metres = |cam: &Camera, p: conrod::Point| -> cgmath::Point2<Metres> {
+            let x = cam.position.x + cam.scalar_to_metres(p[0]);
+            let y = cam.position.y + cam.scalar_to_metres(p[1]);
+            cgmath::Point2 { x, y }
+        };
+
+        for i in 0..state.speaker_editor.speakers.len() {
+            let widget_id = ids.floorplan_speakers[i];
+
+            let (dragged_x, dragged_y) = ui.widget_input(widget_id)
+                .drags()
+                .left()
+                .fold((0.0, 0.0), |(x, y), drag| (x + drag.delta_xy[0], y + drag.delta_xy[1]));
+            let dragged_x_m = state.camera.scalar_to_metres(dragged_x);
+            let dragged_y_m = state.camera.scalar_to_metres(dragged_y);
+
+            let position = {
+                let p = state.speaker_editor.speakers[i].audio.point.load(atomic::Ordering::Relaxed);
+                let x = p.x + dragged_x_m;
+                let y = p.y + dragged_y_m;
+                let new_p = cgmath::Point2 { x, y };
+                if p != new_p {
+                    state.speaker_editor.speakers[i].audio.point.store(new_p, atomic::Ordering::Relaxed);
+                }
+                new_p
+            };
+
+            let x = state.camera.metres_to_scalar(position.x - state.camera.position.x);
+            let y = state.camera.metres_to_scalar(position.y - state.camera.position.y);
+
+            // Select the speaker if it was pressed.
+            if ui.widget_input(widget_id)
+                .presses()
+                .mouse()
+                .left()
+                .next()
+                .is_some()
+            {
+                state.speaker_editor.selected = Some(i);
+            }
+
+            // Give some tactile colour feedback if the speaker is interacted with.
+            let color = if Some(i) == state.speaker_editor.selected { color::BLUE } else { color::DARK_RED };
+            let color = match ui.widget_input(widget_id).mouse() {
+                Some(mouse) =>
+                    if mouse.buttons.left().is_down() { color.clicked() }
+                    else { color.highlighted() },
+                None => color,
+            };
+
+            // Display a circle for the speaker.
+            widget::Circle::fill(radius_min)
+                .x_y_relative_to(ids.floorplan, x, y)
+                .parent(ids.floorplan)
+                .color(color)
+                .set(widget_id, ui);
+        }
+    }
+
 }
