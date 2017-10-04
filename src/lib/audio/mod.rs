@@ -8,9 +8,11 @@ use std::sync::mpsc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 pub use self::requester::Requester;
+pub use self::sound::Sound;
 
 pub mod backend;
 mod requester;
+pub mod sound;
 
 
 /// Sounds should only be output to speakers that are nearest to avoid the need to render each
@@ -33,9 +35,9 @@ pub enum Message {
     /// soon as possible via the given `buffer_tx`.
     RequestAudio(requester::Buffer<Frame>, f64),
     /// Add a new sound to the map.
-    AddSound(SoundId, Sound),
+    AddSound(sound::Id, Sound),
     /// Remove a sound from the map.
-    RemoveSound(SoundId),
+    RemoveSound(sound::Id),
     /// Add a new speaker to the map.
     AddSpeaker(SpeakerId, Arc<Speaker>),
     /// Remove a speaker from the map.
@@ -62,21 +64,6 @@ pub fn spawn() -> mpsc::Sender<Message> {
         .unwrap();
 
     msg_tx
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-struct SoundId(u64);
-
-/// `Sound`s can be thought of as a stack of three primary components:
-///
-/// 1. **Source**: for generating audio data (via oscillator, wave, audio input, etc).
-/// 2. **Pre-spatial effects processing**: E.g. fades.
-/// 3. **Spatial Output**: maps the sound from a position in space to the output channels.
-pub struct Sound {
-    // Includes the source and pre-spatial effects.
-    signal: Box<Signal<Frame=[f32; 2]> + Send>,
-    // The location of the sound within the space.
-    point: Atomic<Point2<Metres>>,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
