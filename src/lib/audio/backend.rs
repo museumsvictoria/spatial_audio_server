@@ -4,7 +4,7 @@ extern crate cpal;
 extern crate futures;
 
 use audio;
-use sample::{self, Frame, Sample, FromSampleSliceMut, ToSample};
+use sample::{Frame, Sample, FromSampleSliceMut, ToSample};
 use std;
 
 use self::futures::Stream;

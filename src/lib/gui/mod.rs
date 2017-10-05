@@ -11,9 +11,12 @@ use image;
 use interaction::Interaction;
 use metres::Metres;
 use rosc::OscMessage;
+use serde_json;
 use std;
 use std::sync::atomic;
 use std::collections::VecDeque;
+use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
@@ -37,6 +40,7 @@ pub enum Message {
     Osc(SocketAddr, OscMessage),
     Interaction(Interaction),
     Input(Input),
+    Exit,
 }
 
 struct State {
@@ -63,16 +67,42 @@ struct SpeakerEditor {
     // The index of the selected speaker.
     selected: Option<usize>,
     // The next ID to be used for a new speaker.
-    next_id: audio::SpeakerId,
+    next_id: audio::speaker::Id,
     // A channel for adding/removing speakers.
     audio_msg_tx: mpsc::Sender<audio::Message>,
 }
 
+#[derive(Deserialize, Serialize)]
 struct Speaker {
     // Speaker state shared with the audio thread.
     audio: Arc<audio::Speaker>,
     name: String,
-    id: audio::SpeakerId,
+    id: audio::speaker::Id,
+}
+
+// A data structure from which the speaker layout can be saved and loaded.
+#[derive(Deserialize, Serialize)]
+struct StoredSpeakers {
+    #[serde(default = "first_speaker_id")]
+    next_id: audio::speaker::Id,
+    #[serde(default = "Vec::new")]
+    speakers: Vec<Speaker>,
+}
+
+// The name of the file where the speaker layout is saved.
+const SPEAKERS_FILE_NAME: &'static str = "speakers";
+
+fn first_speaker_id() -> audio::speaker::Id {
+    audio::speaker::Id(0)
+}
+
+impl StoredSpeakers {
+    fn new() -> Self {
+        StoredSpeakers {
+            speakers: Vec::new(),
+            next_id: first_speaker_id(),
+        }
+    }
 }
 
 struct SourceEditor {
@@ -274,7 +304,7 @@ pub fn spawn(
     osc_msg_rx: mpsc::Receiver<(SocketAddr, OscMessage)>,
     interaction_rx: mpsc::Receiver<Interaction>,
     audio_msg_tx: mpsc::Sender<audio::Message>,
-) -> (Renderer, ImageMap, mpsc::Sender<Message>, mpsc::Receiver<OwnedPrimitives>) {
+) -> (std::thread::JoinHandle<()>, Renderer, ImageMap, mpsc::Sender<Message>, mpsc::Receiver<OwnedPrimitives>) {
     // Use the width and height of the display as the initial size for the Ui.
     let (display_w, display_h) = display.gl_window().get_inner_size_points().unwrap();
     let ui_dimensions = [display_w as Scalar, display_h as Scalar];
@@ -295,27 +325,47 @@ pub fn spawn(
     let floorplan = insert_image(&floorplan_path, display, &mut image_map);
     let images = Images { floorplan };
 
+    // Load the existing speaker layout configuration if there is one.
+    let speakers_path = assets.join(Path::new(SPEAKERS_FILE_NAME)).with_extension("json");
+    let StoredSpeakers { speakers, next_id } = File::open(&speakers_path)
+        .ok()
+        .and_then(|f| serde_json::from_reader(f).ok())
+        .unwrap_or_else(StoredSpeakers::new);
+
+    // Send the loaded speakers to the audio thread.
+    for speaker in &speakers {
+        audio_msg_tx
+            .send(audio::Message::AddSpeaker(speaker.id, speaker.audio.clone()))
+            .expect("audio_msg_tx was closed");
+    }
+
+    let speaker_editor = SpeakerEditor {
+        is_open: true,
+        speakers: speakers,
+        selected: None,
+        next_id: next_id,
+        audio_msg_tx,
+    };
+
+    let source_editor = SourceEditor {
+        is_open: true,
+        selected: None,
+        sources: Vec::new(),
+    };
+
+    let camera = Camera {
+        floorplan_pixels_per_metre: config.floorplan_pixels_per_metre,
+        position: cgmath::Point2 { x: Metres(0.0), y: Metres(0.0) },
+        zoom: 0.0,
+    };
+
     // State that is specific to the GUI itself.
     let mut state = State {
         config,
         // TODO: Possibly load camera from file.
-        camera: Camera {
-            floorplan_pixels_per_metre: config.floorplan_pixels_per_metre,
-            position: cgmath::Point2 { x: Metres(0.0), y: Metres(0.0) },
-            zoom: 0.0,
-        },
-        speaker_editor: SpeakerEditor {
-            is_open: true,
-            speakers: Vec::new(),
-            selected: None,
-            next_id: audio::SpeakerId(0),
-            audio_msg_tx,
-        },
-        source_editor: SourceEditor {
-            is_open: true,
-            selected: None,
-            sources: Vec::new(),
-        },
+        camera,
+        speaker_editor,
+        source_editor,
         osc_log: Log::with_limit(config.osc_log_limit),
         interaction_log: Log::with_limit(config.interaction_log_limit),
         side_menu_is_open: true,
@@ -357,7 +407,7 @@ pub fn spawn(
         .unwrap();
 
     // Spawn the main GUI thread.
-    std::thread::Builder::new()
+    let gui_thread_handle = std::thread::Builder::new()
         .name("conrod_gui".into())
         .spawn(move || {
 
@@ -391,6 +441,7 @@ pub fn spawn(
                             ui.handle_event(input);
                             needs_update = true;
                         },
+                        Message::Exit => break 'conrod,
                     }
                 }
 
@@ -416,10 +467,62 @@ pub fn spawn(
                     }
                 }
             }
+
+            // Saves the file to a temporary file before removing the original to reduce the chance
+            // of losing data in the case that something goes wrong during saving.
+            fn safe_file_save(path: &Path, content: &str) -> Result<(), std::io::Error> {
+                let temp_path = path.with_extension("tmp");
+
+                // If the temp file exists, remove it.
+                if temp_path.exists() {
+                    std::fs::remove_file(&temp_path)?;
+                }
+
+                // Create the directory if it doesn't exist.
+                if let Some(directory) = path.parent() {
+                    if !directory.exists() {
+                        std::fs::create_dir_all(&temp_path)?;
+                    }
+                }
+
+                // Write the temp file.
+                let mut file = File::create(&temp_path)?;
+                file.write(content.as_bytes())?;
+
+                // If there's already a file at `path`, remove it.
+                if path.exists() {
+                    std::fs::remove_file(&path)?;
+                }
+
+                // Rename the temp file to the original path name.
+                std::fs::rename(temp_path, path)?;
+
+                Ok(())
+            }
+
+            // Destructure the GUI state for serializing.
+            let State {
+                speaker_editor: SpeakerEditor {
+                    speakers,
+                    next_id,
+                    ..
+                },
+                ..
+            } = state;
+
+            // The conrod loop has ended - we'll save the state before closing the thread.
+            let json_string = {
+                let stored_speakers = StoredSpeakers {
+                    speakers: speakers,
+                    next_id: next_id,
+                };
+                serde_json::to_string(&stored_speakers).expect("failed to serialize speaker layout")
+            };
+            safe_file_save(&speakers_path, &json_string).expect("failed to save speakers file");
         })
         .unwrap();
 
-    (renderer, image_map, msg_tx, render_rx)
+    (gui_thread_handle, renderer, image_map, msg_tx, render_rx)
 }
 
 /// Draws the given `primitives` to the given `Display`.
@@ -683,7 +786,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                     .send(audio::Message::AddSpeaker(speaker.id, speaker.audio.clone()))
                     .expect("audio_msg_tx was closed");
                 gui.state.speaker_editor.speakers.push(speaker);
-                gui.state.speaker_editor.next_id = audio::SpeakerId(id.0.wrapping_add(1));
+                gui.state.speaker_editor.next_id = audio::speaker::Id(id.0.wrapping_add(1));
                 gui.state.speaker_editor.selected = Some(gui.state.speaker_editor.speakers.len() - 1);
             }
         }
@@ -948,7 +1051,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 //     .send(audio::Message::AddSpeaker(speaker.id, speaker.audio.clone()))
                 //     .expect("audio_msg_tx was closed");
                 // gui.state.speaker_editor.speakers.push(speaker);
-                // gui.state.speaker_editor.next_id = audio::SpeakerId(id.0.wrapping_add(1));
+                // gui.state.speaker_editor.next_id = audio::speaker::Id(id.0.wrapping_add(1));
                 // gui.state.speaker_editor.selected = Some(gui.state.speaker_editor.speakers.len() - 1);
             }
         }
