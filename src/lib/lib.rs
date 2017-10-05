@@ -9,6 +9,7 @@ extern crate rosc;
 extern crate sample;
 extern crate serde;
 #[macro_use] extern crate serde_derive;
+extern crate serde_json;
 extern crate toml;
 
 use conrod::backend::glium::glium;
@@ -65,7 +66,7 @@ pub fn run() {
     // The renderer and image_map are used for rendering graphics primitives received on the
     // `gui_render_rx` channel.
     let proxy = events_loop.create_proxy();
-    let (mut renderer, image_map, gui_msg_tx, gui_render_rx) =
+    let (gui_thread_handle, mut renderer, image_map, gui_msg_tx, gui_render_rx) =
         gui::spawn(&assets, config, &display, proxy, osc_msg_rx, interaction_gui_rx, audio_msg_tx);
 
     // Run the event loop.
@@ -99,6 +100,7 @@ pub fn run() {
                         ..
                     } => {
                         closed = true;
+                        gui_msg_tx.send(gui::Message::Exit).unwrap();
                         return glium::glutin::ControlFlow::Break;
                     },
                     // We must re-draw on `Resized`, as the event loops become blocked during
@@ -117,4 +119,7 @@ pub fn run() {
             glium::glutin::ControlFlow::Continue
         });
     }
+
+    // Wait for the GUI thread to finish saving files, etc.
+    gui_thread_handle.join().unwrap();
 }

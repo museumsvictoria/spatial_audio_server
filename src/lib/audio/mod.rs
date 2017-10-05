@@ -1,18 +1,18 @@
-use atomic::{self, Atomic};
+use atomic;
 use cgmath::{Point2, MetricSpace};
 use metres::Metres;
-use sample::Signal;
 use std;
 use std::collections::HashMap;
 use std::sync::mpsc;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 pub use self::requester::Requester;
 pub use self::sound::Sound;
+pub use self::speaker::Speaker;
 
 pub mod backend;
 mod requester;
 pub mod sound;
+pub mod speaker;
 
 
 /// Sounds should only be output to speakers that are nearest to avoid the need to render each
@@ -39,9 +39,9 @@ pub enum Message {
     /// Remove a sound from the map.
     RemoveSound(sound::Id),
     /// Add a new speaker to the map.
-    AddSpeaker(SpeakerId, Arc<Speaker>),
+    AddSpeaker(speaker::Id, Arc<Speaker>),
     /// Remove a speaker from the map.
-    RemoveSpeaker(SpeakerId),
+    RemoveSpeaker(speaker::Id),
 }
 
 impl requester::Message for Message {
@@ -66,20 +66,6 @@ pub fn spawn() -> mpsc::Sender<Message> {
     msg_tx
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct SpeakerId(pub u64);
-
-/// Represents a virtual output at some location within the space.
-///
-/// These parameters are atomics in order to safely share them with the GUI thread.
-pub struct Speaker {
-    // The location of the speaker within the space.
-    pub point: Atomic<Point2<Metres>>,
-    // The channel on which the output is rendered.
-    pub channel: AtomicUsize,
-}
-
-
 // The function to be run onthe audio engine thread.
 fn run(msg_rx: mpsc::Receiver<Message>) {
 
@@ -90,7 +76,7 @@ fn run(msg_rx: mpsc::Receiver<Message>) {
     let mut speakers = HashMap::with_capacity(MAX_CHANNELS);
 
     // A buffer for collecting the speakers within proximity of the sound's position.
-    let mut speakers_in_proximity: Vec<(Amplitude, SpeakerId)> = Vec::with_capacity(MAX_CHANNELS);
+    let mut speakers_in_proximity: Vec<(Amplitude, speaker::Id)> = Vec::with_capacity(MAX_CHANNELS);
 
     // Wait for messages.
     for msg in msg_rx {
@@ -100,6 +86,8 @@ fn run(msg_rx: mpsc::Receiver<Message>) {
                 // relevant output channels.
                 for (&sound_id, sound) in &sounds {
                 }
+
+                buffer.submit().ok();
             },
 
             Message::AddSound(id, sound) => {
@@ -133,8 +121,8 @@ fn distance_2_to_amplitude(Metres(distance_2): Metres) -> Amplitude {
 
 fn find_closest_speakers(
     point: &Point2<Metres>,
-    closest: &mut Vec<(Amplitude, SpeakerId)>,
-    speakers: &HashMap<SpeakerId, Arc<Speaker>>,
+    closest: &mut Vec<(Amplitude, speaker::Id)>,
+    speakers: &HashMap<speaker::Id, Arc<Speaker>>,
 ) {
     closest.clear();
     let point_f = Point2 { x: point.x.0, y: point.y.0 };
