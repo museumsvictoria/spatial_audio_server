@@ -515,9 +515,12 @@ pub fn spawn(
         .name("conrod_gui".into())
         .spawn(move || {
 
-            // Many widgets require another frame to finish drawing after clicks or hovers, so we
-            // insert an update into the conrod loop using this `bool` after each event.
-            let mut needs_update = true;
+            // The number of times the GUI should update after an interaction.
+            //
+            // This ensures that common, short (2-3 frame) animations are played out in full such
+            // as mouse-clicks or highlights.
+            const REFRESH_UPDATE_COUNT: usize = 3;
+            let mut updates_remaining = REFRESH_UPDATE_COUNT;
 
             // A buffer for collecting OSC messages.
             let mut msgs = Vec::new();
@@ -527,14 +530,18 @@ pub fn spawn(
                 msgs.extend(msg_rx.try_iter());
 
                 // If there are no messages pending, wait for them.
-                if msgs.is_empty() && !needs_update {
+                if msgs.is_empty() && updates_remaining == 0 {
                     match msg_rx.recv() {
                         Ok(msg) => msgs.push(msg),
                         Err(_) => break 'conrod,
                     };
                 }
 
-                needs_update = false;
+                // Decrement the update count.
+                if updates_remaining > 0 {
+                    updates_remaining -= 1;
+                }
+
                 for msg in msgs.drain(..) {
                     match msg {
                         Message::Osc(addr, osc) =>
@@ -543,7 +550,7 @@ pub fn spawn(
                             state.interaction_log.push_msg(interaction),
                         Message::Input(input) => {
                             ui.handle_event(input);
-                            needs_update = true;
+                            updates_remaining = REFRESH_UPDATE_COUNT;
                         },
                         Message::Exit => break 'conrod,
                     }
