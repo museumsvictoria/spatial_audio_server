@@ -7,12 +7,16 @@ use std::sync::mpsc;
 use std::sync::Arc;
 pub use self::requester::Requester;
 pub use self::sound::Sound;
+pub use self::source::Source;
 pub use self::speaker::Speaker;
+pub use self::wav::Wav;
 
 pub mod backend;
 mod requester;
 pub mod sound;
+pub mod source;
 pub mod speaker;
+pub mod wav;
 
 
 /// Sounds should only be output to speakers that are nearest to avoid the need to render each

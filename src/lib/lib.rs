@@ -3,13 +3,15 @@ extern crate cgmath;
 #[macro_use] extern crate conrod;
 #[macro_use] extern crate custom_derive;
 extern crate find_folder;
+extern crate hound; // wav loading
 extern crate image;
 #[macro_use] extern crate newtype_derive;
-extern crate rosc;
+extern crate rosc; // osc encoding/decoding
 extern crate sample;
-extern crate serde;
+extern crate serde; // serialization
 #[macro_use] extern crate serde_derive;
 extern crate serde_json;
+extern crate time_calc;
 extern crate toml;
 
 use conrod::backend::glium::glium;
