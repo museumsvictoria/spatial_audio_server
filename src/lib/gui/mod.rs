@@ -2,8 +2,8 @@ use atomic::Atomic;
 use audio;
 use cgmath;
 use config::Config;
-use conrod::{self, color, text, widget, Borderable, Colorable, FontSize, Labelable, Positionable,
-             Scalar, Sizeable, UiBuilder, UiCell, Widget};
+use conrod::{self, color, position, text, widget, Borderable, Colorable, FontSize, Labelable,
+             Positionable, Scalar, Sizeable, UiBuilder, UiCell, Widget};
 use conrod::backend::glium::{glium, Renderer};
 use conrod::event::Input;
 use conrod::render::OwnedPrimitives;
@@ -15,6 +15,7 @@ use serde_json;
 use std;
 use std::sync::atomic;
 use std::collections::VecDeque;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -90,7 +91,13 @@ struct StoredSpeakers {
 }
 
 // The name of the file where the speaker layout is saved.
-const SPEAKERS_FILE_NAME: &'static str = "speakers";
+const SPEAKERS_FILE_STEM: &'static str = "speakers";
+
+// The name of the file where the list of sources is stored.
+const SOURCES_FILE_STEM: &'static str = "sources";
+
+// The name of the directory where the WAVs are stored.
+const AUDIO_DIRECTORY_NAME: &'static str = "audio";
 
 fn first_speaker_id() -> audio::speaker::Id {
     audio::speaker::Id(0)
@@ -103,6 +110,16 @@ impl StoredSpeakers {
             next_id: first_speaker_id(),
         }
     }
+
+    /// Load the stored speakers from the given path.
+    ///
+    /// If the path is invalid or the JSON can't be read, `StoredSpeakers::new` will be called.
+    fn load(path: &Path) -> Self {
+        File::open(&path)
+            .ok()
+            .and_then(|f| serde_json::from_reader(f).ok())
+            .unwrap_or_else(StoredSpeakers::new)
+    }
 }
 
 struct SourceEditor {
@@ -114,9 +131,92 @@ struct SourceEditor {
     //next_id: SourceId,
 }
 
-enum Source {
-    Wav,
-    Realtime,
+// A GUI view of an audio source.
+#[derive(Deserialize, Serialize)]
+struct Source {
+    name: String,
+    audio: Arc<audio::Source>,
+}
+
+// A data structure from which sources can be saved/loaded.
+#[derive(Deserialize, Serialize)]
+struct StoredSources {
+    #[serde(default = "Vec::new")]
+    sources: Vec<Source>,
+}
+
+impl StoredSources {
+    fn new() -> Self {
+        StoredSources {
+            sources: Vec::new(),
+        }
+    }
+
+    /// Load the audio sources from the given path.
+    ///
+    /// If there are any ".wav" files in `assets/audio` that have not yet been loaded into the
+    /// stored sources, load them as `Wav` kind sources.
+    ///
+    /// If the path is invalid or the JSON can't be read, `StoredSources::new` will be called.
+    fn load(sources_path: &Path, audio_path: &Path) -> Self {
+        let mut stored = File::open(&sources_path)
+            .ok()
+            .and_then(|f| serde_json::from_reader(f).ok())
+            .unwrap_or_else(StoredSources::new);
+
+        // If there are any WAVs in `assets/audio/` that we have not yet listed, load them.
+        if audio_path.exists() && audio_path.is_dir() {
+            let wav_paths = std::fs::read_dir(&audio_path)
+                .expect("failed to read audio directory")
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().ok().map(|e| e.is_file()).unwrap_or(false))
+                .filter_map(|e| {
+                    let file_name = e.file_name();
+                    let file_path = Path::new(&file_name);
+                    let ext = file_path.extension()
+                        .and_then(OsStr::to_str)
+                        .map(std::ascii::AsciiExt::to_ascii_lowercase);
+                    match ext.as_ref().map(|e| &e[..]) {
+                        Some("wav") | Some("wave") => Some(audio_path.join(file_path)),
+                        _ => None,
+                    }
+                });
+
+            // For each new wav file, create a new source.
+            'paths: for path in wav_paths {
+                // If we already have this one, continue.
+                for s in &stored.sources {
+                    match s.audio.kind {
+                        audio::source::Kind::Wav(ref wav) => if wav.path == path {
+                            continue 'paths;
+                        },
+                        _ => (),
+                    }
+                }
+                // Set the name as the file name without the extension.
+                let name = match path.file_stem().and_then(OsStr::to_str) {
+                    Some(name) => name.to_string(),
+                    None => continue,
+                };
+                // Load the `Wav`.
+                let wav = match audio::Wav::from_path(path) {
+                    Ok(w) => w,
+                    Err(e) => {
+                        println!("Failed to load wav file {:?}: {}", name, e);
+                        continue;
+                    },
+                };
+                let kind = audio::source::Kind::Wav(wav);
+                let audio = Arc::new(audio::Source { kind });
+                let source = Source { name, audio };
+                stored.sources.push(source);
+            }
+        }
+
+        // Sort all sources by name.
+        stored.sources.sort_by(|a, b| a.name.cmp(&b.name));
+        stored
+    }
 }
 
 impl<'a> Deref for Gui<'a> {
@@ -326,11 +426,8 @@ pub fn spawn(
     let images = Images { floorplan };
 
     // Load the existing speaker layout configuration if there is one.
-    let speakers_path = assets.join(Path::new(SPEAKERS_FILE_NAME)).with_extension("json");
-    let StoredSpeakers { speakers, next_id } = File::open(&speakers_path)
-        .ok()
-        .and_then(|f| serde_json::from_reader(f).ok())
-        .unwrap_or_else(StoredSpeakers::new);
+    let speakers_path = assets.join(Path::new(SPEAKERS_FILE_STEM)).with_extension("json");
+    let StoredSpeakers { speakers, next_id } = StoredSpeakers::load(&speakers_path);
 
     // Send the loaded speakers to the audio thread.
     for speaker in &speakers {
@@ -347,10 +444,17 @@ pub fn spawn(
         audio_msg_tx,
     };
 
+    // Load the existing sound sources if there are some.
+    let sources_path = assets.join(Path::new(SOURCES_FILE_STEM)).with_extension("json");
+    let audio_path = assets.join(Path::new(AUDIO_DIRECTORY_NAME));
+    let StoredSources { sources } = StoredSources::load(&sources_path, &audio_path);
+
+    // TODO: Send the sources to the composer/generator thread.
+
     let source_editor = SourceEditor {
         is_open: true,
         selected: None,
-        sources: Vec::new(),
+        sources,
     };
 
     let camera = Camera {
@@ -507,18 +611,33 @@ pub fn spawn(
                     next_id,
                     ..
                 },
+                source_editor: SourceEditor {
+                    sources,
+                    ..
+                },
                 ..
             } = state;
 
             // The conrod loop has ended - we'll save the state before closing the thread.
-            let json_string = {
+
+            // Save the speaker configuration.
+            let speakers_json_string = {
                 let stored_speakers = StoredSpeakers {
-                    speakers: speakers,
-                    next_id: next_id,
+                    speakers,
+                    next_id,
                 };
                 serde_json::to_string(&stored_speakers).expect("failed to serialize speaker layout")
             };
-            safe_file_save(&speakers_path, &json_string).expect("failed to save speakers file");
+            safe_file_save(&speakers_path, &speakers_json_string).expect("failed to save speakers file");
+
+            // Save the list of audio sources.
+            let sources_json_string = {
+                let stored_sources = StoredSources {
+                    sources,
+                };
+                serde_json::to_string(&stored_sources).expect("failed to serialize sources")
+            };
+            safe_file_save(&sources_path, &sources_json_string).expect("failed to save sources file");
         })
         .unwrap();
 
@@ -687,6 +806,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                         let button = widget::Button::new()
                             .label(&label)
                             .label_font_size(SMALL_FONT_SIZE)
+                            .label_x(position::Relative::Place(position::Place::Start(Some(10.0))))
                             .color(color);
                         item.set(button, gui);
 
@@ -933,15 +1053,15 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     Event::Item(item) => {
                         let selected = gui.state.source_editor.selected == Some(item.i);
                         let label = {
-                            ""
-                            //let source = &gui.state.source_editor.speakers[item.i];
-                            //let channel = speaker.audio.channel.load(atomic::Ordering::Relaxed);
-                            //let position = speaker.audio.point.load(atomic::Ordering::Relaxed);
-                            //let label = format!("{} - CH {} - ({}mx, {}my)",
-                            //                    speaker.name, channel,
-                            //                    (position.x.0 * 100.0).trunc() / 100.0,
-                            //                    (position.y.0 * 100.0).trunc() / 100.0);
-                            //label
+                            let source = &gui.state.source_editor.sources[item.i];
+                            match source.audio.kind {
+                                audio::source::Kind::Wav(ref wav) => {
+                                    format!("[{}CH WAV] {}", wav.channels, source.name)
+                                },
+                                audio::source::Kind::Realtime(ref rt) => {
+                                    format!("[{}CH RT] {}", rt.channels, source.name)
+                                },
+                            }
                         };
 
                         // Blue if selected, gray otherwise.
@@ -951,6 +1071,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         let button = widget::Button::new()
                             .label(&label)
                             .label_font_size(SMALL_FONT_SIZE)
+                            .label_x(position::Relative::Place(position::Place::Start(Some(10.0))))
                             .color(color);
                         item.set(button, gui);
 

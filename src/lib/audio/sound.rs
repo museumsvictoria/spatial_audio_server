@@ -2,7 +2,6 @@ use atomic::Atomic;
 use cgmath::Point2;
 use metres::Metres;
 use sample::Signal;
-use std::sync::Arc;
 
 /// `Sound`s can be thought of as a stack of three primary components:
 ///
@@ -23,34 +22,3 @@ pub struct Sound {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Id(u64);
-
-/// Items related to audio sources.
-///
-/// Audio sources come in two kinds:
-///
-/// 1. WAV - pre-rendered n-channel .wav files and
-/// 2. Realtime - input from some other currently running program (e.g. MSP, Live, etc).
-pub struct Source {
-    kind: Kind,
-}
-
-pub enum Kind {
-    Wav(Wav),
-    Realtime(Realtime),
-}
-
-struct Wav {
-    playhead: usize,
-    data: Data,
-}
-
-struct Data {
-    channels: usize,
-    // Interleaved audio data loaded entirely into memory.
-    interleaved_samples: Arc<[f32; 1]>,
-}
-
-struct Realtime {
-    channels: usize,
-    // Need some input type
-}
