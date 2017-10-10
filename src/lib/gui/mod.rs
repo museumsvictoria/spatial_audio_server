@@ -2,8 +2,8 @@ use atomic::Atomic;
 use audio;
 use cgmath;
 use config::Config;
-use conrod::{self, color, position, text, widget, Borderable, Colorable, FontSize, Labelable,
-             Positionable, Scalar, Sizeable, UiBuilder, UiCell, Widget};
+use conrod::{self, color, position, text, widget, Borderable, Color, Colorable, FontSize,
+             Labelable, Positionable, Scalar, Sizeable, UiBuilder, UiCell, Widget};
 use conrod::backend::glium::{glium, Renderer};
 use conrod::event::Input;
 use conrod::render::OwnedPrimitives;
@@ -98,6 +98,10 @@ const SOURCES_FILE_STEM: &'static str = "sources";
 
 // The name of the directory where the WAVs are stored.
 const AUDIO_DIRECTORY_NAME: &'static str = "audio";
+
+const SOUNDSCAPE_COLOR: Color = color::DARK_RED;
+const INSTALLATION_COLOR: Color = color::DARK_GREEN;
+const SCRIBBLES_COLOR: Color = color::DARK_PURPLE;
 
 fn first_speaker_id() -> audio::speaker::Id {
     audio::speaker::Id(0)
@@ -207,7 +211,10 @@ impl StoredSources {
                     },
                 };
                 let kind = audio::source::Kind::Wav(wav);
-                let audio = Arc::new(audio::Source { kind });
+                let role = Atomic::new(None);
+                let spread = Atomic::new(Metres(2.5));
+                let radians = Atomic::new(0.0);
+                let audio = Arc::new(audio::Source { kind, role, spread, radians });
                 let source = Source { name, audio };
                 stored.sources.push(source);
             }
@@ -437,7 +444,7 @@ pub fn spawn(
     }
 
     let speaker_editor = SpeakerEditor {
-        is_open: true,
+        is_open: false,
         speakers: speakers,
         selected: None,
         next_id: next_id,
@@ -633,18 +640,22 @@ pub fn spawn(
                     speakers,
                     next_id,
                 };
-                serde_json::to_string(&stored_speakers).expect("failed to serialize speaker layout")
+                serde_json::to_string_pretty(&stored_speakers)
+                    .expect("failed to serialize speaker layout")
             };
-            safe_file_save(&speakers_path, &speakers_json_string).expect("failed to save speakers file");
+            safe_file_save(&speakers_path, &speakers_json_string)
+                .expect("failed to save speakers file");
 
             // Save the list of audio sources.
             let sources_json_string = {
                 let stored_sources = StoredSources {
                     sources,
                 };
-                serde_json::to_string(&stored_sources).expect("failed to serialize sources")
+                serde_json::to_string_pretty(&stored_sources)
+                    .expect("failed to serialize sources")
             };
-            safe_file_save(&sources_path, &sources_json_string).expect("failed to save sources file");
+            safe_file_save(&sources_path, &sources_json_string)
+                .expect("failed to save sources file");
         })
         .unwrap();
 
@@ -704,11 +715,24 @@ widget_ids! {
         source_editor,
         source_editor_no_sources,
         source_editor_list,
-        source_editor_add,
+        source_editor_add_wav,
+        source_editor_add_realtime,
         source_editor_remove,
         source_editor_selected_canvas,
         source_editor_selected_none,
         source_editor_selected_name,
+        source_editor_selected_role_list,
+        source_editor_selected_wav_canvas,
+        source_editor_selected_wav_text,
+        source_editor_selected_wav_data,
+        source_editor_selected_channel_layout_canvas,
+        source_editor_selected_channel_layout_text,
+        source_editor_selected_channel_layout_spread,
+        source_editor_selected_channel_layout_rotation,
+        source_editor_selected_channel_layout_field,
+        source_editor_selected_channel_layout_spread_circle,
+        source_editor_selected_channel_layout_channels[],
+        source_editor_selected_channel_layout_channel_labels[],
 
         // The floorplan image and the canvas on which it is placed.
         floorplan_canvas,
@@ -1008,7 +1032,10 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     const PAD: Scalar = 6.0;
     const TEXT_PAD: Scalar = 20.0;
 
-    const SELECTED_CANVAS_H: Scalar = ITEM_HEIGHT * 2.0 + PAD * 3.0;
+    // 200.0 is just some magic, temp, extra height.
+    const WAV_CANVAS_H: Scalar = 100.0;
+    const CHANNEL_LAYOUT_CANVAS_H: Scalar = 200.0;
+    const SELECTED_CANVAS_H: Scalar = ITEM_HEIGHT * 2.0 + PAD * 5.0 + WAV_CANVAS_H + CHANNEL_LAYOUT_CANVAS_H;
     let source_editor_canvas_h = LIST_HEIGHT + ITEM_HEIGHT + SELECTED_CANVAS_H;
 
     let (area, event) = collapsible_area(is_open, "Source Editor", gui.ids.side_menu)
@@ -1059,14 +1086,14 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     // Instantiate a button for each source.
                     Event::Item(item) => {
                         let selected = gui.state.source_editor.selected == Some(item.i);
-                        let label = {
+                        let (label, is_wav) = {
                             let source = &gui.state.source_editor.sources[item.i];
                             match source.audio.kind {
                                 audio::source::Kind::Wav(ref wav) => {
-                                    format!("[{}CH WAV] {}", wav.channels, source.name)
+                                    (format!("[{}CH WAV] {}", wav.channels, source.name), true)
                                 },
                                 audio::source::Kind::Realtime(ref rt) => {
-                                    format!("[{}CH RT] {}", rt.channels, source.name)
+                                    (format!("[{}CH RT] {}", rt.channels, source.name), false)
                                 },
                             }
                         };
@@ -1084,13 +1111,14 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
                         // If the button or any of its children are capturing the mouse, display
                         // the `remove` button.
-                        let show_remove_button = gui.global_input().current.widget_capturing_mouse
-                            .map(|id| {
-                                id == item.widget_id ||
-                                gui.widget_graph()
-                                    .does_recursive_depth_edge_exist(item.widget_id, id)
-                            })
-                            .unwrap_or(false);
+                        let show_remove_button = !is_wav &&
+                            gui.global_input().current.widget_capturing_mouse
+                                .map(|id| {
+                                    id == item.widget_id ||
+                                    gui.widget_graph()
+                                        .does_recursive_depth_edge_exist(item.widget_id, id)
+                                })
+                                .unwrap_or(false);
 
                         if !show_remove_button {
                             continue;
@@ -1135,53 +1163,59 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             }
         }
 
-        // Only display the `add_source` button if there are less than `max` num channels.
-        let show_add_button = gui.state.source_editor.sources.len() < audio::MAX_CHANNELS;
-
-        if show_add_button {
-            let plus_size = (ITEM_HEIGHT * 0.66) as FontSize;
-            if widget::Button::new()
+        let plus_button_w = gui.rect_of(area.id).unwrap().w() / 2.0;
+        let plus_button = || -> widget::Button<widget::button::Flat> {
+            widget::Button::new()
                 .color(DARK_A)
-                .label("+")
-                .label_font_size(plus_size)
-                .align_middle_x_of(area.id)
-                .mid_top_with_margin_on(area.id, LIST_HEIGHT)
-                .w_of(area.id)
+                .w(plus_button_w)
+                .label_font_size(SMALL_FONT_SIZE)
                 .parent(area.id)
-                .set(gui.ids.source_editor_add, gui)
-                .was_clicked()
-            {
-                // let id = gui.state.speaker_editor.next_id;
-                // let name = format!("S{}", id.0);
-                // let channel = {
-                //     // Search for the next available channel starting from 0.
-                //     //
-                //     // Note: This is a super naiive way of searching however there should never
-                //     // be enough speakers to make it a problem.
-                //     let mut channel = 0;
-                //     'search: loop {
-                //         for speaker in &gui.state.speaker_editor.speakers {
-                //             if channel == speaker.audio.channel.load(atomic::Ordering::Relaxed) {
-                //                 channel += 1;
-                //                 continue 'search;
-                //             }
-                //         }
-                //         break channel;
-                //     }
-                // };
-                // let audio = Arc::new(audio::Speaker {
-                //     point: Atomic::new(gui.state.camera.position),
-                //     channel: AtomicUsize::new(channel),
-                // });
-                // let speaker = Speaker { id, name, audio };
+                .mid_top_with_margin_on(area.id, LIST_HEIGHT)
+        };
 
-                // gui.state.speaker_editor.audio_msg_tx
-                //     .send(audio::Message::AddSpeaker(speaker.id, speaker.audio.clone()))
-                //     .expect("audio_msg_tx was closed");
-                // gui.state.speaker_editor.speakers.push(speaker);
-                // gui.state.speaker_editor.next_id = audio::speaker::Id(id.0.wrapping_add(1));
-                // gui.state.speaker_editor.selected = Some(gui.state.speaker_editor.speakers.len() - 1);
-            }
+        let new_wav = plus_button()
+            .label("+ WAV")
+            .align_left_of(area.id)
+            .set(gui.ids.source_editor_add_wav, gui)
+            .was_clicked();
+
+        let new_realtime = plus_button()
+            .label("+ Realtime")
+            .align_right_of(area.id)
+            .set(gui.ids.source_editor_add_realtime, gui)
+            .was_clicked();
+
+        if new_wav || new_realtime {
+            // let id = gui.state.speaker_editor.next_id;
+            // let name = format!("S{}", id.0);
+            // let channel = {
+            //     // Search for the next available channel starting from 0.
+            //     //
+            //     // Note: This is a super naiive way of searching however there should never
+            //     // be enough speakers to make it a problem.
+            //     let mut channel = 0;
+            //     'search: loop {
+            //         for speaker in &gui.state.speaker_editor.speakers {
+            //             if channel == speaker.audio.channel.load(atomic::Ordering::Relaxed) {
+            //                 channel += 1;
+            //                 continue 'search;
+            //             }
+            //         }
+            //         break channel;
+            //     }
+            // };
+            // let audio = Arc::new(audio::Speaker {
+            //     point: Atomic::new(gui.state.camera.position),
+            //     channel: AtomicUsize::new(channel),
+            // });
+            // let speaker = Speaker { id, name, audio };
+
+            // gui.state.speaker_editor.audio_msg_tx
+            //     .send(audio::Message::AddSpeaker(speaker.id, speaker.audio.clone()))
+            //     .expect("audio_msg_tx was closed");
+            // gui.state.speaker_editor.speakers.push(speaker);
+            // gui.state.speaker_editor.next_id = audio::speaker::Id(id.0.wrapping_add(1));
+            // gui.state.speaker_editor.selected = Some(gui.state.speaker_editor.speakers.len() - 1);
         }
 
         let area_rect = gui.rect_of(area.id).unwrap();
@@ -1197,9 +1231,270 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             .align_middle_x_of(gui.ids.side_menu)
             .set(gui.ids.source_editor_selected_canvas, gui);
 
+        let selected_canvas_kid_area = gui.kid_area_of(gui.ids.source_editor_selected_canvas).unwrap();
+
         // If a source is selected, display its info.
         if let Some(i) = gui.state.source_editor.selected {
-            let Gui { ref mut state, ref mut ui, ref ids, .. } = *gui;
+            let Gui { ref mut state, ref mut ui, ref mut ids, .. } = *gui;
+            let sources = &mut state.source_editor.sources;
+
+            for event in widget::TextBox::new(&sources[i].name)
+                .mid_top_of(ids.source_editor_selected_canvas)
+                .kid_area_w_of(ids.source_editor_selected_canvas)
+                .w(selected_canvas_kid_area.w())
+                .parent(ids.source_editor_selected_canvas)
+                .h(ITEM_HEIGHT)
+                .color(DARK_A)
+                .font_size(SMALL_FONT_SIZE)
+                .set(ids.source_editor_selected_name, ui)
+            {
+                if let widget::text_box::Event::Update(string) = event {
+                    sources[i].name = string;
+                }
+            }
+
+            // TODO: 4 Role Buttons
+            let role_button_w = selected_canvas_kid_area.w() / 4.0;
+            const NUM_ROLES: usize = 4;
+            let (mut events, _) = widget::ListSelect::single(NUM_ROLES)
+                .flow_right()
+                .item_size(role_button_w)
+                .h(ITEM_HEIGHT)
+                .align_middle_x_of(ids.source_editor_selected_canvas)
+                .down_from(ids.source_editor_selected_name, PAD)
+                .set(ids.source_editor_selected_role_list, ui);
+
+            fn int_to_role(i: usize) -> Option<audio::source::Role> {
+                match i {
+                    1 => Some(audio::source::Role::Soundscape),
+                    2 => Some(audio::source::Role::Installation),
+                    3 => Some(audio::source::Role::Scribbles),
+                    _ => None
+                }
+            }
+
+            fn role_to_int(role: Option<audio::source::Role>) -> usize {
+                match role {
+                    None => 0,
+                    Some(audio::source::Role::Soundscape) => 1,
+                    Some(audio::source::Role::Installation) => 2,
+                    Some(audio::source::Role::Scribbles) => 3,
+                }
+            }
+
+            fn role_color(role: Option<audio::source::Role>) -> Color {
+                match role {
+                    None => color::DARK_GREY,
+                    Some(audio::source::Role::Soundscape) => SOUNDSCAPE_COLOR,
+                    Some(audio::source::Role::Installation) => INSTALLATION_COLOR,
+                    Some(audio::source::Role::Scribbles) => SCRIBBLES_COLOR,
+                }
+            }
+
+            fn role_label(role: Option<audio::source::Role>) -> &'static str {
+                match role {
+                    None => "NONE",
+                    Some(audio::source::Role::Soundscape) => "SCAPE",
+                    Some(audio::source::Role::Installation) => "INST",
+                    Some(audio::source::Role::Scribbles) => "SCRIB",
+                }
+            }
+
+            let selected_role = sources[i].audio.role.load(atomic::Ordering::Relaxed);
+            let role_selected = |j| int_to_role(j) == selected_role;
+
+            while let Some(event) = events.next(ui, |j| role_selected(j)) {
+                use conrod::widget::list_select::Event;
+                match event {
+
+                    // Instantiate a button for each source.
+                    Event::Item(item) => {
+                        let selected = role_selected(item.i);
+                        let role = int_to_role(item.i);
+                        let label = role_label(role);
+
+                        // Blue if selected, gray otherwise.
+                        let color = if selected { role_color(role) } else { color::CHARCOAL };
+
+                        // Use `Button`s for the selectable items.
+                        let button = widget::Button::new()
+                            .label(&label)
+                            .label_font_size(SMALL_FONT_SIZE)
+                            .color(color);
+                        item.set(button, ui);
+                    },
+
+                    // Update the selected source.
+                    Event::Selection(idx) => {
+                        let source = &sources[i];
+                        source.audio.role.store(int_to_role(idx), atomic::Ordering::Relaxed);
+                    },
+
+                    _ => (),
+                }
+            }
+
+            // Kind-specific data.
+            let (kind_canvas_id, channels) = match sources[i].audio.kind {
+                audio::source::Kind::Wav(ref wav) => {
+
+                    // Instantiate a small canvas for displaying wav-specific stuff.
+                    widget::Canvas::new()
+                        .mid_left_of(ids.source_editor_selected_canvas)
+                        .down(PAD)
+                        .parent(ids.source_editor_selected_canvas)
+                        .w(selected_canvas_kid_area.w())
+                        .color(color::CHARCOAL)
+                        .h(WAV_CANVAS_H)
+                        .pad(PAD)
+                        .set(ids.source_editor_selected_wav_canvas, ui);
+
+                    // Display the immutable WAV data.
+                    widget::Text::new("WAV DATA")
+                        .font_size(SMALL_FONT_SIZE)
+                        .top_left_of(ids.source_editor_selected_wav_canvas)
+                        .set(ids.source_editor_selected_wav_text, ui);
+                    let duration_ms = wav.duration_ms();
+                    let duration_line = if duration_ms.ms() > 1_000.0 {
+                        format!("Duration: {:.4} seconds", duration_ms.ms() / 1_000.0)
+                    } else {
+                        format!("Duration: {:.4} milliseconds", duration_ms.ms())
+                    };
+                    let file_line = format!("File: {}", wav.path.file_name().unwrap().to_str().unwrap());
+                    let data = format!("{}\nChannels: {}\nSample Rate: {}\n{}",
+                                       file_line, wav.channels, wav.sample_hz, duration_line);
+                    widget::Text::new(&data)
+                        .font_size(SMALL_FONT_SIZE)
+                        .align_left_of(ids.source_editor_selected_wav_text)
+                        .down(PAD)
+                        .line_spacing(PAD)
+                        .set(ids.source_editor_selected_wav_data, ui);
+
+                    (ids.source_editor_selected_wav_canvas, wav.channels)
+                },
+                audio::source::Kind::Realtime(ref realtime) => {
+                    unreachable!();
+                },
+            };
+
+            // Channel layout widgets.
+            widget::Canvas::new()
+                .down_from(kind_canvas_id, PAD)
+                .h(CHANNEL_LAYOUT_CANVAS_H)
+                .w(selected_canvas_kid_area.w())
+                .pad(PAD)
+                .parent(ids.source_editor_selected_canvas)
+                .color(color::CHARCOAL)
+                .set(ids.source_editor_selected_channel_layout_canvas, ui);
+
+            // Display the immutable WAV data.
+            widget::Text::new("CHANNEL LAYOUT")
+                .font_size(SMALL_FONT_SIZE)
+                .top_left_of(ids.source_editor_selected_channel_layout_canvas)
+                .set(ids.source_editor_selected_channel_layout_text, ui);
+
+            let channel_layout_kid_area = ui.kid_area_of(ids.source_editor_selected_channel_layout_canvas).unwrap();
+            let slider_w = channel_layout_kid_area.w() / 2.0 - PAD / 2.0;
+
+            let slider = |value, min, max| {
+                widget::Slider::new(value, min, max)
+                    .label_font_size(SMALL_FONT_SIZE)
+                    .w(slider_w)
+            };
+
+            // Slider for controlling how far apart speakers should be spread.
+            const MIN_SPREAD: f32 = 0.0;
+            const MAX_SPREAD: f32 = 10.0;
+            let mut spread = sources[i].audio.spread.load(atomic::Ordering::Relaxed).0 as f32;
+            let label = format!("Spread: {:.2} metres", spread);
+            for new_spread in slider(spread, MIN_SPREAD, MAX_SPREAD)
+                .skew(2.0)
+                .label(&label)
+                .mid_left_of(ids.source_editor_selected_channel_layout_canvas)
+                .down(PAD * 1.5)
+                .set(ids.source_editor_selected_channel_layout_spread, ui)
+            {
+                spread = new_spread;
+                sources[i].audio.spread.store(Metres(spread as _), atomic::Ordering::Relaxed);
+            }
+
+            // Slider for controlling how channels should be rotated.
+            const MIN_RADIANS: f32 = 0.0;
+            const MAX_RADIANS: f32 = std::f32::consts::PI * 2.0;
+            let mut rotation = sources[i].audio.radians.load(atomic::Ordering::Relaxed);
+            let label = format!("Rotate: {:.2} radians", rotation);
+            for new_rotation in slider(rotation, MIN_RADIANS, MAX_RADIANS)
+                .label(&label)
+                .mid_right_of(ids.source_editor_selected_channel_layout_canvas)
+                .align_middle_y_of(ids.source_editor_selected_channel_layout_spread)
+                .set(ids.source_editor_selected_channel_layout_rotation, ui)
+            {
+                rotation = new_rotation;
+                sources[i].audio.radians.store(rotation, atomic::Ordering::Relaxed);
+            }
+
+            // The field over which the channel layout will be visualised.
+            let spread_rect = ui.rect_of(ids.source_editor_selected_channel_layout_spread).unwrap();
+            let layout_top = spread_rect.bottom() - PAD;
+            let layout_bottom = channel_layout_kid_area.bottom();
+            let layout_h = layout_top - layout_bottom;
+            const CHANNEL_CIRCLE_RADIUS: Scalar = PAD * 2.0;
+            let field_h = layout_h - CHANNEL_CIRCLE_RADIUS * 2.0;
+            let field_radius = field_h / 2.0;
+            widget::Circle::fill(field_radius)
+                .color(DARK_A)
+                .down_from(ids.source_editor_selected_channel_layout_spread, PAD + CHANNEL_CIRCLE_RADIUS)
+                .align_middle_x_of(ids.source_editor_selected_channel_layout_canvas)
+                .set(ids.source_editor_selected_channel_layout_field, ui);
+
+            // Circle demonstrating the actual spread distance of the channels relative to min/max.
+            let min_spread_circle_radius = field_radius / 2.0;
+            let spread_circle_radius = conrod::utils::map_range(spread,
+                                                                MIN_SPREAD, MAX_SPREAD,
+                                                                min_spread_circle_radius, field_radius);
+            widget::Circle::outline(spread_circle_radius)
+                .color(color::DARK_BLUE)
+                .middle_of(ids.source_editor_selected_channel_layout_field)
+                .set(ids.source_editor_selected_channel_layout_spread_circle, ui);
+
+            // A circle for each channel along the edge of the `spread_circle`.
+            if ids.source_editor_selected_channel_layout_channels.len() < channels {
+                let id_gen = &mut ui.widget_id_generator();
+                ids.source_editor_selected_channel_layout_channels.resize(channels, id_gen);
+            }
+            if ids.source_editor_selected_channel_layout_channel_labels.len() < channels {
+                let id_gen = &mut ui.widget_id_generator();
+                ids.source_editor_selected_channel_layout_channel_labels.resize(channels, id_gen);
+            }
+            for i in 0..channels {
+
+                // The channel circle.
+                let id = ids.source_editor_selected_channel_layout_channels[i];
+                let (x, y) = if channels == 1 {
+                    (0.0, 0.0)
+                } else {
+                    let phase = i as f32 / channels as f32;
+                    let default_radians = phase * MAX_RADIANS;
+                    let radians = (rotation + default_radians) as Scalar;
+                    let x = -radians.cos() * spread_circle_radius;
+                    let y = radians.sin() * spread_circle_radius;
+                    (x, y)
+                };
+                widget::Circle::fill(CHANNEL_CIRCLE_RADIUS)
+                    .color(color::BLUE)
+                    .x_y_relative_to(ids.source_editor_selected_channel_layout_spread_circle, x, y)
+                    .parent(ids.source_editor_selected_channel_layout_spread_circle)
+                    .set(id, ui);
+
+                // The label showing the channel number (starting from 1).
+                let label_id = ids.source_editor_selected_channel_layout_channel_labels[i];
+                let label = format!("{}", i+1);
+                widget::Text::new(&label)
+                    .middle_of(id)
+                    .y_relative_to(id, SMALL_FONT_SIZE as Scalar * 0.13)
+                    .font_size(SMALL_FONT_SIZE)
+                    .set(label_id, ui);
+            }
 
         // Otherwise no source is selected.
         } else {
