@@ -23,6 +23,7 @@ mod gui;
 mod interaction;
 mod metres;
 mod osc;
+mod serde_extra;
 
 /// Run the Beyond Perception Audio Server.
 pub fn run() {

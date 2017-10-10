@@ -1,10 +1,13 @@
 use hound;
 use std::path::PathBuf;
+use time_calc::{Ms, Samples, SampleHz};
 
 #[derive(Deserialize, Serialize)]
 pub struct Wav {
     pub path: PathBuf,
     pub channels: usize,
+    pub duration: Samples,
+    pub sample_hz: SampleHz,
 }
 
 impl Wav {
@@ -13,6 +16,13 @@ impl Wav {
         let reader = hound::WavReader::open(&path)?;
         let spec = reader.spec();
         let channels = spec.channels as usize;
-        Ok(Wav { path, channels })
+        let sample_hz = spec.sample_rate as _;
+        let duration = Samples(reader.duration() as _);
+        Ok(Wav { path, channels, duration, sample_hz })
+    }
+
+    /// The duration of the `Wav` in milliseconds.
+    pub fn duration_ms(&self) -> Ms {
+        self.duration.to_ms(self.sample_hz)
     }
 }

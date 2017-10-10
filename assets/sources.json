@@ -1,1 +1,100 @@
-{"sources":[{"name":"Elemental - Air Movement_13","audio":{"kind":{"Wav":{"path":"/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Air Movement_13.wav","channels":2}}}},{"name":"Elemental - Air Movement_20","audio":{"kind":{"Wav":{"path":"/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Air Movement_20.wav","channels":2}}}},{"name":"Elemental - Chimes Big_3","audio":{"kind":{"Wav":{"path":"/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Chimes Big_3.wav","channels":2}}}},{"name":"Elemental - Electricity Impact_5","audio":{"kind":{"Wav":{"path":"/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Electricity Impact_5.wav","channels":2}}}},{"name":"Elemental - Flame Cast_3","audio":{"kind":{"Wav":{"path":"/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Flame Cast_3.wav","channels":2}}}},{"name":"Mechanism - Clicks_Clock_001","audio":{"kind":{"Wav":{"path":"/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Mechanism - Clicks_Clock_001.wav","channels":2}}}}]}
+{
+  "sources": [
+    {
+      "name": "Elemental - Air Movement_13",
+      "audio": {
+        "kind": {
+          "Wav": {
+            "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Air Movement_13.wav",
+            "channels": 2,
+            "duration": 131432,
+            "sample_hz": 44100.0
+          }
+        },
+        "role": "Soundscape",
+        "spread": 2.5,
+        "radians": 0.0
+      }
+    },
+    {
+      "name": "Elemental - Air Movement_20",
+      "audio": {
+        "kind": {
+          "Wav": {
+            "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Air Movement_20.wav",
+            "channels": 2,
+            "duration": 153942,
+            "sample_hz": 44100.0
+          }
+        },
+        "role": "Soundscape",
+        "spread": 2.499299287796021,
+        "radians": 0.0
+      }
+    },
+    {
+      "name": "Elemental - Chimes Big_3",
+      "audio": {
+        "kind": {
+          "Wav": {
+            "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Chimes Big_3.wav",
+            "channels": 2,
+            "duration": 220500,
+            "sample_hz": 44100.0
+          }
+        },
+        "role": "Soundscape",
+        "spread": 2.5,
+        "radians": 0.0
+      }
+    },
+    {
+      "name": "Elemental - Electricity Impact_5",
+      "audio": {
+        "kind": {
+          "Wav": {
+            "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Electricity Impact_5.wav",
+            "channels": 2,
+            "duration": 183117,
+            "sample_hz": 44100.0
+          }
+        },
+        "role": "Soundscape",
+        "spread": 2.5,
+        "radians": 0.0
+      }
+    },
+    {
+      "name": "Elemental - Flame Cast_3",
+      "audio": {
+        "kind": {
+          "Wav": {
+            "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Flame Cast_3.wav",
+            "channels": 2,
+            "duration": 136581,
+            "sample_hz": 44100.0
+          }
+        },
+        "role": "Soundscape",
+        "spread": 2.5,
+        "radians": 0.0
+      }
+    },
+    {
+      "name": "Mechanism - Clicks_Clock_001",
+      "audio": {
+        "kind": {
+          "Wav": {
+            "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Mechanism - Clicks_Clock_001.wav",
+            "channels": 2,
+            "duration": 144784,
+            "sample_hz": 48000.0
+          }
+        },
+        "role": "Soundscape",
+        "spread": 2.5,
+        "radians": 0.0
+      }
+    }
+  ]
+}
