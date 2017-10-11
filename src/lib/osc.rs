@@ -6,14 +6,13 @@ pub mod input {
     use std::sync::mpsc;
 
     /// Spawn the OSC receiver thread.
-    pub fn spawn(addr: SocketAddrV4)
-        -> (std::thread::JoinHandle<()>,
-            mpsc::Receiver<(SocketAddr, OscMessage)>,
-            mpsc::Receiver<Interaction>)
-    {
+    pub fn spawn(
+        addr: SocketAddrV4,
+    ) -> (std::thread::JoinHandle<()>,
+              mpsc::Receiver<(SocketAddr, OscMessage)>,
+              mpsc::Receiver<Interaction>) {
         let (msg_tx, msg_rx) = mpsc::channel();
         let (interaction_gui_tx, interaction_gui_rx) = mpsc::channel();
-        //let (interaction_tx, interaction_rx) = mpsc::channel();
 
         let handle = std::thread::Builder::new()
             .name("osc_in".into())
@@ -63,5 +62,4 @@ pub mod input {
     }
 }
 
-pub mod output {
-}
+pub mod output {}

@@ -1,5 +1,6 @@
 use audio;
 use cgmath;
+use composer;
 use config::Config;
 use conrod::{self, color, position, text, widget, Borderable, Color, Colorable, FontSize,
              Labelable, Positionable, Scalar, Sizeable, UiBuilder, UiCell, Widget};
@@ -128,8 +129,8 @@ struct SourceEditor {
     sources: Vec<Source>,
     // The index of the selected source.
     selected: Option<usize>,
-    // The next ID to be used for a new speaker.
-    //next_id: SourceId,
+    // The next ID to be used for a new source.
+    next_id: audio::source::Id,
 }
 
 // A GUI view of an audio source.
@@ -137,6 +138,7 @@ struct SourceEditor {
 struct Source {
     name: String,
     audio: audio::Source,
+    id: audio::source::Id,
 }
 
 // A data structure from which sources can be saved/loaded.
@@ -144,11 +146,18 @@ struct Source {
 struct StoredSources {
     #[serde(default = "Vec::new")]
     sources: Vec<Source>,
+    #[serde(default = "first_source_id")]
+    next_id: audio::source::Id,
+}
+
+fn first_source_id() -> audio::source::Id {
+    audio::source::Id::INITIAL
 }
 
 impl StoredSources {
     fn new() -> Self {
         StoredSources {
+            next_id: audio::source::Id::INITIAL,
             sources: Vec::new(),
         }
     }
@@ -212,8 +221,10 @@ impl StoredSources {
                 let spread = Metres(2.5);
                 let radians = 0.0;
                 let audio = audio::Source { kind, role, spread, radians };
-                let source = Source { name, audio };
+                let id = stored.next_id;
+                let source = Source { name, audio, id };
                 stored.sources.push(source);
+                stored.next_id = audio::source::Id(stored.next_id.0 + 1);
             }
         }
 
@@ -408,6 +419,7 @@ pub fn spawn(
     osc_msg_rx: mpsc::Receiver<(SocketAddr, OscMessage)>,
     interaction_rx: mpsc::Receiver<Interaction>,
     audio_msg_tx: mpsc::Sender<audio::Message>,
+    composer_msg_tx: mpsc::Sender<composer::Message>,
 ) -> (std::thread::JoinHandle<()>,
       Renderer,
       ImageMap,
@@ -440,29 +452,33 @@ pub fn spawn(
 
     // Send the loaded speakers to the audio thread.
     for speaker in &speakers {
-        audio_msg_tx
-            .send(audio::Message::UpdateSpeaker(speaker.id, speaker.audio.clone()))
-            .expect("audio_msg_tx was closed");
+        let msg = audio::Message::UpdateSpeaker(speaker.id, speaker.audio.clone());
+        audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
     }
 
     let speaker_editor = SpeakerEditor {
         is_open: false,
-        speakers: speakers,
         selected: None,
-        next_id: next_id,
+        speakers,
+        next_id,
         audio_msg_tx,
     };
 
     // Load the existing sound sources if there are some.
     let sources_path = assets.join(Path::new(SOURCES_FILE_STEM)).with_extension("json");
     let audio_path = assets.join(Path::new(AUDIO_DIRECTORY_NAME));
-    let StoredSources { sources } = StoredSources::load(&sources_path, &audio_path);
+    let StoredSources { sources, next_id } = StoredSources::load(&sources_path, &audio_path);
 
-    // TODO: Send the sources to the composer/generator thread.
+    // Send the loaded sources to the composer thread.
+    for source in &sources {
+        let msg = composer::Message::UpdateSource(source.id, source.audio.clone());
+        composer_msg_tx.send(msg).expect("composer_msg_tx was closed");
+    }
 
     let source_editor = SourceEditor {
         is_open: true,
         selected: None,
+        next_id,
         sources,
     };
 
@@ -624,11 +640,12 @@ pub fn spawn(
             let State {
                 speaker_editor: SpeakerEditor {
                     speakers,
-                    next_id,
+                    next_id: next_speaker_id,
                     ..
                 },
                 source_editor: SourceEditor {
                     sources,
+                    next_id: next_source_id,
                     ..
                 },
                 ..
@@ -640,7 +657,7 @@ pub fn spawn(
             let speakers_json_string = {
                 let stored_speakers = StoredSpeakers {
                     speakers,
-                    next_id,
+                    next_id: next_speaker_id,
                 };
                 serde_json::to_string_pretty(&stored_speakers)
                     .expect("failed to serialize speaker layout")
@@ -652,6 +669,7 @@ pub fn spawn(
             let sources_json_string = {
                 let stored_sources = StoredSources {
                     sources,
+                    next_id: next_source_id,
                 };
                 serde_json::to_string_pretty(&stored_sources)
                     .expect("failed to serialize sources")

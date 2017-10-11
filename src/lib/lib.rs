@@ -17,6 +17,7 @@ use conrod::backend::glium::glium;
 use std::net::{Ipv4Addr, SocketAddrV4};
 
 mod audio;
+mod composer;
 mod config;
 mod gui;
 mod interaction;
@@ -61,6 +62,9 @@ pub fn run() {
     let (_audio_backend_thread_handle, mut cpal_voice) =
         audio::backend::spawn(audio_requester, SAMPLE_HZ).unwrap();
 
+    // Spawn the composer thread.
+    let (composer_thread_handle, composer_msg_tx) = composer::spawn(audio_msg_tx.clone());
+
     // Spawn the GUI thread.
     //
     // The `gui_msg_tx` is a channel for sending input to the GUI thread.
@@ -69,7 +73,14 @@ pub fn run() {
     // `gui_render_rx` channel.
     let proxy = events_loop.create_proxy();
     let (gui_thread_handle, mut renderer, image_map, gui_msg_tx, gui_render_rx) =
-        gui::spawn(&assets, config, &display, proxy, osc_msg_rx, interaction_gui_rx, audio_msg_tx.clone());
+        gui::spawn(&assets,
+                   config,
+                   &display,
+                   proxy,
+                   osc_msg_rx,
+                   interaction_gui_rx,
+                   audio_msg_tx.clone(),
+                   composer_msg_tx.clone());
 
     // Run the event loop.
     let mut closed = false;
@@ -104,6 +115,7 @@ pub fn run() {
                         closed = true;
                         audio_msg_tx.send(audio::Message::Exit).unwrap();
                         gui_msg_tx.send(gui::Message::Exit).unwrap();
+                        composer_msg_tx.send(composer::Message::Exit).unwrap();
                         return glium::glutin::ControlFlow::Break;
                     },
                     // We must re-draw on `Resized`, as the event loops become blocked during
@@ -128,6 +140,9 @@ pub fn run() {
 
     // Wait for the audio thread to finish.
     audio_thread_handle.join().unwrap();
+
+    // Wait for the composer thread to finish.
+    composer_thread_handle.join().unwrap();
 
     // Wait for the GUI thread to finish saving files, etc.
     gui_thread_handle.join().unwrap();

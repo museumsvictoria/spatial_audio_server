@@ -29,7 +29,7 @@ pub struct Source {
 pub struct Id(pub u64);
 
 impl Id {
-    const INITIAL: Self = Id(0);
+    pub const INITIAL: Self = Id(0);
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Deserialize, Serialize)]
