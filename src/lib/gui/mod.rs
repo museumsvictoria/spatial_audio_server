@@ -32,6 +32,7 @@ struct Gui<'a> {
     fonts: &'a Fonts,
     ids: &'a mut Ids,
     state: &'a mut State,
+    channels: &'a Channels,
 }
 
 /// Messages received by the GUI thread.
@@ -59,6 +60,11 @@ struct State {
     interaction_log_is_open: bool,
 }
 
+struct Channels {
+    audio_msg_tx: mpsc::Sender<audio::Message>,
+    composer_msg_tx: mpsc::Sender<composer::Message>,
+}
+
 struct SpeakerEditor {
     is_open: bool,
     // The list of speaker outputs.
@@ -67,8 +73,6 @@ struct SpeakerEditor {
     selected: Option<usize>,
     // The next ID to be used for a new speaker.
     next_id: audio::speaker::Id,
-    // A channel for adding/removing speakers.
-    audio_msg_tx: mpsc::Sender<audio::Message>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -461,7 +465,6 @@ pub fn spawn(
         selected: None,
         speakers,
         next_id,
-        audio_msg_tx,
     };
 
     // Load the existing sound sources if there are some.
@@ -486,6 +489,11 @@ pub fn spawn(
         floorplan_pixels_per_metre: config.floorplan_pixels_per_metre,
         position: cgmath::Point2 { x: Metres(0.0), y: Metres(0.0) },
         zoom: 0.0,
+    };
+
+    let channels = Channels {
+        audio_msg_tx,
+        composer_msg_tx,
     };
 
     // State that is specific to the GUI itself.
@@ -589,6 +597,7 @@ pub fn spawn(
                         images: &images,
                         fonts: &fonts,
                         state: &mut state,
+                        channels: &channels,
                     };
                     set_widgets(&mut gui);
                 }
@@ -907,9 +916,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
             if let Some(i) = maybe_remove_index {
                 let speaker = gui.state.speaker_editor.speakers.remove(i);
                 let msg = audio::Message::RemoveSpeaker(speaker.id);
-                gui.state.speaker_editor.audio_msg_tx
-                    .send(msg)
-                    .expect("audio_mst_tx was closed");
+                gui.channels.audio_msg_tx.send(msg).expect("audio_mst_tx was closed");
             }
         }
 
@@ -953,9 +960,8 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                 };
                 let speaker = Speaker { id, name, audio };
 
-                gui.state.speaker_editor.audio_msg_tx
-                    .send(audio::Message::UpdateSpeaker(speaker.id, speaker.audio.clone()))
-                    .expect("audio_msg_tx was closed");
+                let msg = audio::Message::UpdateSpeaker(speaker.id, speaker.audio.clone());
+                gui.channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
                 gui.state.speaker_editor.speakers.push(speaker);
                 gui.state.speaker_editor.next_id = audio::speaker::Id(id.0.wrapping_add(1));
                 gui.state.speaker_editor.selected = Some(gui.state.speaker_editor.speakers.len() - 1);
@@ -977,8 +983,8 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
 
         // If a speaker is selected, display its info.
         if let Some(i) = gui.state.speaker_editor.selected {
-            let Gui { ref mut state, ref mut ui, ref ids, .. } = *gui;
-            let SpeakerEditor { ref mut speakers, ref audio_msg_tx, .. } = state.speaker_editor;
+            let Gui { ref mut state, ref mut ui, ref ids, ref channels, .. } = *gui;
+            let SpeakerEditor { ref mut speakers, .. } = state.speaker_editor;
 
             for event in widget::TextBox::new(&speakers[i].name)
                 .mid_top_of(ids.speaker_editor_selected_canvas)
@@ -994,7 +1000,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                 }
             }
 
-            let channels: Vec<String> = (0..audio::MAX_CHANNELS)
+            let channel_vec: Vec<String> = (0..audio::MAX_CHANNELS)
                 .map(|ch| {
                     speakers
                         .iter()
@@ -1006,7 +1012,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                 .collect();
             let selected = speakers[i].audio.channel;
 
-            for new_index in widget::DropDownList::new(&channels, Some(selected))
+            for new_index in widget::DropDownList::new(&channel_vec, Some(selected))
                 .down_from(ids.speaker_editor_selected_name, PAD)
                 .align_middle_x_of(ids.side_menu)
                 .kid_area_w_of(ids.speaker_editor_selected_canvas)
@@ -1021,7 +1027,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
             {
                 speakers[i].audio.channel = new_index;
                 let msg = audio::Message::UpdateSpeaker(speakers[i].id, speakers[i].audio.clone());
-                audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
 
                 // If an existing speaker was assigned to `index`, swap it with the original
                 // selection.
@@ -1032,7 +1038,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                 if let Some(ix) = maybe_index {
                     speakers[ix].audio.channel = selected;
                     let msg = audio::Message::UpdateSpeaker(speakers[ix].id, speakers[ix].audio.clone());
-                    audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                    channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
                 }
             }
 
@@ -1261,7 +1267,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
         // If a source is selected, display its info.
         if let Some(i) = gui.state.source_editor.selected {
-            let Gui { ref mut state, ref mut ui, ref mut ids, .. } = *gui;
+            let Gui { ref mut state, ref mut ui, ref mut ids, ref channels, .. } = *gui;
             let sources = &mut state.source_editor.sources;
 
             for event in widget::TextBox::new(&sources[i].name)
@@ -1345,6 +1351,8 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     Event::Selection(idx) => {
                         let source = &mut sources[i];
                         source.audio.role = int_to_role(idx);
+                        let msg = composer::Message::UpdateSource(source.id, source.audio.clone());
+                        channels.composer_msg_tx.send(msg).expect("composer_msg_tx was closed");
                     },
 
                     _ => (),
@@ -1352,7 +1360,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             }
 
             // Kind-specific data.
-            let (kind_canvas_id, channels) = match sources[i].audio.kind {
+            let (kind_canvas_id, num_channels) = match sources[i].audio.kind {
                 audio::source::Kind::Wav(ref wav) => {
 
                     // Instantiate a small canvas for displaying wav-specific stuff.
@@ -1433,6 +1441,8 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             {
                 spread = new_spread;
                 sources[i].audio.spread = Metres(spread as _);
+                let msg = composer::Message::UpdateSource(sources[i].id, sources[i].audio.clone());
+                channels.composer_msg_tx.send(msg).expect("composer_msg_tx was closed");
             }
 
             // Slider for controlling how channels should be rotated.
@@ -1448,6 +1458,8 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             {
                 rotation = new_rotation;
                 sources[i].audio.radians = rotation;
+                let msg = composer::Message::UpdateSource(sources[i].id, sources[i].audio.clone());
+                channels.composer_msg_tx.send(msg).expect("composer_msg_tx was closed");
             }
 
             // The field over which the channel layout will be visualised.
@@ -1475,22 +1487,22 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .set(ids.source_editor_selected_channel_layout_spread_circle, ui);
 
             // A circle for each channel along the edge of the `spread_circle`.
-            if ids.source_editor_selected_channel_layout_channels.len() < channels {
+            if ids.source_editor_selected_channel_layout_channels.len() < num_channels {
                 let id_gen = &mut ui.widget_id_generator();
-                ids.source_editor_selected_channel_layout_channels.resize(channels, id_gen);
+                ids.source_editor_selected_channel_layout_channels.resize(num_channels, id_gen);
             }
-            if ids.source_editor_selected_channel_layout_channel_labels.len() < channels {
+            if ids.source_editor_selected_channel_layout_channel_labels.len() < num_channels {
                 let id_gen = &mut ui.widget_id_generator();
-                ids.source_editor_selected_channel_layout_channel_labels.resize(channels, id_gen);
+                ids.source_editor_selected_channel_layout_channel_labels.resize(num_channels, id_gen);
             }
-            for i in 0..channels {
+            for i in 0..num_channels {
 
                 // The channel circle.
                 let id = ids.source_editor_selected_channel_layout_channels[i];
-                let (x, y) = if channels == 1 {
+                let (x, y) = if num_channels == 1 {
                     (0.0, 0.0)
                 } else {
-                    let phase = i as f32 / channels as f32;
+                    let phase = i as f32 / num_channels as f32;
                     let default_radians = phase * MAX_RADIANS;
                     let radians = (rotation + default_radians) as Scalar;
                     let x = -radians.cos() * spread_circle_radius;
@@ -1790,7 +1802,7 @@ fn set_widgets(gui: &mut Gui) {
 
     // Draw the speakers over the floorplan.
     {
-        let Gui { ref mut ids, ref mut state, ref mut ui, .. } = *gui;
+        let Gui { ref mut ids, ref mut state, ref mut ui, ref channels, .. } = *gui;
 
         // Ensure there are enough IDs available.
         let num_speakers = state.speaker_editor.speakers.len();
@@ -1822,7 +1834,7 @@ fn set_widgets(gui: &mut Gui) {
             let dragged_y_m = state.camera.scalar_to_metres(dragged_y);
 
             let position = {
-                let SpeakerEditor { ref mut speakers, ref audio_msg_tx, .. } = state.speaker_editor;
+                let SpeakerEditor { ref mut speakers, .. } = state.speaker_editor;
                 let p = speakers[i].audio.point;
                 let x = p.x + dragged_x_m;
                 let y = p.y + dragged_y_m;
@@ -1830,7 +1842,7 @@ fn set_widgets(gui: &mut Gui) {
                 if p != new_p {
                     speakers[i].audio.point = new_p;
                     let msg = audio::Message::UpdateSpeaker(speakers[i].id, speakers[i].audio.clone());
-                    audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                    channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
                 }
                 new_p
             };
