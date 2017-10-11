@@ -36,6 +36,7 @@ pub enum Message {
     /// All frames in `buffer` should be written to and then sent back to the audio IO thread as
     /// soon as possible via the given `buffer_tx`.
     RequestAudio(requester::Buffer<Frame>, f64),
+
     /// Add a new sound to the map.
     AddSound(sound::Id, Sound),
     /// Remove a sound from the map.
@@ -107,8 +108,8 @@ fn run(msg_rx: mpsc::Receiver<Message>) {
                     for i in 0..sound.channels {
 
                         // Find the absolute position of the channel.
-                        //let channel_point = unimplemented!();
-                        let channel_point = sound.point;
+                        let channel_point =
+                            channel_point(sound.point, i, sound.channels, sound.spread, sound.radians);
 
                         // Find the speakers that are closest to the channel.
                         find_closest_speakers(&channel_point, &mut speakers_in_proximity, &speakers);
@@ -144,6 +145,29 @@ fn run(msg_rx: mpsc::Receiver<Message>) {
 
             Message::Exit => break,
         }
+    }
+}
+
+pub fn channel_point(
+    sound_point: Point2<Metres>,
+    channel_index: usize,
+    total_channels: usize,
+    spread: Metres,
+    radians: f32,
+) -> Point2<Metres>
+{
+    assert!(channel_index < total_channels);
+    if total_channels == 1 {
+        sound_point
+    } else {
+        let phase = channel_index as f32 / total_channels as f32;
+        let default_radians = phase * std::f32::consts::PI * 2.0;
+        let radians = (radians + default_radians) as f64;
+        let rel_x = Metres(-radians.cos() * spread.0);
+        let rel_y = Metres(radians.sin() * spread.0);
+        let x = sound_point.x + rel_x;
+        let y = sound_point.y + rel_y;
+        Point2 { x, y }
     }
 }
 
