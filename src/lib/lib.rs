@@ -1,4 +1,3 @@
-extern crate atomic;
 extern crate cgmath;
 #[macro_use] extern crate conrod;
 #[macro_use] extern crate custom_derive;
@@ -23,7 +22,6 @@ mod gui;
 mod interaction;
 mod metres;
 mod osc;
-mod serde_extra;
 
 /// Run the Beyond Perception Audio Server.
 pub fn run() {

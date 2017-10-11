@@ -1,4 +1,3 @@
-use atomic::Atomic;
 use audio;
 use cgmath;
 use config::Config;
@@ -13,7 +12,6 @@ use metres::Metres;
 use rosc::OscMessage;
 use serde_json;
 use std;
-use std::sync::atomic;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::fs::File;
@@ -21,8 +19,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
-use std::sync::{mpsc, Arc};
-use std::sync::atomic::AtomicUsize;
+use std::sync::mpsc;
 
 mod theme;
 
@@ -76,7 +73,7 @@ struct SpeakerEditor {
 #[derive(Deserialize, Serialize)]
 struct Speaker {
     // Speaker state shared with the audio thread.
-    audio: Arc<audio::Speaker>,
+    audio: audio::Speaker,
     name: String,
     id: audio::speaker::Id,
 }
@@ -139,7 +136,7 @@ struct SourceEditor {
 #[derive(Deserialize, Serialize)]
 struct Source {
     name: String,
-    audio: Arc<audio::Source>,
+    audio: audio::Source,
 }
 
 // A data structure from which sources can be saved/loaded.
@@ -211,10 +208,10 @@ impl StoredSources {
                     },
                 };
                 let kind = audio::source::Kind::Wav(wav);
-                let role = Atomic::new(None);
-                let spread = Atomic::new(Metres(2.5));
-                let radians = Atomic::new(0.0);
-                let audio = Arc::new(audio::Source { kind, role, spread, radians });
+                let role = None;
+                let spread = Metres(2.5);
+                let radians = 0.0;
+                let audio = audio::Source { kind, role, spread, radians };
                 let source = Source { name, audio };
                 stored.sources.push(source);
             }
@@ -444,7 +441,7 @@ pub fn spawn(
     // Send the loaded speakers to the audio thread.
     for speaker in &speakers {
         audio_msg_tx
-            .send(audio::Message::AddSpeaker(speaker.id, speaker.audio.clone()))
+            .send(audio::Message::UpdateSpeaker(speaker.id, speaker.audio.clone()))
             .expect("audio_msg_tx was closed");
     }
 
@@ -826,8 +823,8 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                         let selected = gui.state.speaker_editor.selected == Some(item.i);
                         let label = {
                             let speaker = &gui.state.speaker_editor.speakers[item.i];
-                            let channel = speaker.audio.channel.load(atomic::Ordering::Relaxed);
-                            let position = speaker.audio.point.load(atomic::Ordering::Relaxed);
+                            let channel = speaker.audio.channel;
+                            let position = speaker.audio.point;
                             let label = format!("{} - CH {} - ({}mx, {}my)",
                                                 speaker.name, channel,
                                                 (position.x.0 * 100.0).trunc() / 100.0,
@@ -924,7 +921,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                     let mut channel = 0;
                     'search: loop {
                         for speaker in &gui.state.speaker_editor.speakers {
-                            if channel == speaker.audio.channel.load(atomic::Ordering::Relaxed) {
+                            if channel == speaker.audio.channel {
                                 channel += 1;
                                 continue 'search;
                             }
@@ -932,14 +929,14 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                         break channel;
                     }
                 };
-                let audio = Arc::new(audio::Speaker {
-                    point: Atomic::new(gui.state.camera.position),
-                    channel: AtomicUsize::new(channel),
-                });
+                let audio = audio::Speaker {
+                    point: gui.state.camera.position,
+                    channel: channel,
+                };
                 let speaker = Speaker { id, name, audio };
 
                 gui.state.speaker_editor.audio_msg_tx
-                    .send(audio::Message::AddSpeaker(speaker.id, speaker.audio.clone()))
+                    .send(audio::Message::UpdateSpeaker(speaker.id, speaker.audio.clone()))
                     .expect("audio_msg_tx was closed");
                 gui.state.speaker_editor.speakers.push(speaker);
                 gui.state.speaker_editor.next_id = audio::speaker::Id(id.0.wrapping_add(1));
@@ -963,7 +960,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
         // If a speaker is selected, display its info.
         if let Some(i) = gui.state.speaker_editor.selected {
             let Gui { ref mut state, ref mut ui, ref ids, .. } = *gui;
-            let speakers = &mut state.speaker_editor.speakers;
+            let SpeakerEditor { ref mut speakers, ref audio_msg_tx, .. } = state.speaker_editor;
 
             for event in widget::TextBox::new(&speakers[i].name)
                 .mid_top_of(ids.speaker_editor_selected_canvas)
@@ -984,14 +981,14 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                     speakers
                         .iter()
                         .enumerate()
-                        .find(|&(ix, s)| i != ix && s.audio.channel.load(atomic::Ordering::Relaxed) == ch)
+                        .find(|&(ix, s)| i != ix && s.audio.channel == ch)
                         .map(|(_ix, s)| format!("CH {} (swap with {})", ch, &s.name))
                         .unwrap_or_else(|| format!("CH {}", ch))
                 })
                 .collect();
-            let selected = speakers[i].audio.channel.load(atomic::Ordering::Relaxed);
+            let selected = speakers[i].audio.channel;
 
-            for index in widget::DropDownList::new(&channels, Some(selected))
+            for new_index in widget::DropDownList::new(&channels, Some(selected))
                 .down_from(ids.speaker_editor_selected_name, PAD)
                 .align_middle_x_of(ids.side_menu)
                 .kid_area_w_of(ids.speaker_editor_selected_canvas)
@@ -1004,14 +1001,20 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                 .label_font_size(SMALL_FONT_SIZE)
                 .set(ids.speaker_editor_selected_channel, ui)
             {
-                speakers[i].audio.channel.store(index, atomic::Ordering::Relaxed);
+                speakers[i].audio.channel = new_index;
+                let msg = audio::Message::UpdateSpeaker(speakers[i].id, speakers[i].audio.clone());
+                audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+
                 // If an existing speaker was assigned to `index`, swap it with the original
                 // selection.
                 let maybe_index = speakers.iter()
                     .enumerate()
-                    .find(|&(ix, s)| i != ix && s.audio.channel.load(atomic::Ordering::Relaxed) == index);
-                if let Some((ix, _)) = maybe_index {
-                    speakers[ix].audio.channel.store(selected, atomic::Ordering::Relaxed);
+                    .find(|&(ix, s)| i != ix && s.audio.channel == new_index)
+                    .map(|(ix, _)| ix);
+                if let Some(ix) = maybe_index {
+                    speakers[ix].audio.channel = selected;
+                    let msg = audio::Message::UpdateSpeaker(speakers[ix].id, speakers[ix].audio.clone());
+                    audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
                 }
             }
 
@@ -1158,7 +1161,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             if let Some(s) = scrollbar { s.set(gui); }
 
             // Remove a source if necessary.
-            if let Some(i) = maybe_remove_index {
+            if let Some(_i) = maybe_remove_index {
                 unimplemented!();
                 // let source = gui.state.source_editor.sources.remove(i);
                 // let msg = audio::Message::RemoveSource(speaker.id);
@@ -1296,7 +1299,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 }
             }
 
-            let selected_role = sources[i].audio.role.load(atomic::Ordering::Relaxed);
+            let selected_role = sources[i].audio.role;
             let role_selected = |j| int_to_role(j) == selected_role;
 
             while let Some(event) = events.next(ui, |j| role_selected(j)) {
@@ -1322,8 +1325,8 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
                     // Update the selected source.
                     Event::Selection(idx) => {
-                        let source = &sources[i];
-                        source.audio.role.store(int_to_role(idx), atomic::Ordering::Relaxed);
+                        let source = &mut sources[i];
+                        source.audio.role = int_to_role(idx);
                     },
 
                     _ => (),
@@ -1368,7 +1371,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
                     (ids.source_editor_selected_wav_canvas, wav.channels)
                 },
-                audio::source::Kind::Realtime(ref realtime) => {
+                audio::source::Kind::Realtime(ref _realtime) => {
                     unreachable!();
                 },
             };
@@ -1401,7 +1404,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             // Slider for controlling how far apart speakers should be spread.
             const MIN_SPREAD: f32 = 0.0;
             const MAX_SPREAD: f32 = 10.0;
-            let mut spread = sources[i].audio.spread.load(atomic::Ordering::Relaxed).0 as f32;
+            let mut spread = sources[i].audio.spread.0 as f32;
             let label = format!("Spread: {:.2} metres", spread);
             for new_spread in slider(spread, MIN_SPREAD, MAX_SPREAD)
                 .skew(2.0)
@@ -1411,13 +1414,13 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .set(ids.source_editor_selected_channel_layout_spread, ui)
             {
                 spread = new_spread;
-                sources[i].audio.spread.store(Metres(spread as _), atomic::Ordering::Relaxed);
+                sources[i].audio.spread = Metres(spread as _);
             }
 
             // Slider for controlling how channels should be rotated.
             const MIN_RADIANS: f32 = 0.0;
             const MAX_RADIANS: f32 = std::f32::consts::PI * 2.0;
-            let mut rotation = sources[i].audio.radians.load(atomic::Ordering::Relaxed);
+            let mut rotation = sources[i].audio.radians;
             let label = format!("Rotate: {:.2} radians", rotation);
             for new_rotation in slider(rotation, MIN_RADIANS, MAX_RADIANS)
                 .label(&label)
@@ -1426,7 +1429,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .set(ids.source_editor_selected_channel_layout_rotation, ui)
             {
                 rotation = new_rotation;
-                sources[i].audio.radians.store(rotation, atomic::Ordering::Relaxed);
+                sources[i].audio.radians = rotation;
             }
 
             // The field over which the channel layout will be visualised.
@@ -1613,7 +1616,7 @@ fn set_side_menu_widgets(gui: &mut Gui) {
     let last_area_id = set_osc_log(last_area_id, gui);
 
     // The log of received Interactions.
-    let last_area_id = set_interaction_log(last_area_id, gui);
+    let _last_area_id = set_interaction_log(last_area_id, gui);
 }
 
 // Update all widgets in the GUI with the given state.
@@ -1801,12 +1804,15 @@ fn set_widgets(gui: &mut Gui) {
             let dragged_y_m = state.camera.scalar_to_metres(dragged_y);
 
             let position = {
-                let p = state.speaker_editor.speakers[i].audio.point.load(atomic::Ordering::Relaxed);
+                let SpeakerEditor { ref mut speakers, ref audio_msg_tx, .. } = state.speaker_editor;
+                let p = speakers[i].audio.point;
                 let x = p.x + dragged_x_m;
                 let y = p.y + dragged_y_m;
                 let new_p = cgmath::Point2 { x, y };
                 if p != new_p {
-                    state.speaker_editor.speakers[i].audio.point.store(new_p, atomic::Ordering::Relaxed);
+                    speakers[i].audio.point = new_p;
+                    let msg = audio::Message::UpdateSpeaker(speakers[i].id, speakers[i].audio.clone());
+                    audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
                 }
                 new_p
             };

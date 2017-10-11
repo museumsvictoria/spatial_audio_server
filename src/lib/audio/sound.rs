@@ -1,4 +1,3 @@
-use atomic::Atomic;
 use cgmath::Point2;
 use metres::Metres;
 use sample::Signal;
@@ -17,9 +16,9 @@ pub struct Sound {
     // the `Frame` type itself. This allows having a dynamic number of channels.
     pub signal: Box<Signal<Frame=[f32; 1]> + Send>,
     // The location of the sound within the space.
-    pub point: Atomic<Point2<Metres>>,
-    pub spread: Atomic<Metres>,
-    pub radians: Atomic<f32>,
+    pub point: Point2<Metres>,
+    pub spread: Metres,
+    pub radians: f32,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
