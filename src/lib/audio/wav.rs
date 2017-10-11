@@ -2,7 +2,7 @@ use hound;
 use std::path::PathBuf;
 use time_calc::{Ms, Samples, SampleHz};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Wav {
     pub path: PathBuf,
     pub channels: usize,

@@ -1,4 +1,3 @@
-extern crate atomic;
 extern crate cgmath;
 #[macro_use] extern crate conrod;
 #[macro_use] extern crate custom_derive;
@@ -18,12 +17,12 @@ use conrod::backend::glium::glium;
 use std::net::{Ipv4Addr, SocketAddrV4};
 
 mod audio;
+mod composer;
 mod config;
 mod gui;
 mod interaction;
 mod metres;
 mod osc;
-mod serde_extra;
 
 /// Run the Beyond Perception Audio Server.
 pub fn run() {
@@ -49,10 +48,10 @@ pub fn run() {
 
     // Spawn the OSC input thread.
     let osc_input_addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), config.osc_input_port);
-    let (osc_msg_rx, interaction_gui_rx) = osc::input::spawn(osc_input_addr);
+    let (_osc_thread_handle, osc_msg_rx, interaction_gui_rx) = osc::input::spawn(osc_input_addr);
 
     // Spawn the audio engine (rendering, processing, etc).
-    let audio_msg_tx = audio::spawn();
+    let (audio_thread_handle, audio_msg_tx) = audio::spawn();
 
     // Create the audio requester which transfers audio from the audio engine to the audio backend.
     const FRAMES_PER_BUFFER: usize = 64;
@@ -60,7 +59,11 @@ pub fn run() {
 
     // Run the CPAL audio backend for interfacing with the audio device.
     const SAMPLE_HZ: f64 = 44_100.0;
-    let cpal_voice = audio::backend::spawn(audio_requester, SAMPLE_HZ).unwrap();
+    let (_audio_backend_thread_handle, mut cpal_voice) =
+        audio::backend::spawn(audio_requester, SAMPLE_HZ).unwrap();
+
+    // Spawn the composer thread.
+    let (composer_thread_handle, composer_msg_tx) = composer::spawn(audio_msg_tx.clone());
 
     // Spawn the GUI thread.
     //
@@ -70,7 +73,14 @@ pub fn run() {
     // `gui_render_rx` channel.
     let proxy = events_loop.create_proxy();
     let (gui_thread_handle, mut renderer, image_map, gui_msg_tx, gui_render_rx) =
-        gui::spawn(&assets, config, &display, proxy, osc_msg_rx, interaction_gui_rx, audio_msg_tx);
+        gui::spawn(&assets,
+                   config,
+                   &display,
+                   proxy,
+                   osc_msg_rx,
+                   interaction_gui_rx,
+                   audio_msg_tx.clone(),
+                   composer_msg_tx.clone());
 
     // Run the event loop.
     let mut closed = false;
@@ -103,7 +113,9 @@ pub fn run() {
                         ..
                     } => {
                         closed = true;
+                        audio_msg_tx.send(audio::Message::Exit).unwrap();
                         gui_msg_tx.send(gui::Message::Exit).unwrap();
+                        composer_msg_tx.send(composer::Message::Exit).unwrap();
                         return glium::glutin::ControlFlow::Break;
                     },
                     // We must re-draw on `Resized`, as the event loops become blocked during
@@ -122,6 +134,15 @@ pub fn run() {
             glium::glutin::ControlFlow::Continue
         });
     }
+
+    // Stop the CPAL stream and join the thread.
+    cpal_voice.pause();
+
+    // Wait for the audio thread to finish.
+    audio_thread_handle.join().unwrap();
+
+    // Wait for the composer thread to finish.
+    composer_thread_handle.join().unwrap();
 
     // Wait for the GUI thread to finish saving files, etc.
     gui_thread_handle.join().unwrap();

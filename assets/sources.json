@@ -14,7 +14,8 @@
         "role": "Soundscape",
         "spread": 2.5,
         "radians": 0.0
-      }
+      },
+      "id": 1
     },
     {
       "name": "Elemental - Air Movement_20",
@@ -28,9 +29,10 @@
           }
         },
         "role": "Soundscape",
-        "spread": 2.499299287796021,
+        "spread": 2.5,
         "radians": 0.0
-      }
+      },
+      "id": 3
     },
     {
       "name": "Elemental - Chimes Big_3",
@@ -46,7 +48,8 @@
         "role": "Soundscape",
         "spread": 2.5,
         "radians": 0.0
-      }
+      },
+      "id": 0
     },
     {
       "name": "Elemental - Electricity Impact_5",
@@ -62,7 +65,8 @@
         "role": "Soundscape",
         "spread": 2.5,
         "radians": 0.0
-      }
+      },
+      "id": 5
     },
     {
       "name": "Elemental - Flame Cast_3",
@@ -78,7 +82,8 @@
         "role": "Soundscape",
         "spread": 2.5,
         "radians": 0.0
-      }
+      },
+      "id": 2
     },
     {
       "name": "Mechanism - Clicks_Clock_001",
@@ -94,7 +99,9 @@
         "role": "Soundscape",
         "spread": 2.5,
         "radians": 0.0
-      }
+      },
+      "id": 4
     }
-  ]
+  ],
+  "next_id": 6
 }
