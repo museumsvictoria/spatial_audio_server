@@ -26,6 +26,13 @@ pub struct Source {
     pub radians: Atomic<f32>,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
+pub struct Id(pub u64);
+
+impl Id {
+    const INITIAL: Self = Id(0);
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum Role {
     Soundscape,

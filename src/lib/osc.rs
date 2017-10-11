@@ -1,4 +1,3 @@
-
 pub mod input {
     use interaction::{self, Interaction};
     use rosc::{self, OscMessage, OscPacket};
@@ -8,13 +7,15 @@ pub mod input {
 
     /// Spawn the OSC receiver thread.
     pub fn spawn(addr: SocketAddrV4)
-        -> (mpsc::Receiver<(SocketAddr, OscMessage)>, mpsc::Receiver<Interaction>)
+        -> (std::thread::JoinHandle<()>,
+            mpsc::Receiver<(SocketAddr, OscMessage)>,
+            mpsc::Receiver<Interaction>)
     {
         let (msg_tx, msg_rx) = mpsc::channel();
         let (interaction_gui_tx, interaction_gui_rx) = mpsc::channel();
         //let (interaction_tx, interaction_rx) = mpsc::channel();
 
-        std::thread::Builder::new()
+        let handle = std::thread::Builder::new()
             .name("osc_in".into())
             .spawn(move || {
                 let socket = UdpSocket::bind(addr).unwrap();
@@ -55,11 +56,10 @@ pub mod input {
                     // Forward interactions to the GUI thread for displaying in the log.
                     interaction_gui_tx.send(interaction).ok();
                 }
-
             })
             .unwrap();
 
-        (msg_rx, interaction_gui_rx)
+        (handle, msg_rx, interaction_gui_rx)
     }
 }
 

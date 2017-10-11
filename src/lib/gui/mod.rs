@@ -411,7 +411,12 @@ pub fn spawn(
     osc_msg_rx: mpsc::Receiver<(SocketAddr, OscMessage)>,
     interaction_rx: mpsc::Receiver<Interaction>,
     audio_msg_tx: mpsc::Sender<audio::Message>,
-) -> (std::thread::JoinHandle<()>, Renderer, ImageMap, mpsc::Sender<Message>, mpsc::Receiver<OwnedPrimitives>) {
+) -> (std::thread::JoinHandle<()>,
+      Renderer,
+      ImageMap,
+      mpsc::Sender<Message>,
+      mpsc::Receiver<OwnedPrimitives>)
+{
     // Use the width and height of the display as the initial size for the Ui.
     let (display_w, display_h) = display.gl_window().get_inner_size_points().unwrap();
     let ui_dimensions = [display_w as Scalar, display_h as Scalar];
@@ -1270,15 +1275,6 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     2 => Some(audio::source::Role::Installation),
                     3 => Some(audio::source::Role::Scribbles),
                     _ => None
-                }
-            }
-
-            fn role_to_int(role: Option<audio::source::Role>) -> usize {
-                match role {
-                    None => 0,
-                    Some(audio::source::Role::Soundscape) => 1,
-                    Some(audio::source::Role::Installation) => 2,
-                    Some(audio::source::Role::Scribbles) => 3,
                 }
             }
 

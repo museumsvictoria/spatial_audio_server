@@ -10,14 +10,16 @@ use sample::Signal;
 /// 3. **Spatial Output**: maps the sound from a position in space to the output channels.
 pub struct Sound {
     // The number of channels yielded by the `Sound`.
-    channels: usize,
+    pub channels: usize,
     // Includes the source and pre-spatial effects.
     //
     // The signal is unique in that channels are interleaved rather than presented side-by-side in
     // the `Frame` type itself. This allows having a dynamic number of channels.
-    signal: Box<Signal<Frame=[f32; 1]> + Send>,
+    pub signal: Box<Signal<Frame=[f32; 1]> + Send>,
     // The location of the sound within the space.
-    point: Atomic<Point2<Metres>>,
+    pub point: Atomic<Point2<Metres>>,
+    pub spread: Atomic<Metres>,
+    pub radians: Atomic<f32>,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]

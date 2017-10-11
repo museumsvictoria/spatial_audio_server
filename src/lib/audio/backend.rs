@@ -23,7 +23,7 @@ impl Executor for MyExecutor {
 ///
 /// Returns the `Voice` with which the `SoundEngine` is played back.
 pub fn spawn<F, M>(mut audio_requester: audio::Requester<F, M>, sample_hz: f64)
-    -> Result<cpal::Voice, cpal::CreationError>
+    -> Result<(std::thread::JoinHandle<()>, cpal::Voice), cpal::CreationError>
     where F: 'static + Frame + Send + std::fmt::Debug,
           F::Float: Send,
           F::Sample: cpal::Sample + ToSample<u16> + ToSample<i16> + ToSample<f32>,
@@ -96,7 +96,10 @@ pub fn spawn<F, M>(mut audio_requester: audio::Requester<F, M>, sample_hz: f64)
         Ok(())
     })).execute(executor);
 
-    std::thread::spawn(move || { event_loop.run(); });
+    let handle = std::thread::Builder::new()
+        .name("audio_backend".into())
+        .spawn(move || { event_loop.run(); })
+        .unwrap();
 
-    Ok(voice)
+    Ok((handle, voice))
 }
