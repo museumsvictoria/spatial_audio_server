@@ -19,18 +19,23 @@ pub enum Message {
 ///    (for tracking positions, RMS, etc).
 pub fn spawn(
     audio_msg_tx: mpsc::Sender<audio::Message>,
+    sound_id_gen: audio::sound::IdGenerator,
 ) -> (std::thread::JoinHandle<()>, mpsc::Sender<Message>) {
     let (tx, rx) = mpsc::channel();
 
     let handle = std::thread::Builder::new()
         .name("composer".into())
-        .spawn(move || run(rx, audio_msg_tx))
+        .spawn(move || run(rx, audio_msg_tx, sound_id_gen))
         .unwrap();
 
     (handle, tx)
 }
 
-fn run(msg_rx: mpsc::Receiver<Message>, _audio_msg_tx: mpsc::Sender<audio::Message>) {
+fn run(
+    msg_rx: mpsc::Receiver<Message>,
+    _audio_msg_tx: mpsc::Sender<audio::Message>,
+    _sound_id_gen: audio::sound::IdGenerator,
+) {
     // A map for storing all audio sources.
     let mut sources = HashMap::new();
 

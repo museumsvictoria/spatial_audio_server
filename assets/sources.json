@@ -12,7 +12,7 @@
           }
         },
         "role": "Soundscape",
-        "spread": 2.5,
+        "spread": 3.898257255554199,
         "radians": 0.0
       },
       "id": 1
@@ -29,7 +29,7 @@
           }
         },
         "role": "Soundscape",
-        "spread": 2.5,
+        "spread": 2.722478151321411,
         "radians": 0.0
       },
       "id": 3
@@ -46,7 +46,7 @@
           }
         },
         "role": "Soundscape",
-        "spread": 2.5,
+        "spread": 3.2295427322387697,
         "radians": 0.0
       },
       "id": 0
@@ -63,7 +63,7 @@
           }
         },
         "role": "Soundscape",
-        "spread": 2.5,
+        "spread": 2.5013442039489748,
         "radians": 0.0
       },
       "id": 5
@@ -79,8 +79,8 @@
             "sample_hz": 44100.0
           }
         },
-        "role": "Soundscape",
-        "spread": 2.5,
+        "role": "Scribbles",
+        "spread": 2.86536192893982,
         "radians": 0.0
       },
       "id": 2
@@ -97,7 +97,7 @@
           }
         },
         "role": "Soundscape",
-        "spread": 2.5,
+        "spread": 2.556749820709229,
         "radians": 0.0
       },
       "id": 4
