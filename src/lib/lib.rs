@@ -1,5 +1,6 @@
 extern crate cgmath;
 #[macro_use] extern crate conrod;
+#[macro_use] extern crate conrod_derive;
 #[macro_use] extern crate custom_derive;
 extern crate find_folder;
 extern crate hound; // wav loading
@@ -23,6 +24,8 @@ mod gui;
 mod interaction;
 mod metres;
 mod osc;
+
+pub const SAMPLE_HZ: f64 = 44_100.0;
 
 /// Run the Beyond Perception Audio Server.
 pub fn run() {
@@ -58,12 +61,16 @@ pub fn run() {
     let audio_requester = audio::Requester::new(audio_msg_tx.clone(), FRAMES_PER_BUFFER);
 
     // Run the CPAL audio backend for interfacing with the audio device.
-    const SAMPLE_HZ: f64 = 44_100.0;
     let (_audio_backend_thread_handle, mut cpal_voice) =
         audio::backend::spawn(audio_requester, SAMPLE_HZ).unwrap();
 
+    // To be shared between the `Composer` and `GUI` threads as both are responsible for creating
+    // sounds and sending them to the audio thread.
+    let sound_id_gen = audio::sound::IdGenerator::new();
+
     // Spawn the composer thread.
-    let (composer_thread_handle, composer_msg_tx) = composer::spawn(audio_msg_tx.clone());
+    let (composer_thread_handle, composer_msg_tx) =
+        composer::spawn(audio_msg_tx.clone(), sound_id_gen.clone());
 
     // Spawn the GUI thread.
     //
@@ -80,7 +87,8 @@ pub fn run() {
                    osc_msg_rx,
                    interaction_gui_rx,
                    audio_msg_tx.clone(),
-                   composer_msg_tx.clone());
+                   composer_msg_tx.clone(),
+                   sound_id_gen);
 
     // Run the event loop.
     let mut closed = false;

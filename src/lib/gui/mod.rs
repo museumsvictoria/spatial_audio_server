@@ -23,6 +23,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::mpsc;
 
 mod theme;
+mod custom_widget;
 
 /// A convenience wrapper that borrows the GUI state necessary for instantiating the widgets.
 struct Gui<'a> {
@@ -33,6 +34,7 @@ struct Gui<'a> {
     ids: &'a mut Ids,
     state: &'a mut State,
     channels: &'a Channels,
+    sound_id_gen: &'a audio::sound::IdGenerator,
 }
 
 /// Messages received by the GUI thread.
@@ -135,6 +137,18 @@ struct SourceEditor {
     selected: Option<usize>,
     // The next ID to be used for a new source.
     next_id: audio::source::Id,
+    preview: SourcePreview,
+}
+
+struct SourcePreview {
+    current: Option<(SourcePreviewMode, audio::sound::Id)>,
+    point: Option<cgmath::Point2<Metres>>,
+}
+
+#[derive(Copy, Clone)]
+enum SourcePreviewMode {
+    OneShot,
+    Continuous,
 }
 
 // A GUI view of an audio source.
@@ -424,6 +438,7 @@ pub fn spawn(
     interaction_rx: mpsc::Receiver<Interaction>,
     audio_msg_tx: mpsc::Sender<audio::Message>,
     composer_msg_tx: mpsc::Sender<composer::Message>,
+    sound_id_gen: audio::sound::IdGenerator,
 ) -> (std::thread::JoinHandle<()>,
       Renderer,
       ImageMap,
@@ -478,11 +493,17 @@ pub fn spawn(
         composer_msg_tx.send(msg).expect("composer_msg_tx was closed");
     }
 
+    let preview = SourcePreview {
+        current: None,
+        point: None,
+    };
+
     let source_editor = SourceEditor {
         is_open: true,
         selected: None,
         next_id,
         sources,
+        preview,
     };
 
     let camera = Camera {
@@ -598,6 +619,7 @@ pub fn spawn(
                         fonts: &fonts,
                         state: &mut state,
                         channels: &channels,
+                        sound_id_gen: &sound_id_gen,
                     };
                     set_widgets(&mut gui);
                 }
@@ -762,11 +784,16 @@ widget_ids! {
         source_editor_selected_channel_layout_spread_circle,
         source_editor_selected_channel_layout_channels[],
         source_editor_selected_channel_layout_channel_labels[],
+        source_editor_preview_canvas,
+        source_editor_preview_text,
+        source_editor_preview_one_shot,
+        source_editor_preview_continuous,
 
         // The floorplan image and the canvas on which it is placed.
         floorplan_canvas,
         floorplan,
         floorplan_speakers[],
+        floorplan_source_preview,
     }
 }
 
@@ -983,7 +1010,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
 
         // If a speaker is selected, display its info.
         if let Some(i) = gui.state.speaker_editor.selected {
-            let Gui { ref mut state, ref mut ui, ref ids, ref channels, .. } = *gui;
+            let Gui { ref mut state, ref mut ui, ref ids, channels, .. } = *gui;
             let SpeakerEditor { ref mut speakers, .. } = state.speaker_editor;
 
             for event in widget::TextBox::new(&speakers[i].name)
@@ -1065,9 +1092,10 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     const TEXT_PAD: Scalar = 20.0;
 
     // 200.0 is just some magic, temp, extra height.
+    const PREVIEW_CANVAS_H: Scalar = 66.0;
     const WAV_CANVAS_H: Scalar = 100.0;
     const CHANNEL_LAYOUT_CANVAS_H: Scalar = 200.0;
-    const SELECTED_CANVAS_H: Scalar = ITEM_HEIGHT * 2.0 + PAD * 5.0 + WAV_CANVAS_H + CHANNEL_LAYOUT_CANVAS_H;
+    const SELECTED_CANVAS_H: Scalar = ITEM_HEIGHT * 2.0 + PAD * 6.0 + PREVIEW_CANVAS_H + WAV_CANVAS_H + CHANNEL_LAYOUT_CANVAS_H;
     let source_editor_canvas_h = LIST_HEIGHT + ITEM_HEIGHT + SELECTED_CANVAS_H;
 
     let (area, event) = collapsible_area(is_open, "Source Editor", gui.ids.side_menu)
@@ -1267,8 +1295,22 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
         // If a source is selected, display its info.
         if let Some(i) = gui.state.source_editor.selected {
-            let Gui { ref mut state, ref mut ui, ref mut ids, ref channels, .. } = *gui;
-            let sources = &mut state.source_editor.sources;
+            let Gui {
+                ref mut ui,
+                ref mut ids,
+                channels,
+                sound_id_gen,
+                state: &mut State {
+                    ref camera,
+                    source_editor: SourceEditor {
+                        ref mut sources,
+                        ref mut preview,
+                        ..
+                    },
+                    ..
+                },
+                ..
+            } = *gui;
 
             for event in widget::TextBox::new(&sources[i].name)
                 .mid_top_of(ids.source_editor_selected_canvas)
@@ -1359,14 +1401,134 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 }
             }
 
+            // Preview options.
+            widget::Canvas::new()
+                .mid_left_of(ids.source_editor_selected_canvas)
+                .down(PAD)
+                .parent(ids.source_editor_selected_canvas)
+                .color(color::CHARCOAL)
+                .w(selected_canvas_kid_area.w())
+                .h(PREVIEW_CANVAS_H)
+                .pad(PAD)
+                .set(ids.source_editor_preview_canvas, ui);
+
+            // PREVIEW header..
+            widget::Text::new("PREVIEW")
+                .font_size(SMALL_FONT_SIZE)
+                .top_left_of(ids.source_editor_preview_canvas)
+                .set(ids.source_editor_preview_text, ui);
+
+            let preview_kid_area = ui.kid_area_of(ids.source_editor_preview_canvas).unwrap();
+            let button_w = preview_kid_area.w() / 2.0 - PAD / 2.0;
+
+            fn sound_from_source(source: &audio::Source, point: cgmath::Point2<Metres>) -> audio::Sound {
+                match source.kind {
+                    audio::source::Kind::Wav(ref wav) => {
+                        let signal = audio::wav::stream_signal(&wav.path).unwrap();
+                        audio::Sound {
+                            channels: wav.channels,
+                            signal: signal,
+                            point: point,
+                            spread: source.spread,
+                            radians: source.radians,
+                        }
+                    },
+                    audio::source::Kind::Realtime(ref _realtime) => {
+                        unimplemented!();
+                    },
+                }
+            }
+
+            if widget::Button::new()
+                .bottom_left_of(ids.source_editor_preview_canvas)
+                .label("One Shot")
+                .label_font_size(SMALL_FONT_SIZE)
+                .w(button_w)
+                .color(match preview.current {
+                    Some((SourcePreviewMode::OneShot, _)) => color::BLUE,
+                    _ => color::DARK_CHARCOAL,
+                })
+                .set(ids.source_editor_preview_one_shot, ui)
+                .was_clicked()
+            {
+                loop {
+                    match preview.current {
+                        Some((mode, sound_id)) => {
+                            let msg = audio::Message::RemoveSound(sound_id);
+                            channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                            preview.current = None;
+                            match mode {
+                                SourcePreviewMode::Continuous => continue,
+                                SourcePreviewMode::OneShot => break,
+                            }
+                        },
+                        None => {
+                            // Set the preview mode to one-shot.
+                            let sound_id = sound_id_gen.generate_next();
+                            preview.current = Some((SourcePreviewMode::OneShot, sound_id));
+                            // Set the preview position to the centre of the camera if not yet set.
+                            if preview.point.is_none() {
+                                preview.point = Some(camera.position);
+                            }
+                            // Send the selected source to the audio thread for playback.
+                            let sound = sound_from_source(&sources[i].audio, preview.point.unwrap());
+                            let msg = audio::Message::AddSound(sound_id, sound);
+                            channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                            break;
+                        },
+                    }
+                }
+            }
+
+            if widget::Button::new()
+                .bottom_right_of(ids.source_editor_preview_canvas)
+                .label("Continuous")
+                .label_font_size(SMALL_FONT_SIZE)
+                .w(button_w)
+                .color(match preview.current {
+                    Some((SourcePreviewMode::Continuous, _)) => color::BLUE,
+                    _ => color::DARK_CHARCOAL,
+                })
+                .set(ids.source_editor_preview_continuous, ui)
+                .was_clicked()
+            {
+                loop {
+                    match preview.current {
+                        Some((mode, sound_id)) => {
+                            let msg = audio::Message::RemoveSound(sound_id);
+                            channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                            preview.current = None;
+                            match mode {
+                                SourcePreviewMode::OneShot => continue,
+                                SourcePreviewMode::Continuous => break,
+                            }
+                        },
+                        None => {
+                            // Set the preview mode to one-shot.
+                            let sound_id = sound_id_gen.generate_next();
+                            preview.current = Some((SourcePreviewMode::Continuous, sound_id));
+                            // Set the preview position to the centre of the camera if not yet set.
+                            if preview.point.is_none() {
+                                preview.point = Some(camera.position);
+                            }
+                            // Send the selected source to the audio thread for playback.
+                            // TODO: This should loop somehow.
+                            let sound = sound_from_source(&sources[i].audio, preview.point.unwrap());
+                            let msg = audio::Message::AddSound(sound_id, sound);
+                            channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                            break;
+                        },
+                    }
+                }
+            }
+
             // Kind-specific data.
             let (kind_canvas_id, num_channels) = match sources[i].audio.kind {
                 audio::source::Kind::Wav(ref wav) => {
 
                     // Instantiate a small canvas for displaying wav-specific stuff.
                     widget::Canvas::new()
-                        .mid_left_of(ids.source_editor_selected_canvas)
-                        .down(PAD)
+                        .down_from(ids.source_editor_preview_canvas, PAD)
                         .parent(ids.source_editor_selected_canvas)
                         .w(selected_canvas_kid_area.w())
                         .color(color::CHARCOAL)
@@ -1800,7 +1962,47 @@ fn set_widgets(gui: &mut Gui) {
         .middle_of(gui.ids.floorplan_canvas)
         .set(gui.ids.floorplan, gui);
 
+    // Retrieve the absolute xy position of the floorplan as this will be useful for converting
+    // absolute GUI values to metres and vice versa.
+    let floorplan_xy = gui.rect_of(gui.ids.floorplan).unwrap().xy();
+
     // Draw the speakers over the floorplan.
+    //
+    // Display the `gui.state.speaker_editor.speakers` over the floorplan as circles.
+    let radius_min_m = gui.state.config.min_speaker_radius_metres;
+    let radius_max_m = gui.state.config.max_speaker_radius_metres;
+    let radius_min = gui.state.camera.metres_to_scalar(radius_min_m);
+    let radius_max = gui.state.camera.metres_to_scalar(radius_max_m);
+
+    fn x_position_metres_to_floorplan (x: Metres, cam: &Camera) -> Scalar {
+        cam.metres_to_scalar(x - cam.position.x)
+    }
+    fn y_position_metres_to_floorplan (y: Metres, cam: &Camera) -> Scalar {
+        cam.metres_to_scalar(y - cam.position.y)
+    }
+
+    // Convert the given position in metres to a gui Scalar position relative to the middle of the
+    // floorplan.
+    fn position_metres_to_floorplan(p: cgmath::Point2<Metres>, cam: &Camera) -> (Scalar, Scalar) {
+        let x = x_position_metres_to_floorplan(p.x, cam);
+        let y = y_position_metres_to_floorplan(p.y, cam);
+        (x, y)
+    };
+
+    // Convert the given position in metres to an absolute GUI scalar position.
+    let position_metres_to_gui = |p: cgmath::Point2<Metres>, cam: &Camera| -> (Scalar, Scalar) {
+        let (x, y) = position_metres_to_floorplan(p, cam);
+        (floorplan_xy[0] + x, floorplan_xy[1] + y)
+    };
+
+    // Convert the given absolute GUI position to a position in metres.
+    let position_gui_to_metres = |p: [Scalar; 2], cam: &Camera| -> cgmath::Point2<Metres> {
+        let (floorplan_x, floorplan_y) = (p[0] - floorplan_xy[0], p[1] - floorplan_xy[1]);
+        let x = cam.scalar_to_metres(floorplan_x);
+        let y = cam.scalar_to_metres(floorplan_y);
+        cgmath::Point2 { x, y }
+    };
+
     {
         let Gui { ref mut ids, ref mut state, ref mut ui, ref channels, .. } = *gui;
 
@@ -1810,18 +2012,6 @@ fn set_widgets(gui: &mut Gui) {
             let id_gen = &mut ui.widget_id_generator();
             ids.floorplan_speakers.resize(num_speakers, id_gen);
         }
-
-        // Display the `gui.state.speaker_editor.speakers` over the floorplan as circles.
-        let radius_min_m = state.config.min_speaker_radius_metres;
-        let radius_max_m = state.config.max_speaker_radius_metres;
-        let radius_min = state.camera.metres_to_scalar(radius_min_m);
-        let radius_max = state.camera.metres_to_scalar(radius_max_m);
-
-        let rel_point_to_metres = |cam: &Camera, p: conrod::Point| -> cgmath::Point2<Metres> {
-            let x = cam.position.x + cam.scalar_to_metres(p[0]);
-            let y = cam.position.y + cam.scalar_to_metres(p[1]);
-            cgmath::Point2 { x, y }
-        };
 
         for i in 0..state.speaker_editor.speakers.len() {
             let widget_id = ids.floorplan_speakers[i];
@@ -1847,8 +2037,7 @@ fn set_widgets(gui: &mut Gui) {
                 new_p
             };
 
-            let x = state.camera.metres_to_scalar(position.x - state.camera.position.x);
-            let y = state.camera.metres_to_scalar(position.y - state.camera.position.y);
+            let (x, y) = position_metres_to_gui(position, &state.camera);
 
             // Select the speaker if it was pressed.
             if ui.widget_input(widget_id)
@@ -1872,11 +2061,60 @@ fn set_widgets(gui: &mut Gui) {
 
             // Display a circle for the speaker.
             widget::Circle::fill(radius_min)
-                .x_y_relative_to(ids.floorplan, x, y)
+                .x_y(x, y)
                 .parent(ids.floorplan)
                 .color(color)
                 .set(widget_id, ui);
         }
+    }
+
+    // Draw the source preview over the floorplan.
+    let current = gui.state.source_editor.preview.current;
+    let point = gui.state.source_editor.preview.point;
+    let selected = gui.state.source_editor.selected;
+    if let (Some((_, sound_id)), Some(point), Some(i)) = (current, point, selected) {
+        let Gui { ref ids, ref mut state, ref mut ui, ref channels, .. } = *gui;
+
+        let radians = 0.0;
+        let amplitude = 0.0;
+        let (spread, channel_radians, channel_count) = {
+            let s = &state.source_editor.sources[i];
+            (s.audio.spread, s.audio.radians as f64, s.audio.channel_count())
+        };
+
+        let spread = state.camera.metres_to_scalar(spread);
+        let side_m = custom_widget::sound::dimension_metres(amplitude);
+        let side = state.camera.metres_to_scalar(side_m);
+
+        // Determine how far the source preview has been dragged, if at all.
+        let (dragged_x, dragged_y) = ui.widget_input(ids.floorplan_source_preview)
+            .drags()
+            .left()
+            .fold((0.0, 0.0), |(x, y), drag| (x + drag.delta_xy[0], y + drag.delta_xy[1]));
+        let dragged_x_m = state.camera.scalar_to_metres(dragged_x);
+        let dragged_y_m = state.camera.scalar_to_metres(dragged_y);
+
+        // Determine the resulting position after the drag.
+        let position = {
+            let x = point.x + dragged_x_m;
+            let y = point.y + dragged_y_m;
+            let new_p = cgmath::Point2 { x, y };
+            if point != new_p {
+                state.source_editor.preview.point = Some(new_p);
+                let update = Box::new(move |sound: &mut audio::Sound| sound.point = new_p);
+                let msg = audio::Message::UpdateSound(sound_id, update);
+                channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+            }
+            new_p
+        };
+
+        let (x, y) = position_metres_to_gui(position, &state.camera);
+
+        custom_widget::Sound::new(channel_count, spread, radians, channel_radians)
+            .x_y(x, y)
+            .w_h(side, side)
+            .parent(ids.floorplan)
+            .set(ids.floorplan_source_preview, ui);
     }
 
 }

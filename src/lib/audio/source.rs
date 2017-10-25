@@ -25,6 +25,15 @@ pub struct Source {
     pub radians: f32,
 }
 
+impl Source {
+    pub fn channel_count(&self) -> usize {
+        match self.kind {
+            Kind::Wav(ref wav) => wav.channels,
+            Kind::Realtime(ref rt) => rt.channels,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct Id(pub u64);
 

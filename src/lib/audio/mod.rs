@@ -39,6 +39,8 @@ pub enum Message {
 
     /// Add a new sound to the map.
     AddSound(sound::Id, Sound),
+    /// Modify an existing sound.
+    UpdateSound(sound::Id, Box<Fn(&mut Sound) + Send>),
     /// Remove a sound from the map.
     RemoveSound(sound::Id),
 
@@ -129,6 +131,10 @@ fn run(msg_rx: mpsc::Receiver<Message>) {
 
             Message::AddSound(id, sound) => {
                 sounds.insert(id, sound);
+            },
+
+            Message::UpdateSound(id, update) => if let Some(sound) = sounds.get_mut(&id) {
+                update(sound);
             },
 
             Message::RemoveSound(id) => {
