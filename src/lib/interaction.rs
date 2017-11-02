@@ -1,5 +1,5 @@
-use rosc::OscMessage;
-use rosc::OscType::{Float, Int};
+use nannou::osc;
+use nannou::osc::Type::{Float, Int};
 
 /// Describes the various interactions that are listened for within the installation.
 ///
@@ -71,7 +71,7 @@ impl From<TurbulentEncounters> for Interaction {
 /// Parse the given OSC message as an `Interaction`.
 ///
 /// Returns `None` if the message cannot be parsed.
-pub fn from_osc(msg: &OscMessage) -> Option<Interaction> {
+pub fn from_osc(msg: &osc::Message) -> Option<Interaction> {
     const BP_PREFIX: &'static str = "/bp/";
 
     // If the address doesn't begin with the bp prefix, ignore it.
@@ -111,7 +111,7 @@ pub fn from_osc(msg: &OscMessage) -> Option<Interaction> {
 #[test]
 fn test_from_osc() {
     // Test Cosmic Wave touch.
-    let a = OscMessage {
+    let a = osc::Message {
         addr: "/bp/cw".into(),
         args: Some(vec![Int(2), Int(4), Float(0.1), Float(0.2), Float(0.3)]),
     };
@@ -119,14 +119,14 @@ fn test_from_osc() {
     assert_eq!(from_osc(&a), Some(a_expected));
 
     // Test invalid message == None.
-    let b = OscMessage {
+    let b = osc::Message {
         addr: "/bp/cw".into(),
         args: None,
     };
     assert_eq!(from_osc(&b), None);
 
     // Test Turbulent Encounters Rotary Dial.
-    let c = OscMessage {
+    let c = osc::Message {
         addr: "/bp/te".into(),
         args: Some(vec![Int(0), Float(0.66)]),
     };

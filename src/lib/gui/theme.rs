@@ -1,15 +1,15 @@
-use conrod::{self, widget};
-use conrod::theme::WidgetDefault;
+use nannou::ui::{self, widget};
+use nannou::ui::theme::WidgetDefault;
 use std;
 
 /// The default width for a widget within a column.
-pub const DEFAULT_WIDTH: conrod::Scalar = 220.0;
+pub const DEFAULT_WIDTH: ui::Scalar = 220.0;
 
 
-fn common_style(w: conrod::Scalar, h: conrod::Scalar) -> widget::CommonStyle {
+fn common_style(w: ui::Scalar, h: ui::Scalar) -> widget::CommonStyle {
     widget::CommonStyle {
-        maybe_x_dimension: Some(conrod::position::Dimension::Absolute(w)),
-        maybe_y_dimension: Some(conrod::position::Dimension::Absolute(h)),
+        maybe_x_dimension: Some(ui::position::Dimension::Absolute(w)),
+        maybe_y_dimension: Some(ui::position::Dimension::Absolute(h)),
         ..widget::CommonStyle::default()
     }
 }
@@ -23,21 +23,21 @@ where
 
 
 /// The theme to use for the SynthEditor.
-pub fn construct() -> conrod::Theme {
-    conrod::Theme {
+pub fn construct() -> ui::Theme {
+    ui::Theme {
         name: "Monochroma".to_owned(),
-        padding: conrod::position::Padding {
-            x: conrod::Range::new(20.0, 20.0),
-            y: conrod::Range::new(20.0, 20.0),
+        padding: ui::position::Padding {
+            x: ui::Range::new(20.0, 20.0),
+            y: ui::Range::new(20.0, 20.0),
         },
-        background_color: conrod::color::DARK_CHARCOAL,
-        shape_color: conrod::color::BLACK,
+        background_color: ui::color::DARK_CHARCOAL,
+        shape_color: ui::color::BLACK,
         border_width: 0.0,
-        border_color: conrod::color::BLACK,
-        label_color: conrod::color::WHITE,
+        border_color: ui::color::BLACK,
+        label_color: ui::color::WHITE,
 
         widget_styling: {
-            let mut map = conrod::theme::StyleMap::default();
+            let mut map = ui::theme::StyleMap::default();
 
             map.insert(
                 id::<widget::button::Style>(),
@@ -68,8 +68,8 @@ pub fn construct() -> conrod::Theme {
                 WidgetDefault {
                     common: common_style(DEFAULT_WIDTH, 32.0),
                     style: Box::new(widget::slider::Style {
-                        color: Some(conrod::color::LIGHT_CHARCOAL),
-                        border_color: Some(conrod::color::rgb(0.1, 0.1, 0.1)),
+                        color: Some(ui::color::LIGHT_CHARCOAL),
+                        border_color: Some(ui::color::rgb(0.1, 0.1, 0.1)),
                         ..widget::slider::Style::default()
                     }),
                 },
@@ -97,8 +97,8 @@ pub fn construct() -> conrod::Theme {
                     common: widget::CommonStyle::default(),
                     style: {
                         let mut style = widget::canvas::Style::default();
-                        let luminance = conrod::color::DARK_CHARCOAL.luminance() * 0.5;
-                        let color = conrod::color::DARK_CHARCOAL.with_luminance(luminance);
+                        let luminance = ui::color::DARK_CHARCOAL.luminance() * 0.5;
+                        let color = ui::color::DARK_CHARCOAL.with_luminance(luminance);
                         style.title_bar_color = Some(Some(color));
                         Box::new(style)
                     },
@@ -108,6 +108,6 @@ pub fn construct() -> conrod::Theme {
             map
         },
 
-        ..conrod::Theme::default()
+        ..ui::Theme::default()
     }
 }

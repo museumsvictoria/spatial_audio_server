@@ -1,5 +1,5 @@
-use cgmath::Point2;
 use metres::Metres;
+use nannou::math::Point2;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct Id(pub u64);

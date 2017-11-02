@@ -1,21 +1,18 @@
-extern crate cgmath;
 #[macro_use] extern crate conrod;
 #[macro_use] extern crate conrod_derive;
 #[macro_use] extern crate custom_derive;
-extern crate find_folder;
 extern crate hound; // wav loading
-extern crate image;
 #[macro_use] extern crate newtype_derive;
-extern crate rosc; // osc encoding/decoding
-extern crate sample;
+extern crate nannou;
 extern crate serde; // serialization
 #[macro_use] extern crate serde_derive;
 extern crate serde_json;
 extern crate time_calc;
 extern crate toml;
 
-use conrod::backend::glium::glium;
-use std::net::{Ipv4Addr, SocketAddrV4};
+use nannou::prelude::*;
+use std::sync::mpsc;
+use std::thread;
 
 mod audio;
 mod composer;
@@ -25,44 +22,61 @@ mod interaction;
 mod metres;
 mod osc;
 
-pub const SAMPLE_HZ: f64 = 44_100.0;
-
-/// Run the Beyond Perception Audio Server.
 pub fn run() {
-    // Find the `assets` directory.
-    let exe_path = std::env::current_exe().unwrap();
-    let assets = find_folder::Search::ParentsThenKids(7, 3)
-        .of(exe_path.parent().unwrap().into())
-        .for_folder("assets")
-        .unwrap();
+    nannou::app(model, update, draw).exit(exit).run();
+}
+
+/// The model of the application state.
+///
+/// This is the state stored and updated on the main thread.
+struct Model {
+    gui: gui::Model,
+    composer_msg_tx: mpsc::Sender<composer::Message>,
+    composer_thread_handle: thread::JoinHandle<()>,
+}
+
+// Initialise the state of the application.
+fn model(app: &App) -> Model {
+    // Don't keep looping, just wait for events.
+    app.set_loop_mode(LoopMode::wait(3));
+
+    // Find the assets directory.
+    let assets = app.assets_path().unwrap();
 
     // Load the configuration struct.
     let config = config::load(&assets.join("config.toml")).unwrap();
 
-    // Build the event loop and window.
-    let mut events_loop = glium::glutin::EventsLoop::new();
-    let window = glium::glutin::WindowBuilder::new()
+    // Create a window.
+    let window = app.new_window()
         .with_title("Audio Server")
-        .with_dimensions(config.window_width, config.window_height);
-    let context = glium::glutin::ContextBuilder::new()
+        .with_dimensions(config.window_width, config.window_height)
         .with_vsync(true)
-        .with_multisampling(4);
-    let display = glium::Display::new(window, context, &events_loop).unwrap();
+        .with_multisampling(4)
+        .build()
+        .unwrap();
 
     // Spawn the OSC input thread.
-    let osc_input_addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), config.osc_input_port);
-    let (_osc_thread_handle, osc_msg_rx, interaction_gui_rx) = osc::input::spawn(osc_input_addr);
+    let osc_receiver = nannou::osc::receiver(config.osc_input_port).unwrap();
+    let (_osc_thread_handle, osc_msg_rx, interaction_rx) = osc::input::spawn(osc_receiver);
 
-    // Spawn the audio engine (rendering, processing, etc).
-    let (audio_thread_handle, audio_msg_tx) = audio::spawn();
+    // Get the default device and attempt to set it up with the target number of channels.
+    let device = app.audio.default_output_device().unwrap();
+    let supported_channels = device
+        .supported_formats()
+        .unwrap()
+        .next()
+        .map(|format| format.channels.len())
+        .unwrap();
 
-    // Create the audio requester which transfers audio from the audio engine to the audio backend.
-    const FRAMES_PER_BUFFER: usize = 64;
-    let audio_requester = audio::Requester::new(audio_msg_tx.clone(), FRAMES_PER_BUFFER);
-
-    // Run the CPAL audio backend for interfacing with the audio device.
-    let (_audio_backend_thread_handle, mut cpal_voice) =
-        audio::backend::spawn(audio_requester, SAMPLE_HZ).unwrap();
+    // Initialise the audio model and create the stream.
+    let audio_model = audio::Model::new();
+    let audio_output_stream = app.audio
+        .new_output_stream(audio_model, audio::render)
+        .sample_rate(audio::SAMPLE_RATE as u32)
+        .frames_per_buffer(audio::FRAMES_PER_BUFFER)
+        .channels(std::cmp::min(supported_channels, audio::MAX_CHANNELS))
+        .build()
+        .unwrap();
 
     // To be shared between the `Composer` and `GUI` threads as both are responsible for creating
     // sounds and sending them to the audio thread.
@@ -70,88 +84,57 @@ pub fn run() {
 
     // Spawn the composer thread.
     let (composer_thread_handle, composer_msg_tx) =
-        composer::spawn(audio_msg_tx.clone(), sound_id_gen.clone());
+        composer::spawn(audio_output_stream.clone(), sound_id_gen.clone());
 
-    // Spawn the GUI thread.
-    //
-    // The `gui_msg_tx` is a channel for sending input to the GUI thread.
-    //
-    // The renderer and image_map are used for rendering graphics primitives received on the
-    // `gui_render_rx` channel.
-    let proxy = events_loop.create_proxy();
-    let (gui_thread_handle, mut renderer, image_map, gui_msg_tx, gui_render_rx) =
-        gui::spawn(&assets,
-                   config,
-                   &display,
-                   proxy,
-                   osc_msg_rx,
-                   interaction_gui_rx,
-                   audio_msg_tx.clone(),
-                   composer_msg_tx.clone(),
-                   sound_id_gen);
+    // Initalise the GUI model.
+    let gui_channels = gui::Channels {
+        osc_msg_rx,
+        interaction_rx,
+        audio: audio_output_stream.clone(),
+        composer_msg_tx: composer_msg_tx.clone(),
+    };
+    let gui = gui::Model::new(&assets, config, app, window, gui_channels, sound_id_gen);
 
-    // Run the event loop.
-    let mut closed = false;
-    while !closed {
-
-        // Draw the most recently received `conrod::render::Primitives` sent from the `Ui`.
-        loop {
-            match gui_render_rx.try_iter().last() {
-                Some(primitives) => gui::draw(&display, &mut renderer, &image_map, &primitives),
-                None => break,
-            }
-        }
-
-        // Wait for the events or until we receive some graphics to draw from the GUI thread.
-        events_loop.run_forever(|event| {
-            // Use the `winit` backend feature to convert the winit event to a conrod one.
-            if let Some(input) = conrod::backend::winit::convert_event(event.clone(), &display) {
-                gui_msg_tx.send(gui::Message::Input(input)).unwrap();
-            }
-
-            match event {
-                glium::glutin::Event::WindowEvent { event, .. } => match event {
-                    // Break from the loop upon `Escape`.
-                    glium::glutin::WindowEvent::Closed |
-                    glium::glutin::WindowEvent::KeyboardInput {
-                        input: glium::glutin::KeyboardInput {
-                            virtual_keycode: Some(glium::glutin::VirtualKeyCode::Escape),
-                            ..
-                        },
-                        ..
-                    } => {
-                        closed = true;
-                        audio_msg_tx.send(audio::Message::Exit).unwrap();
-                        gui_msg_tx.send(gui::Message::Exit).unwrap();
-                        composer_msg_tx.send(composer::Message::Exit).unwrap();
-                        return glium::glutin::ControlFlow::Break;
-                    },
-                    // We must re-draw on `Resized`, as the event loops become blocked during
-                    // resize on macOS.
-                    glium::glutin::WindowEvent::Resized(..) => {
-                        if let Some(primitives) = gui_render_rx.iter().next() {
-                            gui::draw(&display, &mut renderer, &image_map, &primitives);
-                        }
-                    },
-                    _ => {},
-                },
-                glium::glutin::Event::Awakened => return glium::glutin::ControlFlow::Break,
-                _ => (),
-            }
-
-            glium::glutin::ControlFlow::Continue
-        });
+    Model {
+        composer_thread_handle,
+        composer_msg_tx,
+        gui,
     }
+}
 
-    // Stop the CPAL stream and join the thread.
-    cpal_voice.pause();
+// Update the application in accordance with the given event.
+fn update(_app: &App, mut model: Model, event: Event) -> Model {
+    match event {
+        Event::WindowEvent { simple: Some(_event), .. } => {
+        },
+        Event::Update(_update) => {
+            model.gui.update();
+        },
+        _ => (),
+    }
+    model
+}
 
-    // Wait for the audio thread to finish.
-    audio_thread_handle.join().unwrap();
+// Draw the state of the application to the screen.
+fn draw(app: &App, model: &Model, frame: Frame) -> Frame {
+    model.gui.ui.draw_to_frame(app, &frame).unwrap();
+    frame
+}
+
+// Re-join with spawned threads on application exit.
+fn exit(_app: &App, model: Model) {
+    let Model {
+        gui,
+        composer_msg_tx,
+        composer_thread_handle,
+        ..
+    } = model;
+
+    gui.exit();
+
+    // Send exit signals to the audio and composer threads.
+    composer_msg_tx.send(composer::Message::Exit).unwrap();
 
     // Wait for the composer thread to finish.
     composer_thread_handle.join().unwrap();
-
-    // Wait for the GUI thread to finish saving files, etc.
-    gui_thread_handle.join().unwrap();
 }

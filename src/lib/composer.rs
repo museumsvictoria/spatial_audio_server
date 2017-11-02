@@ -18,14 +18,14 @@ pub enum Message {
 /// 3. Send the `Sound`s to the audio thread and accompanying monitoring stuff to the GUI thread
 ///    (for tracking positions, RMS, etc).
 pub fn spawn(
-    audio_msg_tx: mpsc::Sender<audio::Message>,
+    audio_output_stream: audio::OutputStream,
     sound_id_gen: audio::sound::IdGenerator,
 ) -> (std::thread::JoinHandle<()>, mpsc::Sender<Message>) {
     let (tx, rx) = mpsc::channel();
 
     let handle = std::thread::Builder::new()
         .name("composer".into())
-        .spawn(move || run(rx, audio_msg_tx, sound_id_gen))
+        .spawn(move || run(rx, audio_output_stream, sound_id_gen))
         .unwrap();
 
     (handle, tx)
@@ -33,7 +33,7 @@ pub fn spawn(
 
 fn run(
     msg_rx: mpsc::Receiver<Message>,
-    _audio_msg_tx: mpsc::Sender<audio::Message>,
+    _audio_output_stream: audio::OutputStream,
     _sound_id_gen: audio::sound::IdGenerator,
 ) {
     // A map for storing all audio sources.
