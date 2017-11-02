@@ -1,7 +1,8 @@
 //! A visual representation of a `Sound` for displaying over the floorplan.
 
-use conrod::{color, widget, Color, Colorable, FontSize, Positionable, Scalar, Widget};
 use metres::Metres;
+use nannou::ui::Color;
+use nannou::ui::prelude::*;
 use std;
 
 #[derive(Clone, WidgetCommon)]

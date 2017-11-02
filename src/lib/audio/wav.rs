@@ -1,6 +1,6 @@
-use SAMPLE_HZ;
+use audio;
 use hound::{self, SampleFormat};
-use sample::{self, Sample, signal, Signal};
+use nannou::audio::sample::{self, Sample, signal, Signal};
 use std::path::{Path, PathBuf};
 use time_calc::{Ms, Samples, SampleHz};
 
@@ -42,7 +42,7 @@ pub fn stream_signal(path: &Path) -> Result<Box<Signal<Frame=[f32; 1]> + Send>, 
                 .map(|s| [s.unwrap().to_sample::<f32>()]);
             let mut signal = signal::from_iter(frames);
             let source_hz = spec.sample_rate as _;
-            let target_hz = SAMPLE_HZ as _;
+            let target_hz = audio::SAMPLE_RATE as _;
             if source_hz != target_hz {
                 let interp = sample::interpolate::Linear::from_source(&mut signal);
                 let signal = signal.from_hz_to_hz(interp, source_hz, target_hz);

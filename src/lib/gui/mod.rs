@@ -1,16 +1,14 @@
 use audio;
-use cgmath;
 use composer;
 use config::Config;
-use conrod::{self, color, position, text, widget, Borderable, Color, Colorable, FontSize,
-             Labelable, Positionable, Scalar, Sizeable, UiBuilder, UiCell, Widget};
-use conrod::backend::glium::{glium, Renderer};
-use conrod::event::Input;
-use conrod::render::OwnedPrimitives;
-use image;
 use interaction::Interaction;
 use metres::Metres;
-use rosc::OscMessage;
+use nannou;
+use nannou::prelude::*;
+use nannou::glium;
+use nannou::osc;
+use nannou::ui;
+use nannou::ui::prelude::*;
 use serde_json;
 use std;
 use std::collections::VecDeque;
@@ -22,8 +20,19 @@ use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::sync::mpsc;
 
-mod theme;
 mod custom_widget;
+mod theme;
+
+pub struct Model {
+    pub ui: Ui,
+    images: Images,
+    fonts: Fonts,
+    state: State,
+    ids: Ids,
+    channels: Channels,
+    sound_id_gen: audio::sound::IdGenerator,
+    assets: PathBuf,
+}
 
 /// A convenience wrapper that borrows the GUI state necessary for instantiating the widgets.
 struct Gui<'a> {
@@ -37,15 +46,7 @@ struct Gui<'a> {
     sound_id_gen: &'a audio::sound::IdGenerator,
 }
 
-/// Messages received by the GUI thread.
-pub enum Message {
-    Osc(SocketAddr, OscMessage),
-    Interaction(Interaction),
-    Input(Input),
-    Exit,
-}
-
-struct State {
+pub struct State {
     // The loaded config file.
     config: Config,
     // The camera over the 2D floorplan.
@@ -62,9 +63,238 @@ struct State {
     interaction_log_is_open: bool,
 }
 
-struct Channels {
-    audio_msg_tx: mpsc::Sender<audio::Message>,
-    composer_msg_tx: mpsc::Sender<composer::Message>,
+fn speakers_path(assets: &Path) -> PathBuf {
+    assets.join(Path::new(SPEAKERS_FILE_STEM)).with_extension("json")
+}
+
+fn sources_path(assets: &Path) -> PathBuf {
+    assets.join(Path::new(SOURCES_FILE_STEM)).with_extension("json")
+}
+
+impl Model {
+    /// Initialise the GUI model.
+    pub fn new(
+        assets: &Path,
+        config: Config,
+        app: &App,
+        window_id: WindowId,
+        channels: Channels,
+        sound_id_gen: audio::sound::IdGenerator,
+    ) -> Self {
+        let mut ui = app.new_ui(window_id).with_theme(theme::construct()).build().unwrap();
+
+        // The type containing the unique ID for each widget in the GUI.
+        let ids = Ids::new(ui.widget_id_generator());
+
+        // Load and insert the fonts to be used.
+        let font_path = fonts_directory(assets).join("NotoSans/NotoSans-Regular.ttf");
+        let notosans_regular = ui.fonts_mut().insert_from_file(font_path).unwrap();
+        let fonts = Fonts { notosans_regular };
+
+        // Load and insert the images to be used.
+        let floorplan_path = images_directory(assets).join("floorplan.png");
+        let floorplan = insert_image(&floorplan_path,
+                                     app.window(window_id).unwrap().inner_glium_display(),
+                                     &mut ui.image_map);
+        let images = Images { floorplan };
+
+        // Initialise the GUI state.
+        let state = State::new(assets, config, &channels);
+
+        Model {
+            ui,
+            images,
+            fonts,
+            state,
+            ids,
+            channels,
+            sound_id_gen,
+            assets: assets.into(),
+        }
+    }
+
+    /// Update the GUI model.
+    ///
+    /// - Collect pending OSC and interactio messages for the logs.
+    /// - Instantiate the Ui's widgets.
+    pub fn update(&mut self) {
+        let Model {
+            ref mut ui,
+            ref mut ids,
+            ref mut state,
+            ref images,
+            ref fonts,
+            ref channels,
+            ref sound_id_gen,
+            ..
+        } = *self;
+
+        // Collect OSC messages for the OSC log.
+        for (addr, msg) in channels.osc_msg_rx.try_iter() {
+            state.osc_log.push_msg((addr, msg));
+        }
+
+        // Collect interactions for the interaction log.
+        for interaction in channels.interaction_rx.try_iter() {
+            state.interaction_log.push_msg(interaction);
+        }
+
+        let ui = ui.set_widgets();
+        let mut gui = Gui { ui, ids, images, fonts, state, channels, sound_id_gen };
+        set_widgets(&mut gui);
+    }
+
+    /// Save the speaker configuration and audio sources on exit.
+    pub fn exit(self) {
+        // Saves the file to a temporary file before removing the original to reduce the chance
+        // of losing data in the case that something goes wrong during saving.
+        fn safe_file_save(path: &Path, content: &str) -> Result<(), std::io::Error> {
+            let temp_path = path.with_extension("tmp");
+
+            // If the temp file exists, remove it.
+            if temp_path.exists() {
+                std::fs::remove_file(&temp_path)?;
+            }
+
+            // Create the directory if it doesn't exist.
+            if let Some(directory) = path.parent() {
+                if !directory.exists() {
+                    std::fs::create_dir_all(&temp_path)?;
+                }
+            }
+
+            // Write the temp file.
+            let mut file = File::create(&temp_path)?;
+            file.write(content.as_bytes())?;
+
+            // If there's already a file at `path`, remove it.
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+            }
+
+            // Rename the temp file to the original path name.
+            std::fs::rename(temp_path, path)?;
+
+            Ok(())
+        }
+
+        // Destructure the GUI state for serializing.
+        let Model {
+            state: State {
+                speaker_editor: SpeakerEditor {
+                    speakers,
+                    next_id: next_speaker_id,
+                    ..
+                },
+                source_editor: SourceEditor {
+                    sources,
+                    next_id: next_source_id,
+                    ..
+                },
+                ..
+            },
+            assets,
+            ..
+        } = self;
+
+        // Save the speaker configuration.
+        let speakers_json_string = {
+            let next_id = next_speaker_id;
+            let stored_speakers = StoredSpeakers { speakers, next_id };
+            serde_json::to_string_pretty(&stored_speakers)
+                .expect("failed to serialize speaker layout")
+        };
+        safe_file_save(&speakers_path(&assets), &speakers_json_string)
+            .expect("failed to save speakers file");
+
+        // Save the list of audio sources.
+        let sources_json_string = {
+            let next_id = next_source_id;
+            let stored_sources = StoredSources { sources, next_id };
+            serde_json::to_string_pretty(&stored_sources)
+                .expect("failed to serialize sources")
+        };
+        safe_file_save(&sources_path(&assets), &sources_json_string)
+            .expect("failed to save sources file");
+    }
+}
+
+impl State {
+    /// Initialise the `State` and send any loaded speakers and sources to the audio and composer
+    /// threads.
+    pub fn new(assets: &Path, config: Config, channels: &Channels) -> Self {
+        // Load the existing speaker layout configuration if there is one.
+        let StoredSpeakers { speakers, next_id } = StoredSpeakers::load(&speakers_path(assets));
+
+        // Send the loaded speakers to the audio thread.
+        for speaker in &speakers {
+            let (speaker_id, speaker_clone) = (speaker.id, speaker.audio.clone());
+            channels.audio.send(move |audio| {
+                audio.speakers.insert(speaker_id, speaker_clone);
+            }).ok();
+        }
+
+        let speaker_editor = SpeakerEditor {
+            is_open: false,
+            selected: None,
+            speakers,
+            next_id,
+        };
+
+        // Load the existing sound sources if there are some.
+        let audio_path = assets.join(Path::new(AUDIO_DIRECTORY_NAME));
+        let StoredSources { sources, next_id } = StoredSources::load(&sources_path(assets), &audio_path);
+
+        // Send the loaded sources to the composer thread.
+        for source in &sources {
+            let msg = composer::Message::UpdateSource(source.id, source.audio.clone());
+            channels.composer_msg_tx.send(msg).expect("composer_msg_tx was closed");
+        }
+
+        let preview = SourcePreview {
+            current: None,
+            point: None,
+        };
+
+        let source_editor = SourceEditor {
+            is_open: true,
+            selected: None,
+            next_id,
+            sources,
+            preview,
+        };
+
+        let camera = Camera {
+            floorplan_pixels_per_metre: config.floorplan_pixels_per_metre,
+            position: Point2 { x: Metres(0.0), y: Metres(0.0) },
+            zoom: 0.0,
+        };
+
+        let osc_log = Log::with_limit(config.osc_log_limit);
+        let interaction_log = Log::with_limit(config.interaction_log_limit);
+
+        // State that is specific to the GUI itself.
+        State {
+            config,
+            // TODO: Possibly load camera from file.
+            camera,
+            speaker_editor,
+            source_editor,
+            osc_log,
+            interaction_log,
+            side_menu_is_open: true,
+            osc_log_is_open: false,
+            interaction_log_is_open: false,
+        }
+    }
+}
+
+pub struct Channels {
+    pub osc_msg_rx: mpsc::Receiver<(SocketAddr, osc::Message)>,
+    pub interaction_rx: mpsc::Receiver<Interaction>,
+    pub composer_msg_tx: mpsc::Sender<composer::Message>,
+    /// A handle for communicating with the audio output stream.
+    pub audio: audio::OutputStream,
 }
 
 struct SpeakerEditor {
@@ -103,9 +333,9 @@ const SOURCES_FILE_STEM: &'static str = "sources";
 // The name of the directory where the WAVs are stored.
 const AUDIO_DIRECTORY_NAME: &'static str = "audio";
 
-const SOUNDSCAPE_COLOR: Color = color::DARK_RED;
-const INSTALLATION_COLOR: Color = color::DARK_GREEN;
-const SCRIBBLES_COLOR: Color = color::DARK_PURPLE;
+const SOUNDSCAPE_COLOR: ui::Color = ui::color::DARK_RED;
+const INSTALLATION_COLOR: ui::Color = ui::color::DARK_GREEN;
+const SCRIBBLES_COLOR: ui::Color = ui::color::DARK_PURPLE;
 
 fn first_speaker_id() -> audio::speaker::Id {
     audio::speaker::Id(0)
@@ -142,7 +372,7 @@ struct SourceEditor {
 
 struct SourcePreview {
     current: Option<(SourcePreviewMode, audio::sound::Id)>,
-    point: Option<cgmath::Point2<Metres>>,
+    point: Option<Point2<Metres>>,
 }
 
 #[derive(Copy, Clone)]
@@ -265,11 +495,9 @@ impl<'a> DerefMut for Gui<'a> {
     }
 }
 
-type ImageMap = conrod::image::Map<glium::texture::Texture2d>;
-
 #[derive(Clone, Copy, Debug)]
 struct Image {
-    id: conrod::image::Id,
+    id: ui::image::Id,
     width: Scalar,
     height: Scalar,
 }
@@ -292,7 +520,7 @@ struct Camera {
     // The position of the camera over the floorplan.
     //
     // [0.0, 0.0] - the centre of the floorplan.
-    position: cgmath::Point2<Metres>,
+    position: Point2<Metres>,
     // The higher the zoom, the closer the floorplan appears.
     //
     // The zoom can be multiplied by a distance in metres to get the equivalent distance as a GUI
@@ -324,7 +552,7 @@ struct Log<T> {
     limit: usize,
 }
 
-type OscLog = Log<(SocketAddr, OscMessage)>;
+type OscLog = Log<(SocketAddr, osc::Message)>;
 type InteractionLog = Log<Interaction>;
 
 impl<T> Log<T> {
@@ -407,7 +635,7 @@ fn load_image(
     path: &Path,
     display: &glium::Display,
 ) -> ((Scalar, Scalar), glium::texture::Texture2d) {
-    let rgba_image = image::open(&path).unwrap().to_rgba();
+    let rgba_image = nannou::image::open(&path).unwrap().to_rgba();
     let (w, h) = rgba_image.dimensions();
     let raw_image =
         glium::texture::RawImage2d::from_raw_rgba_reversed(&rgba_image.into_raw(), (w, h));
@@ -418,314 +646,15 @@ fn load_image(
 /// Insert the image at the given path into the given `ImageMap`.
 ///
 /// Return its Id and Dimensions in the form of an `Image`.
-fn insert_image(path: &Path, display: &glium::Display, image_map: &mut ImageMap) -> Image {
+fn insert_image(
+    path: &Path,
+    display: &glium::Display,
+    image_map: &mut ui::Texture2dMap,
+) -> Image {
     let ((width, height), texture) = load_image(path, display);
     let id = image_map.insert(texture);
     let image = Image { id, width, height };
     image
-}
-
-/// Spawn the GUI thread.
-///
-/// The GUI thread is driven by input sent from the main thread. It sends back graphics primitives
-/// when a received `Message` would require redrawing the GUI.
-pub fn spawn(
-    assets: &Path,
-    config: Config,
-    display: &glium::Display,
-    events_loop_proxy: glium::glutin::EventsLoopProxy,
-    osc_msg_rx: mpsc::Receiver<(SocketAddr, OscMessage)>,
-    interaction_rx: mpsc::Receiver<Interaction>,
-    audio_msg_tx: mpsc::Sender<audio::Message>,
-    composer_msg_tx: mpsc::Sender<composer::Message>,
-    sound_id_gen: audio::sound::IdGenerator,
-) -> (std::thread::JoinHandle<()>,
-      Renderer,
-      ImageMap,
-      mpsc::Sender<Message>,
-      mpsc::Receiver<OwnedPrimitives>)
-{
-    // Use the width and height of the display as the initial size for the Ui.
-    let (display_w, display_h) = display.gl_window().get_inner_size_points().unwrap();
-    let ui_dimensions = [display_w as Scalar, display_h as Scalar];
-    let theme = theme::construct();
-    let mut ui = UiBuilder::new(ui_dimensions).theme(theme).build();
-
-    // The type containing the unique ID for each widget in the GUI.
-    let mut ids = Ids::new(ui.widget_id_generator());
-
-    // Load and insert the fonts to be used.
-    let font_path = fonts_directory(assets).join("NotoSans/NotoSans-Regular.ttf");
-    let notosans_regular = ui.fonts.insert_from_file(font_path).unwrap();
-    let fonts = Fonts { notosans_regular };
-
-    // Load and insert the images to be used.
-    let mut image_map = ImageMap::new();
-    let floorplan_path = images_directory(assets).join("floorplan.png");
-    let floorplan = insert_image(&floorplan_path, display, &mut image_map);
-    let images = Images { floorplan };
-
-    // Load the existing speaker layout configuration if there is one.
-    let speakers_path = assets.join(Path::new(SPEAKERS_FILE_STEM)).with_extension("json");
-    let StoredSpeakers { speakers, next_id } = StoredSpeakers::load(&speakers_path);
-
-    // Send the loaded speakers to the audio thread.
-    for speaker in &speakers {
-        let msg = audio::Message::UpdateSpeaker(speaker.id, speaker.audio.clone());
-        audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
-    }
-
-    let speaker_editor = SpeakerEditor {
-        is_open: false,
-        selected: None,
-        speakers,
-        next_id,
-    };
-
-    // Load the existing sound sources if there are some.
-    let sources_path = assets.join(Path::new(SOURCES_FILE_STEM)).with_extension("json");
-    let audio_path = assets.join(Path::new(AUDIO_DIRECTORY_NAME));
-    let StoredSources { sources, next_id } = StoredSources::load(&sources_path, &audio_path);
-
-    // Send the loaded sources to the composer thread.
-    for source in &sources {
-        let msg = composer::Message::UpdateSource(source.id, source.audio.clone());
-        composer_msg_tx.send(msg).expect("composer_msg_tx was closed");
-    }
-
-    let preview = SourcePreview {
-        current: None,
-        point: None,
-    };
-
-    let source_editor = SourceEditor {
-        is_open: true,
-        selected: None,
-        next_id,
-        sources,
-        preview,
-    };
-
-    let camera = Camera {
-        floorplan_pixels_per_metre: config.floorplan_pixels_per_metre,
-        position: cgmath::Point2 { x: Metres(0.0), y: Metres(0.0) },
-        zoom: 0.0,
-    };
-
-    let channels = Channels {
-        audio_msg_tx,
-        composer_msg_tx,
-    };
-
-    // State that is specific to the GUI itself.
-    let mut state = State {
-        config,
-        // TODO: Possibly load camera from file.
-        camera,
-        speaker_editor,
-        source_editor,
-        osc_log: Log::with_limit(config.osc_log_limit),
-        interaction_log: Log::with_limit(config.interaction_log_limit),
-        side_menu_is_open: true,
-        osc_log_is_open: false,
-        interaction_log_is_open: false,
-    };
-
-    // A renderer from conrod primitives to the OpenGL display.
-    let renderer = Renderer::new(display).unwrap();
-
-    // Channels for communication with the main thread.
-    let (msg_tx, msg_rx) = mpsc::channel();
-    let (render_tx, render_rx) = mpsc::channel();
-
-    // Spawn a thread that converts the OSC messages to GUI messages.
-    let msg_tx_clone = msg_tx.clone();
-    std::thread::Builder::new()
-        .name("osc_to_gui_msg".into())
-        .spawn(move || {
-            for (addr, msg) in osc_msg_rx {
-                if msg_tx_clone.send(Message::Osc(addr, msg)).is_err() {
-                    break;
-                }
-            }
-        })
-        .unwrap();
-
-    // Spawn a thread that converts the Interaction messages to GUI messages.
-    let msg_tx_clone = msg_tx.clone();
-    std::thread::Builder::new()
-        .name("interaction_to_gui_msg".into())
-        .spawn(move || {
-            for interaction in interaction_rx {
-                if msg_tx_clone.send(Message::Interaction(interaction)).is_err() {
-                    break;
-                }
-            }
-        })
-        .unwrap();
-
-    // Spawn the main GUI thread.
-    let gui_thread_handle = std::thread::Builder::new()
-        .name("conrod_gui".into())
-        .spawn(move || {
-
-            // The number of times the GUI should update after an interaction.
-            //
-            // This ensures that common, short (2-3 frame) animations are played out in full such
-            // as mouse-clicks or highlights.
-            const REFRESH_UPDATE_COUNT: usize = 3;
-            let mut updates_remaining = REFRESH_UPDATE_COUNT;
-
-            // A buffer for collecting OSC messages.
-            let mut msgs = Vec::new();
-
-            'conrod: loop {
-                // Collect any pending messages.
-                msgs.extend(msg_rx.try_iter());
-
-                // If there are no messages pending, wait for them.
-                if msgs.is_empty() && updates_remaining == 0 {
-                    match msg_rx.recv() {
-                        Ok(msg) => msgs.push(msg),
-                        Err(_) => break 'conrod,
-                    };
-                }
-
-                // Decrement the update count.
-                if updates_remaining > 0 {
-                    updates_remaining -= 1;
-                }
-
-                for msg in msgs.drain(..) {
-                    match msg {
-                        Message::Osc(addr, osc) =>
-                            state.osc_log.push_msg((addr, osc)),
-                        Message::Interaction(interaction) =>
-                            state.interaction_log.push_msg(interaction),
-                        Message::Input(input) => {
-                            ui.handle_event(input);
-                            updates_remaining = REFRESH_UPDATE_COUNT;
-                        },
-                        Message::Exit => break 'conrod,
-                    }
-                }
-
-                // Instantiate the widgets.
-                {
-                    let mut gui = Gui {
-                        ui: ui.set_widgets(),
-                        ids: &mut ids,
-                        images: &images,
-                        fonts: &fonts,
-                        state: &mut state,
-                        channels: &channels,
-                        sound_id_gen: &sound_id_gen,
-                    };
-                    set_widgets(&mut gui);
-                }
-
-                // Render the `Ui` to a list of primitives that we can send to the main thread for
-                // display. Wakeup `winit` for rendering.
-                if let Some(primitives) = ui.draw_if_changed() {
-                    if render_tx.send(primitives.owned()).is_err() ||
-                        events_loop_proxy.wakeup().is_err()
-                    {
-                        break 'conrod;
-                    }
-                }
-            }
-
-            // Saves the file to a temporary file before removing the original to reduce the chance
-            // of losing data in the case that something goes wrong during saving.
-            fn safe_file_save(path: &Path, content: &str) -> Result<(), std::io::Error> {
-                let temp_path = path.with_extension("tmp");
-
-                // If the temp file exists, remove it.
-                if temp_path.exists() {
-                    std::fs::remove_file(&temp_path)?;
-                }
-
-                // Create the directory if it doesn't exist.
-                if let Some(directory) = path.parent() {
-                    if !directory.exists() {
-                        std::fs::create_dir_all(&temp_path)?;
-                    }
-                }
-
-                // Write the temp file.
-                let mut file = File::create(&temp_path)?;
-                file.write(content.as_bytes())?;
-
-                // If there's already a file at `path`, remove it.
-                if path.exists() {
-                    std::fs::remove_file(&path)?;
-                }
-
-                // Rename the temp file to the original path name.
-                std::fs::rename(temp_path, path)?;
-
-                Ok(())
-            }
-
-            // Destructure the GUI state for serializing.
-            let State {
-                speaker_editor: SpeakerEditor {
-                    speakers,
-                    next_id: next_speaker_id,
-                    ..
-                },
-                source_editor: SourceEditor {
-                    sources,
-                    next_id: next_source_id,
-                    ..
-                },
-                ..
-            } = state;
-
-            // The conrod loop has ended - we'll save the state before closing the thread.
-
-            // Save the speaker configuration.
-            let speakers_json_string = {
-                let stored_speakers = StoredSpeakers {
-                    speakers,
-                    next_id: next_speaker_id,
-                };
-                serde_json::to_string_pretty(&stored_speakers)
-                    .expect("failed to serialize speaker layout")
-            };
-            safe_file_save(&speakers_path, &speakers_json_string)
-                .expect("failed to save speakers file");
-
-            // Save the list of audio sources.
-            let sources_json_string = {
-                let stored_sources = StoredSources {
-                    sources,
-                    next_id: next_source_id,
-                };
-                serde_json::to_string_pretty(&stored_sources)
-                    .expect("failed to serialize sources")
-            };
-            safe_file_save(&sources_path, &sources_json_string)
-                .expect("failed to save sources file");
-        })
-        .unwrap();
-
-    (gui_thread_handle, renderer, image_map, msg_tx, render_rx)
-}
-
-/// Draws the given `primitives` to the given `Display`.
-pub fn draw(
-    display: &glium::Display,
-    renderer: &mut Renderer,
-    image_map: &ImageMap,
-    primitives: &OwnedPrimitives,
-) {
-    use conrod::backend::glium::glium::Surface;
-    renderer.fill(display, primitives.walk(), &image_map);
-    let mut target = display.draw();
-    target.clear_color(0.0, 0.0, 0.0, 1.0);
-    renderer.draw(display, &mut target, &image_map).unwrap();
-    target.finish().unwrap();
 }
 
 // A unique ID foor each widget in the GUI.
@@ -815,7 +744,7 @@ fn info_text(text: &str) -> widget::Text {
 
 const ITEM_HEIGHT: Scalar = 30.0;
 const SMALL_FONT_SIZE: FontSize = 12;
-const DARK_A: conrod::Color = conrod::Color::Rgba(0.1, 0.13, 0.15, 1.0);
+const DARK_A: ui::Color = ui::Color::Rgba(0.1, 0.13, 0.15, 1.0);
 
 // Instantiate the sidebar speaker editor widgets.
 fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
@@ -869,7 +798,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
             let mut maybe_remove_index = None;
 
             while let Some(event) = events.next(gui, |i| gui.state.speaker_editor.selected == Some(i)) {
-                use conrod::widget::list_select::Event;
+                use self::ui::widget::list_select::Event;
                 match event {
 
                     // Instantiate a button for each speaker.
@@ -942,8 +871,9 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
             // Remove a speaker if necessary.
             if let Some(i) = maybe_remove_index {
                 let speaker = gui.state.speaker_editor.speakers.remove(i);
-                let msg = audio::Message::RemoveSpeaker(speaker.id);
-                gui.channels.audio_msg_tx.send(msg).expect("audio_mst_tx was closed");
+                gui.channels.audio.send(move |audio| {
+                    audio.speakers.remove(&speaker.id);
+                }).ok();
             }
         }
 
@@ -987,8 +917,10 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                 };
                 let speaker = Speaker { id, name, audio };
 
-                let msg = audio::Message::UpdateSpeaker(speaker.id, speaker.audio.clone());
-                gui.channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                let (speaker_id, speaker_clone) = (speaker.id, speaker.audio.clone());
+                gui.channels.audio.send(move |audio| {
+                    audio.speakers.insert(speaker_id, speaker_clone);
+                }).ok();
                 gui.state.speaker_editor.speakers.push(speaker);
                 gui.state.speaker_editor.next_id = audio::speaker::Id(id.0.wrapping_add(1));
                 gui.state.speaker_editor.selected = Some(gui.state.speaker_editor.speakers.len() - 1);
@@ -998,7 +930,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
         let area_rect = gui.rect_of(area.id).unwrap();
         let start = area_rect.y.start;
         let end = start + SELECTED_CANVAS_H;
-        let selected_canvas_y = conrod::Range { start, end };
+        let selected_canvas_y = ui::Range { start, end };
 
         widget::Canvas::new()
             .pad(PAD)
@@ -1053,8 +985,10 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                 .set(ids.speaker_editor_selected_channel, ui)
             {
                 speakers[i].audio.channel = new_index;
-                let msg = audio::Message::UpdateSpeaker(speakers[i].id, speakers[i].audio.clone());
-                channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                let (speaker_id, speaker_clone) = (speakers[i].id, speakers[i].audio.clone());
+                channels.audio.send(move |audio| {
+                    audio.speakers.insert(speaker_id, speaker_clone);
+                }).ok();
 
                 // If an existing speaker was assigned to `index`, swap it with the original
                 // selection.
@@ -1064,8 +998,10 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                     .map(|(ix, _)| ix);
                 if let Some(ix) = maybe_index {
                     speakers[ix].audio.channel = selected;
-                    let msg = audio::Message::UpdateSpeaker(speakers[ix].id, speakers[ix].audio.clone());
-                    channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                    let (speaker_id, speaker_clone) = (speakers[ix].id, speakers[ix].audio.clone());
+                    channels.audio.send(move |audio| {
+                        audio.speakers.insert(speaker_id, speaker_clone);
+                    }).ok();
                 }
             }
 
@@ -1140,7 +1076,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             let mut maybe_remove_index = None;
 
             while let Some(event) = events.next(gui, |i| gui.state.source_editor.selected == Some(i)) {
-                use conrod::widget::list_select::Event;
+                use self::ui::widget::list_select::Event;
                 match event {
 
                     // Instantiate a button for each source.
@@ -1215,11 +1151,6 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             // Remove a source if necessary.
             if let Some(_i) = maybe_remove_index {
                 unimplemented!();
-                // let source = gui.state.source_editor.sources.remove(i);
-                // let msg = audio::Message::RemoveSource(speaker.id);
-                // gui.state.speaker_editor.audio_msg_tx
-                //     .send(msg)
-                //     .expect("audio_mst_tx was closed");
             }
         }
 
@@ -1281,7 +1212,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let area_rect = gui.rect_of(area.id).unwrap();
         let start = area_rect.y.start;
         let end = start + SELECTED_CANVAS_H;
-        let selected_canvas_y = conrod::Range { start, end };
+        let selected_canvas_y = ui::Range { start, end };
 
         widget::Canvas::new()
             .pad(PAD)
@@ -1347,7 +1278,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 }
             }
 
-            fn role_color(role: Option<audio::source::Role>) -> Color {
+            fn role_color(role: Option<audio::source::Role>) -> ui::Color {
                 match role {
                     None => color::DARK_GREY,
                     Some(audio::source::Role::Soundscape) => SOUNDSCAPE_COLOR,
@@ -1369,7 +1300,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             let role_selected = |j| int_to_role(j) == selected_role;
 
             while let Some(event) = events.next(ui, |j| role_selected(j)) {
-                use conrod::widget::list_select::Event;
+                use self::ui::widget::list_select::Event;
                 match event {
 
                     // Instantiate a button for each source.
@@ -1421,7 +1352,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             let preview_kid_area = ui.kid_area_of(ids.source_editor_preview_canvas).unwrap();
             let button_w = preview_kid_area.w() / 2.0 - PAD / 2.0;
 
-            fn sound_from_source(source: &audio::Source, point: cgmath::Point2<Metres>) -> audio::Sound {
+            fn sound_from_source(source: &audio::Source, point: Point2<Metres>) -> audio::Sound {
                 match source.kind {
                     audio::source::Kind::Wav(ref wav) => {
                         let signal = audio::wav::stream_signal(&wav.path).unwrap();
@@ -1454,8 +1385,10 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 loop {
                     match preview.current {
                         Some((mode, sound_id)) => {
-                            let msg = audio::Message::RemoveSound(sound_id);
-                            channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                            channels.audio.send(move |audio| {
+                                audio.sounds.remove(&sound_id);
+                            }).ok();
+
                             preview.current = None;
                             match mode {
                                 SourcePreviewMode::Continuous => continue,
@@ -1472,8 +1405,10 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             }
                             // Send the selected source to the audio thread for playback.
                             let sound = sound_from_source(&sources[i].audio, preview.point.unwrap());
-                            let msg = audio::Message::AddSound(sound_id, sound);
-                            channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                            channels.audio.send(move |audio| {
+                                audio.sounds.insert(sound_id, sound);
+                            }).ok();
+
                             break;
                         },
                     }
@@ -1495,8 +1430,9 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 loop {
                     match preview.current {
                         Some((mode, sound_id)) => {
-                            let msg = audio::Message::RemoveSound(sound_id);
-                            channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                            channels.audio.send(move |audio| {
+                                audio.sounds.remove(&sound_id);
+                            }).ok();
                             preview.current = None;
                             match mode {
                                 SourcePreviewMode::OneShot => continue,
@@ -1514,8 +1450,9 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             // Send the selected source to the audio thread for playback.
                             // TODO: This should loop somehow.
                             let sound = sound_from_source(&sources[i].audio, preview.point.unwrap());
-                            let msg = audio::Message::AddSound(sound_id, sound);
-                            channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                            channels.audio.send(move |audio| {
+                                audio.sounds.insert(sound_id, sound);
+                            }).ok();
                             break;
                         },
                     }
@@ -1640,9 +1577,9 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
             // Circle demonstrating the actual spread distance of the channels relative to min/max.
             let min_spread_circle_radius = field_radius / 2.0;
-            let spread_circle_radius = conrod::utils::map_range(spread,
-                                                                MIN_SPREAD, MAX_SPREAD,
-                                                                min_spread_circle_radius, field_radius);
+            let spread_circle_radius = ui::utils::map_range(spread,
+                                                            MIN_SPREAD, MAX_SPREAD,
+                                                            min_spread_circle_radius, field_radius);
             widget::Circle::outline(spread_circle_radius)
                 .color(color::DARK_BLUE)
                 .middle_of(ids.source_editor_selected_channel_layout_field)
@@ -1829,8 +1766,8 @@ fn set_widgets(gui: &mut Gui) {
     //
     // The menu bar is collapsed by default, and shows three lines at the top.
     // Pressing these three lines opens the menu, revealing a list of options.
-    const CLOSED_SIDE_MENU_W: conrod::Scalar = 40.0;
-    const OPEN_SIDE_MENU_W: conrod::Scalar = 300.0;
+    const CLOSED_SIDE_MENU_W: ui::Scalar = 40.0;
+    const OPEN_SIDE_MENU_W: ui::Scalar = 300.0;
     let side_menu_is_open = gui.state.side_menu_is_open;
     let side_menu_w = match side_menu_is_open {
         false => CLOSED_SIDE_MENU_W,
@@ -1948,7 +1885,7 @@ fn set_widgets(gui: &mut Gui) {
     let visible_y = metres_to_floorplan_pixels(gui.state.camera.position.y);
     let visible_w = metres_to_floorplan_pixels(visible_w_m);
     let visible_h = metres_to_floorplan_pixels(visible_h_m);
-    let visible_rect = conrod::Rect::from_xy_dim([visible_x, visible_y], [visible_w, visible_h]);
+    let visible_rect = ui::Rect::from_xy_dim([visible_x, visible_y], [visible_w, visible_h]);
 
     // If the left mouse button was clicked on the floorplan, deselect the speaker.
     if gui.widget_input(gui.ids.floorplan).clicks().left().next().is_some() {
@@ -1983,25 +1920,25 @@ fn set_widgets(gui: &mut Gui) {
 
     // Convert the given position in metres to a gui Scalar position relative to the middle of the
     // floorplan.
-    fn position_metres_to_floorplan(p: cgmath::Point2<Metres>, cam: &Camera) -> (Scalar, Scalar) {
+    fn position_metres_to_floorplan(p: Point2<Metres>, cam: &Camera) -> (Scalar, Scalar) {
         let x = x_position_metres_to_floorplan(p.x, cam);
         let y = y_position_metres_to_floorplan(p.y, cam);
         (x, y)
     };
 
     // Convert the given position in metres to an absolute GUI scalar position.
-    let position_metres_to_gui = |p: cgmath::Point2<Metres>, cam: &Camera| -> (Scalar, Scalar) {
+    let position_metres_to_gui = |p: Point2<Metres>, cam: &Camera| -> (Scalar, Scalar) {
         let (x, y) = position_metres_to_floorplan(p, cam);
         (floorplan_xy[0] + x, floorplan_xy[1] + y)
     };
 
-    // Convert the given absolute GUI position to a position in metres.
-    let position_gui_to_metres = |p: [Scalar; 2], cam: &Camera| -> cgmath::Point2<Metres> {
-        let (floorplan_x, floorplan_y) = (p[0] - floorplan_xy[0], p[1] - floorplan_xy[1]);
-        let x = cam.scalar_to_metres(floorplan_x);
-        let y = cam.scalar_to_metres(floorplan_y);
-        cgmath::Point2 { x, y }
-    };
+    // // Convert the given absolute GUI position to a position in metres.
+    // let position_gui_to_metres = |p: [Scalar; 2], cam: &Camera| -> Point2<Metres> {
+    //     let (floorplan_x, floorplan_y) = (p[0] - floorplan_xy[0], p[1] - floorplan_xy[1]);
+    //     let x = cam.scalar_to_metres(floorplan_x);
+    //     let y = cam.scalar_to_metres(floorplan_y);
+    //     Point2 { x, y }
+    // };
 
     {
         let Gui { ref mut ids, ref mut state, ref mut ui, ref channels, .. } = *gui;
@@ -2028,11 +1965,13 @@ fn set_widgets(gui: &mut Gui) {
                 let p = speakers[i].audio.point;
                 let x = p.x + dragged_x_m;
                 let y = p.y + dragged_y_m;
-                let new_p = cgmath::Point2 { x, y };
+                let new_p = Point2 { x, y };
                 if p != new_p {
                     speakers[i].audio.point = new_p;
-                    let msg = audio::Message::UpdateSpeaker(speakers[i].id, speakers[i].audio.clone());
-                    channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                    let (speaker_id, speaker_clone) = (speakers[i].id, speakers[i].audio.clone());
+                    channels.audio.send(move |audio| {
+                        audio.speakers.insert(speaker_id, speaker_clone);
+                    }).ok();
                 }
                 new_p
             };
@@ -2098,12 +2037,14 @@ fn set_widgets(gui: &mut Gui) {
         let position = {
             let x = point.x + dragged_x_m;
             let y = point.y + dragged_y_m;
-            let new_p = cgmath::Point2 { x, y };
+            let new_p = Point2 { x, y };
             if point != new_p {
                 state.source_editor.preview.point = Some(new_p);
-                let update = Box::new(move |sound: &mut audio::Sound| sound.point = new_p);
-                let msg = audio::Message::UpdateSound(sound_id, update);
-                channels.audio_msg_tx.send(msg).expect("audio_msg_tx was closed");
+                channels.audio.send(move |audio| {
+                    if let Some(sound) = audio.sounds.get_mut(&sound_id) {
+                        sound.point = new_p;
+                    }
+                }).ok();
             }
             new_p
         };

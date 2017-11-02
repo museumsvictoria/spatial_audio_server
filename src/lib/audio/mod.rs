@@ -1,21 +1,18 @@
-use cgmath::{Point2, MetricSpace};
 use metres::Metres;
+use nannou;
+use nannou::audio::Buffer;
+use nannou::math::{MetricSpace, Point2};
 use std;
 use std::collections::HashMap;
-use std::sync::mpsc;
-pub use self::requester::Requester;
 pub use self::sound::Sound;
 pub use self::source::Source;
 pub use self::speaker::Speaker;
 pub use self::wav::Wav;
 
-pub mod backend;
-mod requester;
 pub mod sound;
 pub mod source;
 pub mod speaker;
 pub mod wav;
-
 
 /// Sounds should only be output to speakers that are nearest to avoid the need to render each
 /// sound to every speaker on the map.
@@ -26,132 +23,98 @@ pub const PROXIMITY_LIMIT_2: Metres = Metres(PROXIMITY_LIMIT.0 * PROXIMITY_LIMIT
 /// The maximum number of audio channels.
 pub const MAX_CHANNELS: usize = 32;
 
-/// A single frame of audio.
-pub type Frame = [f32; MAX_CHANNELS];
+/// The desired sample rate of the output stream.
+pub const SAMPLE_RATE: f64 = 44_100.0;
 
-/// Messages that drive the audio engine forward.
-pub enum Message {
-    /// A request for some frames from the audio backend thread.
-    ///
-    /// All frames in `buffer` should be written to and then sent back to the audio IO thread as
-    /// soon as possible via the given `buffer_tx`.
-    RequestAudio(requester::Buffer<Frame>, f64),
+/// The desired number of frames requested at a time.
+pub const FRAMES_PER_BUFFER: usize = 64;
 
-    /// Add a new sound to the map.
-    AddSound(sound::Id, Sound),
-    /// Modify an existing sound.
-    UpdateSound(sound::Id, Box<Fn(&mut Sound) + Send>),
-    /// Remove a sound from the map.
-    RemoveSound(sound::Id),
+/// Simplified type alias for the nannou audio output stream used by the audio server.
+pub type OutputStream = nannou::audio::stream::Output<Model>;
 
-    /// Update the speaker at the given `Id`.
-    UpdateSpeaker(speaker::Id, Speaker),
-    /// Remove a speaker from the map.
-    RemoveSpeaker(speaker::Id),
-
-    /// The window has been closed and it's time to finish up.
-    Exit,
+/// State that lives on the audio thread.
+pub struct Model {
+    /// A map from audio sound IDs to the audio sounds themselves.
+    pub sounds: HashMap<sound::Id, Sound>,
+    /// A map from speaker IDs to the speakers themselves.
+    pub speakers: HashMap<speaker::Id, Speaker>,
+    /// A buffer for collecting the speakers within proximity of the sound's position.
+    speakers_in_proximity: Vec<(Amplitude, usize)>,
+    /// A buffer for collecting the speakers within proximity of the sound's position.
+    unmixed_samples: Vec<f32>,
 }
 
-impl requester::Message for Message {
-    type Frame = Frame;
-    fn audio_request(buffer: requester::Buffer<Frame>, sample_hz: f64) -> Self {
-        Message::RequestAudio(buffer, sample_hz)
-    }
-}
+impl Model {
+    /// Initialise the `Model`.
+    pub fn new() -> Self {
+        // A map from audio sound IDs to the audio sounds themselves.
+        let sounds: HashMap<sound::Id, Sound> = HashMap::with_capacity(1024);
 
-/// Run the audio engine thread.
-///
-/// This should be run prior to the backend audio thread so that the audio engine is ready to start
-/// processing audio.
-pub fn spawn() -> (std::thread::JoinHandle<()>, mpsc::Sender<Message>) {
-    let (msg_tx, msg_rx) = mpsc::channel();
+        // A map from speaker IDs to the speakers themselves.
+        let speakers: HashMap<speaker::Id, Speaker> = HashMap::with_capacity(MAX_CHANNELS);
 
-    let handle = std::thread::Builder::new()
-        .name("audio_engine".into())
-        .spawn(move || { run(msg_rx); })
-        .unwrap();
+        // A buffer for collecting the speakers within proximity of the sound's position.
+        let speakers_in_proximity = Vec::with_capacity(MAX_CHANNELS);
 
-    (handle, msg_tx)
-}
+        // A buffer for collecting frames from `Sound`s that have not yet been mixed and written.
+        let unmixed_samples = vec![0.0; 1024];
 
-// The function to be run onthe audio engine thread.
-fn run(msg_rx: mpsc::Receiver<Message>) {
-
-    // A map from audio sound IDs to the audio sounds themselves.
-    let mut sounds: HashMap<sound::Id, Sound> = HashMap::with_capacity(1024);
-
-    // A map from speaker IDs to the speakers themselves.
-    let mut speakers: HashMap<speaker::Id, Speaker> = HashMap::with_capacity(MAX_CHANNELS);
-
-    // A buffer for collecting the speakers within proximity of the sound's position.
-    let mut speakers_in_proximity = Vec::with_capacity(MAX_CHANNELS);
-
-    // A buffer for collecting frames from `Sound`s that have not yet been mixed and written.
-    let mut unmixed_samples = vec![0.0f32; 1024];
-
-    // Wait for messages.
-    for msg in msg_rx {
-        match msg {
-            Message::RequestAudio(mut buffer, _sample_hz) => {
-
-                // For each sound, request `buffer.len()` number of frames and sum them onto the
-                // relevant output channels.
-                for (&_sound_id, sound) in &mut sounds {
-                    let num_samples = buffer.len() * sound.channels;
-
-                    unmixed_samples.clear();
-                    {
-                        let signal = (0..num_samples).map(|_| sound.signal.next()[0]);
-                        unmixed_samples.extend(signal);
-                    }
-
-                    // Mix the audio from the signal onto each of the output channels.
-                    for i in 0..sound.channels {
-
-                        // Find the absolute position of the channel.
-                        let channel_point =
-                            channel_point(sound.point, i, sound.channels, sound.spread, sound.radians);
-
-                        // Find the speakers that are closest to the channel.
-                        find_closest_speakers(&channel_point, &mut speakers_in_proximity, &speakers);
-                        let mut sample_index = i;
-                        for frame in buffer.iter_mut() {
-                            let channel_sample = unmixed_samples[sample_index];
-                            for &(amp, channel) in &speakers_in_proximity {
-                                frame[channel] += channel_sample * amp;
-                            }
-                            sample_index += sound.channels;
-                        }
-                    }
-                }
-
-                buffer.submit().ok();
-            },
-
-            Message::AddSound(id, sound) => {
-                sounds.insert(id, sound);
-            },
-
-            Message::UpdateSound(id, update) => if let Some(sound) = sounds.get_mut(&id) {
-                update(sound);
-            },
-
-            Message::RemoveSound(id) => {
-                sounds.remove(&id);
-            },
-
-            Message::UpdateSpeaker(id, speaker) => {
-                speakers.insert(id, speaker);
-            },
-
-            Message::RemoveSpeaker(id) => {
-                speakers.remove(&id);
-            },
-
-            Message::Exit => break,
+        Model {
+            sounds,
+            speakers,
+            speakers_in_proximity,
+            unmixed_samples,
         }
     }
+}
+
+/// The function given to nannou to use for rendering.
+pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
+    {
+        let Model {
+            ref mut sounds,
+            ref mut speakers_in_proximity,
+            ref mut unmixed_samples,
+            ref speakers,
+        } = model;
+
+        // For each sound, request `buffer.len()` number of frames and sum them onto the
+        // relevant output channels.
+        for (&_sound_id, sound) in sounds {
+            let num_samples = buffer.len() * sound.channels;
+
+            // Clear the unmixed samples, ready to collect the new ones.
+            unmixed_samples.clear();
+            {
+                let signal = (0..num_samples).map(|_| sound.signal.next()[0]);
+                unmixed_samples.extend(signal);
+            }
+
+            // Mix the audio from the signal onto each of the output channels.
+            for i in 0..sound.channels {
+
+                // Find the absolute position of the channel.
+                let channel_point =
+                    channel_point(sound.point, i, sound.channels, sound.spread, sound.radians);
+
+                // Find the speakers that are closest to the channel.
+                find_closest_speakers(&channel_point, speakers_in_proximity, &speakers);
+                let mut sample_index = i;
+                for frame in buffer.frames_mut() {
+                    let channel_sample = unmixed_samples[sample_index];
+                    for &(amp, channel) in speakers_in_proximity.iter() {
+                        // Only write to the channels that will be read by the audio device.
+                        if let Some(sample) = frame.get_mut(channel) {
+                            *sample += channel_sample * amp;
+                        }
+                    }
+                    sample_index += sound.channels;
+                }
+            }
+        }
+    }
+
+    (model, buffer)
 }
 
 pub fn channel_point(

@@ -1,6 +1,6 @@
-use cgmath::Point2;
+use nannou::math::Point2;
 use metres::Metres;
-use sample::Signal;
+use nannou::audio::sample::Signal;
 use std::sync::{Arc, Mutex};
 
 /// `Sound`s can be thought of as a stack of three primary components:
