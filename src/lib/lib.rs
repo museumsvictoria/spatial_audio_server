@@ -61,12 +61,12 @@ fn model(app: &App) -> Model {
 
     // Get the default device and attempt to set it up with the target number of channels.
     let device = app.audio.default_output_device().unwrap();
-    let supported_channels = device
+    let mut supported_channels = device
         .supported_formats()
         .unwrap()
-        .next()
-        .map(|format| format.channels.len())
-        .unwrap();
+        .map(|fmt| fmt.channels.len());
+    let first_supported_channels = supported_channels.next().unwrap();
+    let supported_channels = supported_channels.fold(first_supported_channels, std::cmp::max);
 
     // Initialise the audio model and create the stream.
     let audio_model = audio::Model::new();

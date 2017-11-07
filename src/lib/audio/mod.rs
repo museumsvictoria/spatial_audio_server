@@ -81,7 +81,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
         // For each sound, request `buffer.len()` number of frames and sum them onto the
         // relevant output channels.
         for (&_sound_id, sound) in sounds {
-            let num_samples = buffer.len() * sound.channels;
+            let num_samples = buffer.len_frames() * sound.channels;
 
             // Clear the unmixed samples, ready to collect the new ones.
             unmixed_samples.clear();
