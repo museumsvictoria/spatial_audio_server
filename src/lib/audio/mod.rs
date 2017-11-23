@@ -42,6 +42,11 @@ pub struct ActiveSound {
     channel_detectors: Box<[Detector]>,
 }
 
+pub struct ActiveSpeaker {
+    speaker: Speaker,
+    detector: Detector,
+}
+
 impl ActiveSound {
     /// Create a new `ActiveSound`.
     pub fn new(sound: Sound) -> Self {
@@ -64,7 +69,7 @@ pub struct Model {
     /// A map from audio sound IDs to the audio sounds themselves.
     sounds: HashMap<sound::Id, ActiveSound>,
     /// A map from speaker IDs to the speakers themselves.
-    pub speakers: HashMap<speaker::Id, Speaker>,
+    speakers: HashMap<speaker::Id, ActiveSpeaker>,
     /// A buffer for collecting the speakers within proximity of the sound's position.
     speakers_in_proximity: Vec<(Amplitude, usize)>,
     /// A buffer for collecting the speakers within proximity of the sound's position.
@@ -72,17 +77,17 @@ pub struct Model {
     /// A buffer for collecting sounds that have been removed due to completing.
     exhausted_sounds: Vec<sound::Id>,
     /// Channel for communicating active sound info to the GUI.
-    gui_active_sound_msg_tx: mpsc::SyncSender<(sound::Id, gui::ActiveSoundMessage)>,
+    gui_audio_monitor_msg_tx: mpsc::SyncSender<gui::AudioMonitorMessage>,
 }
 
 impl Model {
     /// Initialise the `Model`.
-    pub fn new(gui_active_sound_msg_tx: mpsc::SyncSender<(sound::Id, gui::ActiveSoundMessage)>) -> Self {
+    pub fn new(gui_audio_monitor_msg_tx: mpsc::SyncSender<gui::AudioMonitorMessage>) -> Self {
         // A map from audio sound IDs to the audio sounds themselves.
         let sounds: HashMap<sound::Id, ActiveSound> = HashMap::with_capacity(1024);
 
         // A map from speaker IDs to the speakers themselves.
-        let speakers: HashMap<speaker::Id, Speaker> = HashMap::with_capacity(MAX_CHANNELS);
+        let speakers: HashMap<speaker::Id, ActiveSpeaker> = HashMap::with_capacity(MAX_CHANNELS);
 
         // A buffer for collecting the speakers within proximity of the sound's position.
         let speakers_in_proximity = Vec::with_capacity(MAX_CHANNELS);
@@ -99,17 +104,49 @@ impl Model {
             speakers_in_proximity,
             unmixed_samples,
             exhausted_sounds,
-            gui_active_sound_msg_tx,
+            gui_audio_monitor_msg_tx,
         }
     }
+
+    /// Inserts the speaker and sends an `Add` message to the GUI.
+    pub fn insert_speaker(&mut self, id: speaker::Id, speaker: Speaker) -> Option<Speaker> {
+        // Re-use the old detector if there is one.
+        let (detector, old_speaker) = match self.speakers.remove(&id) {
+            None => (Detector::new(), None),
+            Some(ActiveSpeaker { speaker, detector }) => (detector, Some(speaker)),
+        };
+        let speaker = ActiveSpeaker { speaker, detector };
+        let speaker_msg = gui::SpeakerMessage::Add;
+        let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
+        self.gui_audio_monitor_msg_tx.try_send(msg).ok();
+        self.speakers.insert(id, speaker);
+        old_speaker
+    }
+
+    /// Removes the speaker and sens a `Removed` message to the GUI.
+    pub fn remove_speaker(&mut self, id: speaker::Id) -> Option<Speaker> {
+        let removed = self.speakers.remove(&id);
+        if removed.is_some() {
+            let speaker_msg = gui::SpeakerMessage::Remove;
+            let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
+            self.gui_audio_monitor_msg_tx.try_send(msg).ok();
+        }
+        removed.map(|ActiveSpeaker { speaker, .. }| speaker)
+    }
+
+    // /// Mutable access to the speaker at the given Id.
+    // pub fn speaker_mut(&mut self, id: &speaker::Id) -> Option<&mut Speaker> {
+    //     self.speakers.get_mut(id).map(|active| &mut active.speaker)
+    // }
 
     /// Inserts the sound and sends an `Start` active sound message to the GUI.
     pub fn insert_sound(&mut self, id: sound::Id, sound: ActiveSound) -> Option<ActiveSound> {
         let position = sound.sound.point;
         let channels = sound.sound.channels;
         let source_id = sound.sound.source_id;
-        let msg = gui::ActiveSoundMessage::Start { source_id, position, channels };
-        self.gui_active_sound_msg_tx.try_send((id, msg)).ok();
+        let sound_msg = gui::ActiveSoundMessage::Start { source_id, position, channels };
+        let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
+        self.gui_audio_monitor_msg_tx.try_send(msg).ok();
         self.sounds.insert(id, sound)
     }
 
@@ -117,8 +154,9 @@ impl Model {
     pub fn remove_sound(&mut self, id: sound::Id) -> Option<ActiveSound> {
         let removed = self.sounds.remove(&id);
         if removed.is_some() {
-            let msg = gui::ActiveSoundMessage::End;
-            self.gui_active_sound_msg_tx.try_send((id, msg)).ok();
+            let sound_msg = gui::ActiveSoundMessage::End;
+            let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
+            self.gui_audio_monitor_msg_tx.try_send(msg).ok();
         }
         removed
     }
@@ -137,8 +175,8 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref mut speakers_in_proximity,
             ref mut unmixed_samples,
             ref mut exhausted_sounds,
-            ref speakers,
-            ref gui_active_sound_msg_tx,
+            ref mut speakers,
+            ref gui_audio_monitor_msg_tx,
         } = model;
 
         // For each sound, request `buffer.len()` number of frames and sum them onto the
@@ -170,8 +208,9 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 // Send the latest RMS and peak for each channel to the GUI for monitoring.
                 for (index, detector) in channel_detectors.iter().enumerate() {
                     let (rms, peak) = detector.current();
-                    let msg = gui::ActiveSoundMessage::UpdateChannel { index, rms, peak };
-                    gui_active_sound_msg_tx.try_send((sound_id, msg)).ok();
+                    let sound_msg = gui::ActiveSoundMessage::UpdateChannel { index, rms, peak };
+                    let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
+                    gui_audio_monitor_msg_tx.try_send(msg).ok();
                 }
             }
 
@@ -198,13 +237,34 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             }
         }
 
+        // For each speaker, feed its amplitude into its detector.
+        let n_channels = buffer.channels();
+        for (&id, active) in speakers.iter_mut() {
+            let mut channel_i = active.speaker.channel;
+            if channel_i >= n_channels {
+                continue;
+            }
+            let detector = &mut active.detector;
+            for frame in buffer.frames() {
+                detector.next(frame[channel_i]);
+            }
+
+            // Send the detector state for the speaker to the GUI.
+            let (rms, peak) = detector.current();
+            let speaker_msg = gui::SpeakerMessage::Update { rms, peak };
+            let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
+            gui_audio_monitor_msg_tx.try_send(msg).ok();
+        }
+
         // Remove all sounds that have been exhausted.
         for sound_id in exhausted_sounds.drain(..) {
             // TODO: Possibly send this with the `End` message to avoid de-allocating on audio
             // thread.
             let _sound = sounds.remove(&sound_id).unwrap();
             // Send signal of completion back to GUI/Composer threads.
-            gui_active_sound_msg_tx.try_send((sound_id, gui::ActiveSoundMessage::End)).ok();
+            let sound_msg = gui::ActiveSoundMessage::End;
+            let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
+            gui_audio_monitor_msg_tx.try_send(msg).ok();
         }
     }
 
@@ -247,11 +307,12 @@ fn distance_2_to_amplitude(Metres(distance_2): Metres) -> Amplitude {
 fn find_closest_speakers(
     point: &Point2<Metres>,
     closest: &mut Vec<(Amplitude, usize)>, // Amplitude along with the speaker's channel index.
-    speakers: &HashMap<speaker::Id, Speaker>,
+    speakers: &HashMap<speaker::Id, ActiveSpeaker>,
 ) {
     closest.clear();
     let point_f = Point2 { x: point.x.0, y: point.y.0 };
-    for (_, speaker) in speakers.iter() {
+    for (_, active) in speakers.iter() {
+        let speaker = &active.speaker;
         let speaker_point_f = Point2 { x: speaker.point.x.0, y: speaker.point.y.0 };
         let distance_2 = Metres(point_f.distance2(speaker_point_f));
         if distance_2 < PROXIMITY_LIMIT_2 {
