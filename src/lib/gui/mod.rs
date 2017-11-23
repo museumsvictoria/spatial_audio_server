@@ -33,7 +33,7 @@ pub struct Model {
     ids: Ids,
     channels: Channels,
     sound_id_gen: audio::sound::IdGenerator,
-    active_sounds: ActiveSoundMap,
+    audio_monitor: AudioMonitor,
     assets: PathBuf,
 }
 
@@ -45,7 +45,7 @@ struct Gui<'a> {
     fonts: &'a Fonts,
     ids: &'a mut Ids,
     state: &'a mut State,
-    active_sounds: &'a ActiveSoundMap,
+    audio_monitor: &'a AudioMonitor,
     channels: &'a Channels,
     sound_id_gen: &'a audio::sound::IdGenerator,
 }
@@ -105,7 +105,10 @@ impl Model {
         // Initialise the GUI state.
         let state = State::new(assets, config, &channels);
 
+        // Initialise the audio monitor.
         let active_sounds = HashMap::new();
+        let speakers = HashMap::new();
+        let audio_monitor = AudioMonitor { active_sounds, speakers };
 
         Model {
             ui,
@@ -116,7 +119,7 @@ impl Model {
             channels,
             sound_id_gen,
             assets: assets.into(),
-            active_sounds,
+            audio_monitor,
         }
     }
 
@@ -129,7 +132,7 @@ impl Model {
             ref mut ui,
             ref mut ids,
             ref mut state,
-            ref mut active_sounds,
+            ref mut audio_monitor,
             ref images,
             ref fonts,
             ref channels,
@@ -148,41 +151,57 @@ impl Model {
         }
 
         // Update the map of active sounds.
-        for (id, msg) in channels.active_sound_msg_rx.try_iter() {
+        for msg in channels.audio_monitor_msg_rx.try_iter() {
             match msg {
-                ActiveSoundMessage::Start { source_id, position, channels } => {
-                    let channels = (0..channels)
-                        .map(|_| SoundChannel { rms: 0.0, peak: 0.0 })
-                        .collect();
-                    let mut active_sound = ActiveSound { source_id, position, channels };
-                    active_sounds.insert(id, active_sound);
-                },
-                ActiveSoundMessage::Update { position } => {
-                    let active_sound = active_sounds.get_mut(&id).unwrap();
-                    active_sound.position = position;
-                },
-                ActiveSoundMessage::UpdateChannel { index, rms, peak } => {
-                    let active_sound = active_sounds.get_mut(&id).unwrap();
-                    let mut channel = &mut active_sound.channels[index];
-                    channel.rms = rms;
-                    channel.peak = peak;
-                },
-                ActiveSoundMessage::End => {
-                    active_sounds.remove(&id);
+                AudioMonitorMessage::ActiveSound(id, msg) => match msg {
+                    ActiveSoundMessage::Start { source_id, position, channels } => {
+                        let channels = (0..channels)
+                            .map(|_| ChannelLevels { rms: 0.0, peak: 0.0 })
+                            .collect();
+                        let mut active_sound = ActiveSound { source_id, position, channels };
+                        audio_monitor.active_sounds.insert(id, active_sound);
+                    },
+                    ActiveSoundMessage::Update { position } => {
+                        let active_sound = audio_monitor.active_sounds.get_mut(&id).unwrap();
+                        active_sound.position = position;
+                    },
+                    ActiveSoundMessage::UpdateChannel { index, rms, peak } => {
+                        let active_sound = audio_monitor.active_sounds.get_mut(&id).unwrap();
+                        let mut channel = &mut active_sound.channels[index];
+                        channel.rms = rms;
+                        channel.peak = peak;
+                    },
+                    ActiveSoundMessage::End => {
+                        audio_monitor.active_sounds.remove(&id);
 
-                    // If the Id of the sound being removed matches the current preview, remove it.
-                    match state.source_editor.preview.current {
-                        Some((SourcePreviewMode::OneShot, s_id)) if id == s_id => {
-                            state.source_editor.preview.current = None;
-                        },
-                        _ => (),
-                    }
+                        // If the Id of the sound being removed matches the current preview, remove
+                        // it.
+                        match state.source_editor.preview.current {
+                            Some((SourcePreviewMode::OneShot, s_id)) if id == s_id => {
+                                state.source_editor.preview.current = None;
+                            },
+                            _ => (),
+                        }
+                    },
+                },
+                AudioMonitorMessage::Speaker(id, msg) => match msg {
+                    SpeakerMessage::Add => {
+                        let speaker = ChannelLevels { rms: 0.0, peak: 0.0 };
+                        audio_monitor.speakers.insert(id, speaker);
+                    },
+                    SpeakerMessage::Update { rms, peak } => {
+                        let speaker = ChannelLevels { rms, peak };
+                        audio_monitor.speakers.insert(id, speaker);
+                    },
+                    SpeakerMessage::Remove => {
+                        audio_monitor.speakers.remove(&id);
+                    },
                 },
             }
         }
 
         let ui = ui.set_widgets();
-        let mut gui = Gui { ui, ids, images, fonts, state, channels, sound_id_gen, active_sounds };
+        let mut gui = Gui { ui, ids, images, fonts, state, channels, sound_id_gen, audio_monitor };
         set_widgets(&mut gui);
     }
 
@@ -263,8 +282,8 @@ impl Model {
     /// Whether or not the GUI currently contains representations of active sounds.
     ///
     /// This is used at the top-level to determine what application loop mode to use.
-    pub fn has_active_sounds(&self) -> bool {
-        !self.active_sounds.is_empty()
+    pub fn is_animating(&self) -> bool {
+        !self.audio_monitor.active_sounds.is_empty() || !self.audio_monitor.speakers.is_empty()
     }
 }
 
@@ -279,7 +298,7 @@ impl State {
         for speaker in &speakers {
             let (speaker_id, speaker_clone) = (speaker.id, speaker.audio.clone());
             channels.audio.send(move |audio| {
-                audio.speakers.insert(speaker_id, speaker_clone);
+                audio.insert_speaker(speaker_id, speaker_clone);
             }).ok();
         }
 
@@ -344,7 +363,7 @@ pub struct Channels {
     pub composer_msg_tx: mpsc::Sender<composer::Message>,
     /// A handle for communicating with the audio output stream.
     pub audio: audio::OutputStream,
-    pub active_sound_msg_rx: mpsc::Receiver<(audio::sound::Id, ActiveSoundMessage)>,
+    pub audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
 }
 
 impl Channels {
@@ -354,7 +373,7 @@ impl Channels {
         interaction_rx: mpsc::Receiver<Interaction>,
         composer_msg_tx: mpsc::Sender<composer::Message>,
         audio: audio::OutputStream,
-        active_sound_msg_rx: mpsc::Receiver<(audio::sound::Id, ActiveSoundMessage)>,
+        audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
     ) -> Self
     {
         Channels {
@@ -362,7 +381,7 @@ impl Channels {
             interaction_rx,
             composer_msg_tx,
             audio,
-            active_sound_msg_rx,
+            audio_monitor_msg_rx,
         }
     }
 }
@@ -688,19 +707,33 @@ impl<T> Deref for Log<T> {
     }
 }
 
-// A structure for monitoring the state of some `Sound` for visualisation.
+
+// A structure for monitoring the state of the audio thread for visualisation.
+struct AudioMonitor {
+    active_sounds: ActiveSoundMap,
+    speakers: HashMap<audio::speaker::Id, ChannelLevels>,
+}
+
+// The state of an active sound.
 struct ActiveSound {
     source_id: audio::source::Id,
     position: Point2<Metres>,
-    channels: Vec<SoundChannel>,
+    channels: Vec<ChannelLevels>,
 }
 
-struct SoundChannel {
+// The detected levels for a single channel.
+struct ChannelLevels {
     rms: f32,
     peak: f32,
 }
 
-/// An update for an actively playing sound.
+/// A message sent from the audio thread with some audio levels.
+pub enum AudioMonitorMessage {
+    ActiveSound(audio::sound::Id, ActiveSoundMessage),
+    Speaker(audio::speaker::Id, SpeakerMessage),
+}
+
+/// A message related to an active sound.
 pub enum ActiveSoundMessage {
     Start {
         source_id: audio::source::Id,
@@ -716,6 +749,16 @@ pub enum ActiveSoundMessage {
         peak: f32,
     },
     End,
+}
+
+/// A message related to a speaker.
+pub enum SpeakerMessage {
+    Add,
+    Update {
+        rms: f32,
+        peak: f32,
+    },
+    Remove,
 }
 
 /// The directory in which all fonts are stored.
@@ -972,7 +1015,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
             if let Some(i) = maybe_remove_index {
                 let speaker = gui.state.speaker_editor.speakers.remove(i);
                 gui.channels.audio.send(move |audio| {
-                    audio.speakers.remove(&speaker.id);
+                    audio.remove_speaker(speaker.id);
                 }).ok();
             }
         }
@@ -1019,7 +1062,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
 
                 let (speaker_id, speaker_clone) = (speaker.id, speaker.audio.clone());
                 gui.channels.audio.send(move |audio| {
-                    audio.speakers.insert(speaker_id, speaker_clone);
+                    audio.insert_speaker(speaker_id, speaker_clone);
                 }).ok();
                 gui.state.speaker_editor.speakers.push(speaker);
                 gui.state.speaker_editor.next_id = audio::speaker::Id(id.0.wrapping_add(1));
@@ -1087,7 +1130,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                 speakers[i].audio.channel = new_index;
                 let (speaker_id, speaker_clone) = (speakers[i].id, speakers[i].audio.clone());
                 channels.audio.send(move |audio| {
-                    audio.speakers.insert(speaker_id, speaker_clone);
+                    audio.insert_speaker(speaker_id, speaker_clone);
                 }).ok();
 
                 // If an existing speaker was assigned to `index`, swap it with the original
@@ -1100,7 +1143,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
                     speakers[ix].audio.channel = selected;
                     let (speaker_id, speaker_clone) = (speakers[ix].id, speakers[ix].audio.clone());
                     channels.audio.send(move |audio| {
-                        audio.speakers.insert(speaker_id, speaker_clone);
+                        audio.insert_speaker(speaker_id, speaker_clone);
                     }).ok();
                 }
             }
@@ -2072,7 +2115,14 @@ fn set_widgets(gui: &mut Gui) {
     // };
 
     {
-        let Gui { ref mut ids, ref mut state, ref mut ui, ref channels, .. } = *gui;
+        let Gui {
+            ref mut ids,
+            ref mut state,
+            ref mut ui,
+            ref channels,
+            ref audio_monitor,
+            ..
+        } = *gui;
 
         // Ensure there are enough IDs available.
         let num_speakers = state.speaker_editor.speakers.len();
@@ -2083,6 +2133,11 @@ fn set_widgets(gui: &mut Gui) {
 
         for i in 0..state.speaker_editor.speakers.len() {
             let widget_id = ids.floorplan_speakers[i];
+            let speaker_id = state.speaker_editor.speakers[i].id;
+            let rms = match audio_monitor.speakers.get(&speaker_id) {
+                Some(levels) => levels.rms,
+                _ => 0.0,
+            };
 
             let (dragged_x, dragged_y) = ui.widget_input(widget_id)
                 .drags()
@@ -2101,7 +2156,7 @@ fn set_widgets(gui: &mut Gui) {
                     speakers[i].audio.point = new_p;
                     let (speaker_id, speaker_clone) = (speakers[i].id, speakers[i].audio.clone());
                     channels.audio.send(move |audio| {
-                        audio.speakers.insert(speaker_id, speaker_clone);
+                        audio.insert_speaker(speaker_id, speaker_clone);
                     }).ok();
                 }
                 new_p
@@ -2129,8 +2184,11 @@ fn set_widgets(gui: &mut Gui) {
                 None => color,
             };
 
+            // Feed the RMS into the speaker's radius.
+            let radius = radius_min + (radius_max - radius_min) * rms.powf(0.5) as f64;
+
             // Display a circle for the speaker.
-            widget::Circle::fill(radius_min)
+            widget::Circle::fill(radius)
                 .x_y(x, y)
                 .parent(ids.floorplan)
                 .color(color)
@@ -2140,13 +2198,13 @@ fn set_widgets(gui: &mut Gui) {
 
     // Draw the currently active sounds over the floorplan.
     {
-        let Gui { ref ids, ref mut state, ref mut ui, ref channels, active_sounds, .. } = *gui;
+        let Gui { ref ids, ref mut state, ref mut ui, ref channels, audio_monitor, .. } = *gui;
 
         let current = state.source_editor.preview.current;
         let point = state.source_editor.preview.point;
         let selected = state.source_editor.selected;
         let mut channel_amplitudes = [0.0f32; 16];
-        for (&sound_id, active_sound) in active_sounds {
+        for (&sound_id, active_sound) in &audio_monitor.active_sounds {
             let radians = 0.0;
 
             // Fill the channel amplitudes.
