@@ -6,12 +6,12 @@ use nannou::ui::prelude::*;
 use std;
 
 #[derive(Clone, WidgetCommon)]
-pub struct Sound {
+pub struct Sound<'a> {
     #[conrod(common_builder)]
     common: widget::CommonBuilder,
     style: Style,
-    // The number of channels.
-    channels: usize,
+    // Amplitude per channel.
+    channels: &'a [f32],
     // The distance from each channel to the centre of the sound as a Scalar value over the
     // floorplan.
     spread: Scalar,
@@ -47,12 +47,12 @@ pub fn dimension_metres(amplitude: f32) -> Metres {
     Metres(min + (max - min) * amplitude as Scalar)
 }
 
-impl Sound {
+impl<'a> Sound<'a> {
     pub const DEFAULT_COLOR: Color = color::BLUE;
     pub const MIN_DIMENSION: Metres = Metres(0.5);
     pub const MAX_DIMENSION: Metres = Metres(1.0);
 
-    pub fn new(channels: usize, spread: Scalar, radians: f64, channel_radians: f64) -> Self {
+    pub fn new(channels: &'a [f32], spread: Scalar, radians: f64, channel_radians: f64) -> Self {
         Sound {
             common: widget::CommonBuilder::default(),
             style: Style::default(),
@@ -64,7 +64,7 @@ impl Sound {
     }
 }
 
-impl Widget for Sound {
+impl<'a> Widget for Sound<'a> {
     type State = State;
     type Style = Style;
     type Event = ();
@@ -129,29 +129,35 @@ impl Widget for Sound {
         }
 
         // Ensure there is an ID for each channel.
-        if state.ids.channel_circles.len() < channels {
+        if state.ids.channel_circles.len() < channels.len() {
             let id_gen = &mut ui.widget_id_generator();
             state.update(|state| {
-                state.ids.channel_circles.resize(channels, id_gen);
-                state.ids.channel_lines.resize(channels, id_gen);
-                state.ids.channel_labels.resize(channels, id_gen);
+                state.ids.channel_circles.resize(channels.len(), id_gen);
+                state.ids.channel_lines.resize(channels.len(), id_gen);
+                state.ids.channel_labels.resize(channels.len(), id_gen);
             });
         }
 
         // Instantiate a circle for each channel position.
-        for i in 0..channels {
+        for (i, &amp) in channels.iter().enumerate() {
             let circle_id = state.ids.channel_circles[i];
             let line_id = state.ids.channel_lines[i];
             let label_id = state.ids.channel_labels[i];
-            let (ch_x, ch_y) = channel_point((x, y), i, channels, spread, radians + channel_radians);
+            let (ch_x, ch_y) = channel_point((x, y), i, channels.len(), spread, radians + channel_radians);
 
+            let base_thickness = 1.0;
+            let amp_thickness = amp as f64 * 10.0;
+            let thickness = base_thickness + amp_thickness;
             widget::Line::abs([x, y], [ch_x, ch_y])
                 .color(color.alpha(0.5))
+                .thickness(thickness)
                 .graphics_for(id)
                 .parent(id)
                 .set(line_id, ui);
 
-            widget::Circle::fill(radius * 0.75)
+            let radius_amp = radius * amp as f64;
+            let channel_radius = radius * 0.75 + radius_amp;
+            widget::Circle::fill(channel_radius)
                 .x_y(ch_x, ch_y)
                 .color(color)
                 .graphics_for(id)
@@ -186,7 +192,7 @@ impl Widget for Sound {
     }
 }
 
-impl Colorable for Sound {
+impl<'a> Colorable for Sound<'a> {
     fn color(mut self, color: Color) -> Self {
         self.style.color = Some(color);
         self

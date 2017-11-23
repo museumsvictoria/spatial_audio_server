@@ -11,7 +11,7 @@ use nannou::ui;
 use nannou::ui::prelude::*;
 use serde_json;
 use std;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Write;
@@ -23,6 +23,8 @@ use std::sync::mpsc;
 mod custom_widget;
 mod theme;
 
+type ActiveSoundMap = HashMap<audio::sound::Id, ActiveSound>;
+
 pub struct Model {
     pub ui: Ui,
     images: Images,
@@ -31,6 +33,7 @@ pub struct Model {
     ids: Ids,
     channels: Channels,
     sound_id_gen: audio::sound::IdGenerator,
+    active_sounds: ActiveSoundMap,
     assets: PathBuf,
 }
 
@@ -42,11 +45,12 @@ struct Gui<'a> {
     fonts: &'a Fonts,
     ids: &'a mut Ids,
     state: &'a mut State,
+    active_sounds: &'a ActiveSoundMap,
     channels: &'a Channels,
     sound_id_gen: &'a audio::sound::IdGenerator,
 }
 
-pub struct State {
+struct State {
     // The loaded config file.
     config: Config,
     // The camera over the 2D floorplan.
@@ -101,6 +105,8 @@ impl Model {
         // Initialise the GUI state.
         let state = State::new(assets, config, &channels);
 
+        let active_sounds = HashMap::new();
+
         Model {
             ui,
             images,
@@ -110,18 +116,20 @@ impl Model {
             channels,
             sound_id_gen,
             assets: assets.into(),
+            active_sounds,
         }
     }
 
     /// Update the GUI model.
     ///
-    /// - Collect pending OSC and interactio messages for the logs.
+    /// - Collect pending OSC and interaction messages for the logs.
     /// - Instantiate the Ui's widgets.
     pub fn update(&mut self) {
         let Model {
             ref mut ui,
             ref mut ids,
             ref mut state,
+            ref mut active_sounds,
             ref images,
             ref fonts,
             ref channels,
@@ -139,8 +147,42 @@ impl Model {
             state.interaction_log.push_msg(interaction);
         }
 
+        // Update the map of active sounds.
+        for (id, msg) in channels.active_sound_msg_rx.try_iter() {
+            match msg {
+                ActiveSoundMessage::Start { source_id, position, channels } => {
+                    let channels = (0..channels)
+                        .map(|_| SoundChannel { rms: 0.0, peak: 0.0 })
+                        .collect();
+                    let mut active_sound = ActiveSound { source_id, position, channels };
+                    active_sounds.insert(id, active_sound);
+                },
+                ActiveSoundMessage::Update { position } => {
+                    let active_sound = active_sounds.get_mut(&id).unwrap();
+                    active_sound.position = position;
+                },
+                ActiveSoundMessage::UpdateChannel { index, rms, peak } => {
+                    let active_sound = active_sounds.get_mut(&id).unwrap();
+                    let mut channel = &mut active_sound.channels[index];
+                    channel.rms = rms;
+                    channel.peak = peak;
+                },
+                ActiveSoundMessage::End => {
+                    active_sounds.remove(&id);
+
+                    // If the Id of the sound being removed matches the current preview, remove it.
+                    match state.source_editor.preview.current {
+                        Some((SourcePreviewMode::OneShot, s_id)) if id == s_id => {
+                            state.source_editor.preview.current = None;
+                        },
+                        _ => (),
+                    }
+                },
+            }
+        }
+
         let ui = ui.set_widgets();
-        let mut gui = Gui { ui, ids, images, fonts, state, channels, sound_id_gen };
+        let mut gui = Gui { ui, ids, images, fonts, state, channels, sound_id_gen, active_sounds };
         set_widgets(&mut gui);
     }
 
@@ -216,6 +258,13 @@ impl Model {
         };
         safe_file_save(&sources_path(&assets), &sources_json_string)
             .expect("failed to save sources file");
+    }
+
+    /// Whether or not the GUI currently contains representations of active sounds.
+    ///
+    /// This is used at the top-level to determine what application loop mode to use.
+    pub fn has_active_sounds(&self) -> bool {
+        !self.active_sounds.is_empty()
     }
 }
 
@@ -295,6 +344,27 @@ pub struct Channels {
     pub composer_msg_tx: mpsc::Sender<composer::Message>,
     /// A handle for communicating with the audio output stream.
     pub audio: audio::OutputStream,
+    pub active_sound_msg_rx: mpsc::Receiver<(audio::sound::Id, ActiveSoundMessage)>,
+}
+
+impl Channels {
+    /// Initialise the GUI communication channels.
+    pub fn new(
+        osc_msg_rx: mpsc::Receiver<(SocketAddr, osc::Message)>,
+        interaction_rx: mpsc::Receiver<Interaction>,
+        composer_msg_tx: mpsc::Sender<composer::Message>,
+        audio: audio::OutputStream,
+        active_sound_msg_rx: mpsc::Receiver<(audio::sound::Id, ActiveSoundMessage)>,
+    ) -> Self
+    {
+        Channels {
+            osc_msg_rx,
+            interaction_rx,
+            composer_msg_tx,
+            audio,
+            active_sound_msg_rx,
+        }
+    }
 }
 
 struct SpeakerEditor {
@@ -616,6 +686,36 @@ impl<T> Deref for Log<T> {
     fn deref(&self) -> &Self::Target {
         &self.deque
     }
+}
+
+// A structure for monitoring the state of some `Sound` for visualisation.
+struct ActiveSound {
+    source_id: audio::source::Id,
+    position: Point2<Metres>,
+    channels: Vec<SoundChannel>,
+}
+
+struct SoundChannel {
+    rms: f32,
+    peak: f32,
+}
+
+/// An update for an actively playing sound.
+pub enum ActiveSoundMessage {
+    Start {
+        source_id: audio::source::Id,
+        position: Point2<Metres>,
+        channels: usize,
+    },
+    Update {
+        position: Point2<Metres>,
+    },
+    UpdateChannel {
+        index: usize,
+        rms: f32,
+        peak: f32,
+    },
+    End,
 }
 
 /// The directory in which all fonts are stored.
@@ -1139,7 +1239,19 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     },
 
                     // Update the selected source.
-                    Event::Selection(idx) => gui.state.source_editor.selected = Some(idx),
+                    Event::Selection(idx) => {
+                        // If a source was being previewed, stop it.
+                        if let Some((_, sound_id)) = gui.state.source_editor.preview.current {
+                            gui.channels.audio.send(move |audio| {
+                                audio.remove_sound(sound_id);
+                            }).ok();
+
+                            gui.state.source_editor.preview.current = None;
+                        }
+
+                        gui.state.source_editor.selected = Some(idx);
+
+                    },
 
                     _ => (),
                 }
@@ -1303,7 +1415,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 use self::ui::widget::list_select::Event;
                 match event {
 
-                    // Instantiate a button for each source.
+                    // Instantiate a button for each role.
                     Event::Item(item) => {
                         let selected = role_selected(item.i);
                         let role = int_to_role(item.i);
@@ -1320,7 +1432,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         item.set(button, ui);
                     },
 
-                    // Update the selected source.
+                    // Update the selected role.
                     Event::Selection(idx) => {
                         let source = &mut sources[i];
                         source.audio.role = int_to_role(idx);
@@ -1352,11 +1464,22 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             let preview_kid_area = ui.kid_area_of(ids.source_editor_preview_canvas).unwrap();
             let button_w = preview_kid_area.w() / 2.0 - PAD / 2.0;
 
-            fn sound_from_source(source: &audio::Source, point: Point2<Metres>) -> audio::Sound {
+            fn sound_from_source(
+                source_id: audio::source::Id,
+                source: &audio::Source,
+                point: Point2<Metres>,
+                should_cycle: bool,
+            ) -> audio::Sound {
                 match source.kind {
                     audio::source::Kind::Wav(ref wav) => {
-                        let signal = audio::wav::stream_signal(&wav.path).unwrap();
+                        // The wave signal iterator.
+                        let signal = match should_cycle {
+                            false => audio::wav::stream_signal(&wav.path).unwrap(),
+                            true => audio::wav::stream_signal_cycled(&wav.path).unwrap(),
+                        };
+
                         audio::Sound {
+                            source_id: source_id,
                             channels: wav.channels,
                             signal: signal,
                             point: point,
@@ -1386,7 +1509,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     match preview.current {
                         Some((mode, sound_id)) => {
                             channels.audio.send(move |audio| {
-                                audio.sounds.remove(&sound_id);
+                                audio.remove_sound(sound_id);
                             }).ok();
 
                             preview.current = None;
@@ -1404,9 +1527,13 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                                 preview.point = Some(camera.position);
                             }
                             // Send the selected source to the audio thread for playback.
-                            let sound = sound_from_source(&sources[i].audio, preview.point.unwrap());
+                            let should_cycle = false;
+                            let sound = sound_from_source(sources[i].id,
+                                                          &sources[i].audio,
+                                                          preview.point.unwrap(),
+                                                          should_cycle);
                             channels.audio.send(move |audio| {
-                                audio.sounds.insert(sound_id, sound);
+                                audio.insert_sound(sound_id, sound.into());
                             }).ok();
 
                             break;
@@ -1431,7 +1558,7 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     match preview.current {
                         Some((mode, sound_id)) => {
                             channels.audio.send(move |audio| {
-                                audio.sounds.remove(&sound_id);
+                                audio.remove_sound(sound_id);
                             }).ok();
                             preview.current = None;
                             match mode {
@@ -1449,9 +1576,13 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             }
                             // Send the selected source to the audio thread for playback.
                             // TODO: This should loop somehow.
-                            let sound = sound_from_source(&sources[i].audio, preview.point.unwrap());
+                            let should_cycle = true;
+                            let sound = sound_from_source(sources[i].id,
+                                                          &sources[i].audio,
+                                                          preview.point.unwrap(),
+                                                          should_cycle);
                             channels.audio.send(move |audio| {
-                                audio.sounds.insert(sound_id, sound);
+                                audio.insert_sound(sound_id, sound.into());
                             }).ok();
                             break;
                         },
@@ -2007,55 +2138,88 @@ fn set_widgets(gui: &mut Gui) {
         }
     }
 
-    // Draw the source preview over the floorplan.
-    let current = gui.state.source_editor.preview.current;
-    let point = gui.state.source_editor.preview.point;
-    let selected = gui.state.source_editor.selected;
-    if let (Some((_, sound_id)), Some(point), Some(i)) = (current, point, selected) {
-        let Gui { ref ids, ref mut state, ref mut ui, ref channels, .. } = *gui;
+    // Draw the currently active sounds over the floorplan.
+    {
+        let Gui { ref ids, ref mut state, ref mut ui, ref channels, active_sounds, .. } = *gui;
 
-        let radians = 0.0;
-        let amplitude = 0.0;
-        let (spread, channel_radians, channel_count) = {
-            let s = &state.source_editor.sources[i];
-            (s.audio.spread, s.audio.radians as f64, s.audio.channel_count())
-        };
+        let current = state.source_editor.preview.current;
+        let point = state.source_editor.preview.point;
+        let selected = state.source_editor.selected;
+        let mut channel_amplitudes = [0.0f32; 16];
+        for (&sound_id, active_sound) in active_sounds {
+            let radians = 0.0;
 
-        let spread = state.camera.metres_to_scalar(spread);
-        let side_m = custom_widget::sound::dimension_metres(amplitude);
-        let side = state.camera.metres_to_scalar(side_m);
-
-        // Determine how far the source preview has been dragged, if at all.
-        let (dragged_x, dragged_y) = ui.widget_input(ids.floorplan_source_preview)
-            .drags()
-            .left()
-            .fold((0.0, 0.0), |(x, y), drag| (x + drag.delta_xy[0], y + drag.delta_xy[1]));
-        let dragged_x_m = state.camera.scalar_to_metres(dragged_x);
-        let dragged_y_m = state.camera.scalar_to_metres(dragged_y);
-
-        // Determine the resulting position after the drag.
-        let position = {
-            let x = point.x + dragged_x_m;
-            let y = point.y + dragged_y_m;
-            let new_p = Point2 { x, y };
-            if point != new_p {
-                state.source_editor.preview.point = Some(new_p);
-                channels.audio.send(move |audio| {
-                    if let Some(sound) = audio.sounds.get_mut(&sound_id) {
-                        sound.point = new_p;
-                    }
-                }).ok();
+            // Fill the channel amplitudes.
+            for (i, channel) in active_sound.channels.iter().enumerate() {
+                channel_amplitudes[i] = channel.rms.powf(0.5); // Emphasise lower amplitudes.
             }
-            new_p
-        };
 
-        let (x, y) = position_metres_to_gui(position, &state.camera);
+            // If this is the preview sound it should be draggable and stand out.
+            let condition = (current, point, selected);
+            let (spread, channel_radians, channel_count, position, color) = match condition {
+                (Some((_, id)), Some(point), Some(i)) if id == sound_id => {
+                    let (spread, channel_radians, channel_count) = {
+                        let source = &state.source_editor.sources[i];
+                        let spread = source.audio.spread;
+                        let channel_radians = source.audio.radians as f64;
+                        let channel_count = source.audio.channel_count();
+                        (spread, channel_radians, channel_count)
+                    };
 
-        custom_widget::Sound::new(channel_count, spread, radians, channel_radians)
-            .x_y(x, y)
-            .w_h(side, side)
-            .parent(ids.floorplan)
-            .set(ids.floorplan_source_preview, ui);
+                    // Determine how far the source preview has been dragged, if at all.
+                    let (dragged_x, dragged_y) = ui.widget_input(ids.floorplan_source_preview)
+                        .drags()
+                        .left()
+                        .fold((0.0, 0.0), |(x, y), drag| (x + drag.delta_xy[0], y + drag.delta_xy[1]));
+                    let dragged_x_m = state.camera.scalar_to_metres(dragged_x);
+                    let dragged_y_m = state.camera.scalar_to_metres(dragged_y);
+
+                    // Determine the resulting position after the drag.
+                    let position = {
+                        let x = point.x + dragged_x_m;
+                        let y = point.y + dragged_y_m;
+                        let new_p = Point2 { x, y };
+                        if point != new_p {
+                            state.source_editor.preview.point = Some(new_p);
+                            channels.audio.send(move |audio| {
+                                if let Some(sound) = audio.sound_mut(&sound_id) {
+                                    sound.point = new_p;
+                                }
+                            }).ok();
+                        }
+                        new_p
+                    };
+
+                    (spread, channel_radians, channel_count, position, color::LIGHT_BLUE)
+                },
+                _ => {
+                    // Find the source.
+                    let source = state.source_editor.sources
+                        .iter()
+                        .find(|s| s.id == active_sound.source_id)
+                        .expect("No source found for active sound");
+                    let spread = source.audio.spread;
+                    let channel_radians = source.audio.radians as f64;
+                    let channel_count = source.audio.channel_count();
+                    let position = active_sound.position;
+                    (spread, channel_radians, channel_count, position, color::DARK_BLUE)
+                },
+            };
+
+            let spread = state.camera.metres_to_scalar(spread);
+            let side_m = custom_widget::sound::dimension_metres(0.0);
+            let side = state.camera.metres_to_scalar(side_m);
+
+            let (x, y) = position_metres_to_gui(position, &state.camera);
+
+            let channel_amps = &channel_amplitudes[..channel_count];
+            custom_widget::Sound::new(channel_amps, spread, radians, channel_radians)
+                .color(color)
+                .x_y(x, y)
+                .w_h(side, side)
+                .parent(ids.floorplan)
+                .set(ids.floorplan_source_preview, ui);
+        }
     }
 
 }

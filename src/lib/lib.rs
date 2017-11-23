@@ -68,8 +68,11 @@ fn model(app: &App) -> Model {
     let first_supported_channels = supported_channels.next().unwrap();
     let supported_channels = supported_channels.fold(first_supported_channels, std::cmp::max);
 
+    // A channel for sending active sound info from the audio thread to the GUI.
+    let (active_sound_tx, active_sound_rx) = mpsc::sync_channel(1024);
+
     // Initialise the audio model and create the stream.
-    let audio_model = audio::Model::new();
+    let audio_model = audio::Model::new(active_sound_tx);
     let audio_output_stream = app.audio
         .new_output_stream(audio_model, audio::render)
         .sample_rate(audio::SAMPLE_RATE as u32)
@@ -87,12 +90,11 @@ fn model(app: &App) -> Model {
         composer::spawn(audio_output_stream.clone(), sound_id_gen.clone());
 
     // Initalise the GUI model.
-    let gui_channels = gui::Channels {
-        osc_msg_rx,
-        interaction_rx,
-        audio: audio_output_stream.clone(),
-        composer_msg_tx: composer_msg_tx.clone(),
-    };
+    let gui_channels = gui::Channels::new(osc_msg_rx,
+                                          interaction_rx,
+                                          composer_msg_tx.clone(),
+                                          audio_output_stream.clone(),
+                                          active_sound_rx);
     let gui = gui::Model::new(&assets, config, app, window, gui_channels, sound_id_gen);
 
     Model {
@@ -103,12 +105,20 @@ fn model(app: &App) -> Model {
 }
 
 // Update the application in accordance with the given event.
-fn update(_app: &App, mut model: Model, event: Event) -> Model {
+fn update(app: &App, mut model: Model, event: Event) -> Model {
     match event {
         Event::WindowEvent { simple: Some(_event), .. } => {
         },
         Event::Update(_update) => {
             model.gui.update();
+
+            // If there are active sounds playing we should loop at a consistent rate for
+            // visualisation. Otherwise, only update on interactions.
+            if model.gui.has_active_sounds() {
+                app.set_loop_mode(LoopMode::rate_fps(60.0));
+            } else {
+                app.set_loop_mode(LoopMode::wait(3));
+            }
         },
         _ => (),
     }
