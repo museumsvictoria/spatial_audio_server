@@ -1,14 +1,18 @@
+use gui;
 use metres::Metres;
 use nannou;
 use nannou::audio::Buffer;
 use nannou::math::{MetricSpace, Point2};
 use std;
 use std::collections::HashMap;
+use std::sync::mpsc;
+pub use self::detector::Detector;
 pub use self::sound::Sound;
 pub use self::source::Source;
 pub use self::speaker::Speaker;
 pub use self::wav::Wav;
 
+pub mod detector;
 pub mod sound;
 pub mod source;
 pub mod speaker;
@@ -32,23 +36,50 @@ pub const FRAMES_PER_BUFFER: usize = 64;
 /// Simplified type alias for the nannou audio output stream used by the audio server.
 pub type OutputStream = nannou::audio::stream::Output<Model>;
 
+/// A sound that is currently active on the audio thread.
+pub struct ActiveSound {
+    sound: Sound,
+    channel_detectors: Box<[Detector]>,
+}
+
+impl ActiveSound {
+    /// Create a new `ActiveSound`.
+    pub fn new(sound: Sound) -> Self {
+        let channel_detectors = (0..sound.channels)
+            .map(|_| Detector::new())
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        ActiveSound { sound, channel_detectors }
+    }
+}
+
+impl From<Sound> for ActiveSound {
+    fn from(sound: Sound) -> Self {
+        ActiveSound::new(sound)
+    }
+}
+
 /// State that lives on the audio thread.
 pub struct Model {
     /// A map from audio sound IDs to the audio sounds themselves.
-    pub sounds: HashMap<sound::Id, Sound>,
+    sounds: HashMap<sound::Id, ActiveSound>,
     /// A map from speaker IDs to the speakers themselves.
     pub speakers: HashMap<speaker::Id, Speaker>,
     /// A buffer for collecting the speakers within proximity of the sound's position.
     speakers_in_proximity: Vec<(Amplitude, usize)>,
     /// A buffer for collecting the speakers within proximity of the sound's position.
     unmixed_samples: Vec<f32>,
+    /// A buffer for collecting sounds that have been removed due to completing.
+    exhausted_sounds: Vec<sound::Id>,
+    /// Channel for communicating active sound info to the GUI.
+    gui_active_sound_msg_tx: mpsc::SyncSender<(sound::Id, gui::ActiveSoundMessage)>,
 }
 
 impl Model {
     /// Initialise the `Model`.
-    pub fn new() -> Self {
+    pub fn new(gui_active_sound_msg_tx: mpsc::SyncSender<(sound::Id, gui::ActiveSoundMessage)>) -> Self {
         // A map from audio sound IDs to the audio sounds themselves.
-        let sounds: HashMap<sound::Id, Sound> = HashMap::with_capacity(1024);
+        let sounds: HashMap<sound::Id, ActiveSound> = HashMap::with_capacity(1024);
 
         // A map from speaker IDs to the speakers themselves.
         let speakers: HashMap<speaker::Id, Speaker> = HashMap::with_capacity(MAX_CHANNELS);
@@ -59,12 +90,42 @@ impl Model {
         // A buffer for collecting frames from `Sound`s that have not yet been mixed and written.
         let unmixed_samples = vec![0.0; 1024];
 
+        // A buffer for collecting exhausted `Sound`s.
+        let exhausted_sounds = Vec::with_capacity(128);
+
         Model {
             sounds,
             speakers,
             speakers_in_proximity,
             unmixed_samples,
+            exhausted_sounds,
+            gui_active_sound_msg_tx,
         }
+    }
+
+    /// Inserts the sound and sends an `Start` active sound message to the GUI.
+    pub fn insert_sound(&mut self, id: sound::Id, sound: ActiveSound) -> Option<ActiveSound> {
+        let position = sound.sound.point;
+        let channels = sound.sound.channels;
+        let source_id = sound.sound.source_id;
+        let msg = gui::ActiveSoundMessage::Start { source_id, position, channels };
+        self.gui_active_sound_msg_tx.try_send((id, msg)).ok();
+        self.sounds.insert(id, sound)
+    }
+
+    /// Removes the sound and sends an `End` active sound message to the GUI.
+    pub fn remove_sound(&mut self, id: sound::Id) -> Option<ActiveSound> {
+        let removed = self.sounds.remove(&id);
+        if removed.is_some() {
+            let msg = gui::ActiveSoundMessage::End;
+            self.gui_active_sound_msg_tx.try_send((id, msg)).ok();
+        }
+        removed
+    }
+
+    /// Mutable access to the sound at the given Id.
+    pub fn sound_mut(&mut self, id: &sound::Id) -> Option<&mut Sound> {
+        self.sounds.get_mut(id).map(|active| &mut active.sound)
     }
 }
 
@@ -75,19 +136,43 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref mut sounds,
             ref mut speakers_in_proximity,
             ref mut unmixed_samples,
+            ref mut exhausted_sounds,
             ref speakers,
+            ref gui_active_sound_msg_tx,
         } = model;
 
         // For each sound, request `buffer.len()` number of frames and sum them onto the
         // relevant output channels.
-        for (&_sound_id, sound) in sounds {
+        for (&sound_id, active_sound) in sounds.iter_mut() {
+            let ActiveSound { ref mut sound, ref mut channel_detectors } = *active_sound;
+
+            // The number of samples to request from the sound for this buffer.
             let num_samples = buffer.len_frames() * sound.channels;
 
             // Clear the unmixed samples, ready to collect the new ones.
             unmixed_samples.clear();
             {
-                let signal = (0..num_samples).map(|_| sound.signal.next()[0]);
-                unmixed_samples.extend(signal);
+                let mut samples_written = 0;
+                for sample in sound.signal.by_ref().take(num_samples) {
+                    unmixed_samples.push(sample);
+                    channel_detectors[samples_written % sound.channels].next(sample);
+                    samples_written += 1;
+                }
+
+                // If we didn't write the expected number of samples, the sound has been exhausted.
+                if samples_written < num_samples {
+                    exhausted_sounds.push(sound_id);
+                    for _ in samples_written..num_samples {
+                        unmixed_samples.push(0.0);
+                    }
+                }
+
+                // Send the latest RMS and peak for each channel to the GUI for monitoring.
+                for (index, detector) in channel_detectors.iter().enumerate() {
+                    let (rms, peak) = detector.current();
+                    let msg = gui::ActiveSoundMessage::UpdateChannel { index, rms, peak };
+                    gui_active_sound_msg_tx.try_send((sound_id, msg)).ok();
+                }
             }
 
             // Mix the audio from the signal onto each of the output channels.
@@ -111,6 +196,15 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     sample_index += sound.channels;
                 }
             }
+        }
+
+        // Remove all sounds that have been exhausted.
+        for sound_id in exhausted_sounds.drain(..) {
+            // TODO: Possibly send this with the `End` message to avoid de-allocating on audio
+            // thread.
+            let _sound = sounds.remove(&sound_id).unwrap();
+            // Send signal of completion back to GUI/Composer threads.
+            gui_active_sound_msg_tx.try_send((sound_id, gui::ActiveSoundMessage::End)).ok();
         }
     }
 

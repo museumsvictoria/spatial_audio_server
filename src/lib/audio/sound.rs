@@ -1,6 +1,5 @@
 use nannou::math::Point2;
 use metres::Metres;
-use nannou::audio::sample::Signal;
 use std::sync::{Arc, Mutex};
 
 /// `Sound`s can be thought of as a stack of three primary components:
@@ -9,13 +8,18 @@ use std::sync::{Arc, Mutex};
 /// 2. **Pre-spatial effects processing**: E.g. fades.
 /// 3. **Spatial Output**: maps the sound from a position in space to the output channels.
 pub struct Sound {
+    // The unique identifier for the source of the sound's signal.
+    pub source_id: super::source::Id,
     // The number of channels yielded by the `Sound`.
     pub channels: usize,
     // Includes the source and pre-spatial effects.
     //
     // The signal is unique in that channels are interleaved rather than presented side-by-side in
     // the `Frame` type itself. This allows having a dynamic number of channels.
-    pub signal: Box<Signal<Frame=[f32; 1]> + Send>,
+    //
+    // The sound is "complete" when the signal returns `None` and will be removed from the map on
+    // the audio thread.
+    pub signal: Box<Iterator<Item=f32> + Send>,
     // The location of the sound within the space.
     pub point: Point2<Metres>,
     pub spread: Metres,

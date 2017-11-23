@@ -27,3 +27,5 @@ toml = "0.4"
 
 [patch.crates-io]
 cpal = { path = "../../cpal" }
+hound = { git = "https://github.com/mitchmindtree/hound", branch = "seek" }
+sample = { path = "../../sample" }
