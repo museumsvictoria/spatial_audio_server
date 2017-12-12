@@ -105,7 +105,7 @@ impl Iterator for WavCycle {
                             spec.bits_per_sample),
             }
 
-            if self.reader.seek_sample(0).is_err() {
+            if self.reader.seek(0).is_err() {
                 return None;
             }
         }
