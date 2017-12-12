@@ -283,7 +283,7 @@ impl Model {
     ///
     /// This is used at the top-level to determine what application loop mode to use.
     pub fn is_animating(&self) -> bool {
-        !self.audio_monitor.active_sounds.is_empty() || !self.audio_monitor.speakers.is_empty()
+        !self.audio_monitor.active_sounds.is_empty()
     }
 }
 
