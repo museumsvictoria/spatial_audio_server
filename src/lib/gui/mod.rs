@@ -866,6 +866,7 @@ widget_ids! {
         floorplan,
         floorplan_speakers[],
         floorplan_source_preview,
+        floorplan_channel_to_speaker_lines[],
     }
 }
 
@@ -2197,8 +2198,9 @@ fn set_widgets(gui: &mut Gui) {
     }
 
     // Draw the currently active sounds over the floorplan.
+    let mut speakers_in_proximity = vec![]; // TODO: Move this to where it can be re-used.
     {
-        let Gui { ref ids, ref mut state, ref mut ui, ref channels, audio_monitor, .. } = *gui;
+        let Gui { ref mut ids, ref mut state, ref mut ui, ref channels, audio_monitor, .. } = *gui;
 
         let current = state.source_editor.preview.current;
         let point = state.source_editor.preview.point;
@@ -2212,9 +2214,12 @@ fn set_widgets(gui: &mut Gui) {
                 channel_amplitudes[i] = channel.rms.powf(0.5); // Emphasise lower amplitudes.
             }
 
+            // TODO: There should be an Id per active sound.
+            let sound_widget_id = ids.floorplan_source_preview;
+
             // If this is the preview sound it should be draggable and stand out.
             let condition = (current, point, selected);
-            let (spread, channel_radians, channel_count, position, color) = match condition {
+            let (spread_m, channel_radians, channel_count, position, color) = match condition {
                 (Some((_, id)), Some(point), Some(i)) if id == sound_id => {
                     let (spread, channel_radians, channel_count) = {
                         let source = &state.source_editor.sources[i];
@@ -2225,7 +2230,7 @@ fn set_widgets(gui: &mut Gui) {
                     };
 
                     // Determine how far the source preview has been dragged, if at all.
-                    let (dragged_x, dragged_y) = ui.widget_input(ids.floorplan_source_preview)
+                    let (dragged_x, dragged_y) = ui.widget_input(sound_widget_id)
                         .drags()
                         .left()
                         .fold((0.0, 0.0), |(x, y), drag| (x + drag.delta_xy[0], y + drag.delta_xy[1]));
@@ -2264,19 +2269,78 @@ fn set_widgets(gui: &mut Gui) {
                 },
             };
 
-            let spread = state.camera.metres_to_scalar(spread);
+            let spread = state.camera.metres_to_scalar(spread_m);
             let side_m = custom_widget::sound::dimension_metres(0.0);
             let side = state.camera.metres_to_scalar(side_m);
+            let channel_amps = &channel_amplitudes[..channel_count];
+
+            // Determine the line colour by checking for interactions with the sound.
+            let line_color = match ui.widget_input(sound_widget_id).mouse() {
+                Some(mouse) =>
+                    if mouse.buttons.left().is_down() { color.clicked() }
+                    else { color.highlighted() },
+                None => color,
+            };
+
+            // For each channel in the sound, draw a line to the `closest_speakers` to which it is
+            // sending audio.
+            let mut line_index = 0;
+            for channel in 0..channel_count {
+                let rad = channel_radians as f32;
+                let channel_point_m =
+                    audio::channel_point(position, channel, channel_count, spread_m, rad);
+                let (ch_x, ch_y) = position_metres_to_gui(channel_point_m, &state.camera);
+                let channel_amp = channel_amplitudes[channel];
+                let speakers = &state.speaker_editor.speakers;
+
+                // A function for finding all speakers within proximity of a sound channel.
+                fn find_speakers_in_proximity(
+                    point: &Point2<Metres>,
+                    speakers: &[Speaker],
+                    // Amp along with the index within the given `Vec`.
+                    in_proximity: &mut Vec<(f32, usize)>,
+                ) {
+                    in_proximity.clear();
+                    for (i, speaker) in speakers.iter().enumerate() {
+                        if let Some(amp) = audio::speaker_is_in_range(point, &speaker.audio.point) {
+                            in_proximity.push((amp, i));
+                        }
+                    }
+                }
+
+                find_speakers_in_proximity(&channel_point_m, speakers, &mut speakers_in_proximity);
+                for &(amp_scaler, speaker_index) in &speakers_in_proximity {
+                    const MAX_THICKNESS: Scalar = 16.0;
+                    let amp = channel_amp * amp_scaler;
+                    let thickness = amp as Scalar * MAX_THICKNESS;
+                    let speaker_point_m = speakers[speaker_index].audio.point;
+                    let (s_x, s_y) = position_metres_to_gui(speaker_point_m, &state.camera);
+
+                    // Ensure there is a unique `Id` for this line.
+                    if ids.floorplan_channel_to_speaker_lines.len() <= line_index {
+                        let mut gen = ui.widget_id_generator();
+                        ids.floorplan_channel_to_speaker_lines.resize(line_index+1, &mut gen);
+                    }
+
+                    let line_id = ids.floorplan_channel_to_speaker_lines[line_index];
+                    widget::Line::abs([ch_x, ch_y], [s_x, s_y])
+                        .color(line_color.alpha(amp_scaler))
+                        .depth(1.0)
+                        .thickness(thickness)
+                        .parent(ids.floorplan)
+                        .set(line_id, ui);
+
+                    line_index += 1;
+                }
+            }
 
             let (x, y) = position_metres_to_gui(position, &state.camera);
-
-            let channel_amps = &channel_amplitudes[..channel_count];
             custom_widget::Sound::new(channel_amps, spread, radians, channel_radians)
                 .color(color)
                 .x_y(x, y)
                 .w_h(side, side)
                 .parent(ids.floorplan)
-                .set(ids.floorplan_source_preview, ui);
+                .set(sound_widget_id, ui);
         }
     }
 

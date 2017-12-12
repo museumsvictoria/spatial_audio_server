@@ -222,7 +222,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     channel_point(sound.point, i, sound.channels, sound.spread, sound.radians);
 
                 // Find the speakers that are closest to the channel.
-                find_closest_speakers(&channel_point, speakers_in_proximity, &speakers);
+                find_closest_speakers(&channel_point, &speakers, speakers_in_proximity);
                 let mut sample_index = i;
                 for frame in buffer.frames_mut() {
                     let channel_sample = unmixed_samples[sample_index];
@@ -304,21 +304,32 @@ fn distance_2_to_amplitude(Metres(distance_2): Metres) -> Amplitude {
     1.0 - (distance_2 / PROXIMITY_LIMIT_2.0) as f32
 }
 
+/// Tests whether or not the given speaker position is within the `PROXIMITY_LIMIT` distance of the
+/// given `point` (normally a `Sound`'s channel position). If so, returns the amplitude multiplier
+/// for the sound being delivered from the `point` to the `speaker`.
+pub fn speaker_is_in_range(point: &Point2<Metres>, speaker: &Point2<Metres>) -> Option<f32> {
+    // let speaker = &active.speaker;
+    // let speaker_point_f = Point2 { x: speaker.point.x.0, y: speaker.point.y.0 };
+    let point_f = Point2 { x: point.x.0, y: point.y.0 };
+    let speaker_f = Point2 { x: speaker.x.0, y: speaker.y.0 };
+    let distance_2 = Metres(point_f.distance2(speaker_f));
+    if distance_2 < PROXIMITY_LIMIT_2 {
+        // Use a function to map distance to amp.
+        let amp = distance_2_to_amplitude(distance_2);
+        return Some(amp);
+    }
+    None
+}
+
 fn find_closest_speakers(
     point: &Point2<Metres>,
-    closest: &mut Vec<(Amplitude, usize)>, // Amplitude along with the speaker's channel index.
     speakers: &HashMap<speaker::Id, ActiveSpeaker>,
+    closest: &mut Vec<(Amplitude, usize)>, // Amplitude along with the speaker's channel index.
 ) {
     closest.clear();
-    let point_f = Point2 { x: point.x.0, y: point.y.0 };
     for (_, active) in speakers.iter() {
-        let speaker = &active.speaker;
-        let speaker_point_f = Point2 { x: speaker.point.x.0, y: speaker.point.y.0 };
-        let distance_2 = Metres(point_f.distance2(speaker_point_f));
-        if distance_2 < PROXIMITY_LIMIT_2 {
-            // Use a function to map distance to amp.
-            let amp = distance_2_to_amplitude(distance_2);
-            closest.push((amp, speaker.channel));
+        if let Some(amp) = speaker_is_in_range(point, &active.speaker.point) {
+            closest.push((amp, active.speaker.channel));
         }
     }
 }
