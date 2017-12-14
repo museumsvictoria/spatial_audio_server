@@ -57,7 +57,16 @@ fn model(app: &App) -> Model {
 
     // Spawn the OSC input thread.
     let osc_receiver = nannou::osc::receiver(config.osc_input_port).unwrap();
-    let (_osc_thread_handle, osc_msg_rx, interaction_rx) = osc::input::spawn(osc_receiver);
+    let (_osc_in_thread_handle, osc_in_log_rx, interaction_rx) = osc::input::spawn(osc_receiver);
+
+    // Spawn the OSC output thread.
+    let (_osc_out_thread_handle, osc_out_msg_tx, osc_out_log_rx) = osc::output::spawn();
+
+    // NOTE: TEMP for testing, should be done via gui.
+    let osc_tx = nannou::osc::sender().unwrap().connect("127.0.0.1:9002").unwrap();
+    let add = osc::output::OscTarget::Add(osc::output::Installation::Cacophony, osc_tx);
+    let msg = osc::output::Message::Osc(add);
+    osc_out_msg_tx.send(msg).unwrap();
 
     // Get the default device and attempt to set it up with the target number of channels.
     let device = app.audio.default_output_device().unwrap();
@@ -72,7 +81,7 @@ fn model(app: &App) -> Model {
     let (audio_monitor_tx, audio_monitor_rx) = mpsc::sync_channel(1024);
 
     // Initialise the audio model and create the stream.
-    let audio_model = audio::Model::new(audio_monitor_tx);
+    let audio_model = audio::Model::new(audio_monitor_tx, osc_out_msg_tx);
     let audio_output_stream = app.audio
         .new_output_stream(audio_model, audio::render)
         .sample_rate(audio::SAMPLE_RATE as u32)
@@ -90,7 +99,8 @@ fn model(app: &App) -> Model {
         composer::spawn(audio_output_stream.clone(), sound_id_gen.clone());
 
     // Initalise the GUI model.
-    let gui_channels = gui::Channels::new(osc_msg_rx,
+    let gui_channels = gui::Channels::new(osc_in_log_rx,
+                                          osc_out_log_rx,
                                           interaction_rx,
                                           composer_msg_tx.clone(),
                                           audio_output_stream.clone(),
