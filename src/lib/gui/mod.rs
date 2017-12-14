@@ -6,9 +6,10 @@ use metres::Metres;
 use nannou;
 use nannou::prelude::*;
 use nannou::glium;
-use nannou::osc;
 use nannou::ui;
 use nannou::ui::prelude::*;
+use osc::input::Log as OscInputLog;
+use osc::output::Log as OscOutputLog;
 use serde_json;
 use std;
 use std::collections::{HashMap, VecDeque};
@@ -16,7 +17,6 @@ use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::sync::mpsc;
 
@@ -56,14 +56,17 @@ struct State {
     // The camera over the 2D floorplan.
     camera: Camera,
     // A log of the most recently received OSC messages for testing/debugging/monitoring.
-    osc_log: OscLog,
+    osc_in_log: Log<OscInputLog>,
+    // A log of the most recently sent OSC messages for testing/debugging/monitoring.
+    osc_out_log: Log<OscOutputLog>,
     // A log of the most recently received Interactions for testing/debugging/monitoring.
     interaction_log: InteractionLog,
     speaker_editor: SpeakerEditor,
     source_editor: SourceEditor,
     // Menu states.
     side_menu_is_open: bool,
-    osc_log_is_open: bool,
+    osc_in_log_is_open: bool,
+    osc_out_log_is_open: bool,
     interaction_log_is_open: bool,
 }
 
@@ -141,8 +144,13 @@ impl Model {
         } = *self;
 
         // Collect OSC messages for the OSC log.
-        for (addr, msg) in channels.osc_msg_rx.try_iter() {
-            state.osc_log.push_msg((addr, msg));
+        for log in channels.osc_in_log_rx.try_iter() {
+            state.osc_in_log.push_msg(log);
+        }
+
+        // Collect OSC messages for the OSC log.
+        for log in channels.osc_out_log_rx.try_iter() {
+            state.osc_out_log.push_msg(log);
         }
 
         // Collect interactions for the interaction log.
@@ -338,7 +346,8 @@ impl State {
             zoom: 0.0,
         };
 
-        let osc_log = Log::with_limit(config.osc_log_limit);
+        let osc_in_log = Log::with_limit(config.osc_input_log_limit);
+        let osc_out_log = Log::with_limit(config.osc_output_log_limit);
         let interaction_log = Log::with_limit(config.interaction_log_limit);
 
         // State that is specific to the GUI itself.
@@ -348,17 +357,20 @@ impl State {
             camera,
             speaker_editor,
             source_editor,
-            osc_log,
+            osc_in_log,
+            osc_out_log,
             interaction_log,
             side_menu_is_open: true,
-            osc_log_is_open: false,
+            osc_in_log_is_open: false,
+            osc_out_log_is_open: false,
             interaction_log_is_open: false,
         }
     }
 }
 
 pub struct Channels {
-    pub osc_msg_rx: mpsc::Receiver<(SocketAddr, osc::Message)>,
+    pub osc_in_log_rx: mpsc::Receiver<OscInputLog>,
+    pub osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
     pub interaction_rx: mpsc::Receiver<Interaction>,
     pub composer_msg_tx: mpsc::Sender<composer::Message>,
     /// A handle for communicating with the audio output stream.
@@ -369,7 +381,8 @@ pub struct Channels {
 impl Channels {
     /// Initialise the GUI communication channels.
     pub fn new(
-        osc_msg_rx: mpsc::Receiver<(SocketAddr, osc::Message)>,
+        osc_in_log_rx: mpsc::Receiver<OscInputLog>,
+        osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
         interaction_rx: mpsc::Receiver<Interaction>,
         composer_msg_tx: mpsc::Sender<composer::Message>,
         audio: audio::OutputStream,
@@ -377,7 +390,8 @@ impl Channels {
     ) -> Self
     {
         Channels {
-            osc_msg_rx,
+            osc_in_log_rx,
+            osc_out_log_rx,
             interaction_rx,
             composer_msg_tx,
             audio,
@@ -641,7 +655,6 @@ struct Log<T> {
     limit: usize,
 }
 
-type OscLog = Log<(SocketAddr, osc::Message)>;
 type InteractionLog = Log<Interaction>;
 
 impl<T> Log<T> {
@@ -664,12 +677,12 @@ impl<T> Log<T> {
     }
 }
 
-impl OscLog {
+impl Log<OscInputLog> {
     // Format the log in a single string of messages.
     fn format(&self) -> String {
         let mut s = String::new();
         let mut index = self.start_index + self.deque.len();
-        for &(ref addr, ref msg) in &self.deque {
+        for &OscInputLog { ref addr, ref msg } in &self.deque {
             let addr_string = format!("{}: [{}{}]\n", index, addr, msg.addr);
             s.push_str(&addr_string);
 
@@ -678,6 +691,53 @@ impl OscLog {
                 for arg in args {
                     s.push_str(&format!("    {:?}\n", arg));
                 }
+            }
+
+            index -= 1;
+        }
+        s
+    }
+}
+
+impl Log<OscOutputLog> {
+    // Format the log in a single string of messages.
+    fn format(&self) -> String {
+        let mut s = String::new();
+        let mut index = self.start_index + self.deque.len();
+        for &OscOutputLog { addr, ref msg, ref error, .. } in &self.deque {
+            let addr_string = format!("{}: [{}] \"{}\"\n", index, addr, msg.addr);
+            s.push_str(&addr_string);
+
+            // Arguments.
+            if let Some(ref args) = msg.args {
+                s.push_str("    [");
+
+                // Format the `Type` argument into a string.
+                // TODO: Perhaps this should be provided by nannou?
+                fn format_arg(arg: &nannou::osc::Type) -> String {
+                    match arg {
+                        &nannou::osc::Type::Float(f) => format!("{:.2}", f),
+                        &nannou::osc::Type::Int(i) => format!("{}", i),
+                        arg => format!("{:?}", arg),
+                    }
+                }
+
+                let mut args = args.iter();
+                if let Some(first) = args.next() {
+                    s.push_str(&format!("{}", format_arg(first)));
+                }
+
+                for arg in args {
+                    s.push_str(&format!(", {}", format_arg(arg)));
+                }
+
+                s.push_str("]\n");
+            }
+
+            // Error if any.
+            if let Some(ref err) = *error {
+                let err_string = format!("  error: {}\n", err);
+                s.push_str(&err_string);
             }
 
             index -= 1;
@@ -813,11 +873,16 @@ widget_ids! {
         side_menu_button_line_top,
         side_menu_button_line_middle,
         side_menu_button_line_bottom,
-        // OSC Log.
-        osc_log,
-        osc_log_text,
-        osc_log_scrollbar_y,
-        osc_log_scrollbar_x,
+        // OSC input log.
+        osc_in_log,
+        osc_in_log_text,
+        osc_in_log_scrollbar_y,
+        osc_in_log_scrollbar_x,
+        // OSC output log.
+        osc_out_log,
+        osc_out_log_text,
+        osc_out_log_scrollbar_y,
+        osc_out_log_scrollbar_x,
         // Interaction Log.
         interaction_log,
         interaction_log_text,
@@ -896,7 +961,6 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
     const LIST_HEIGHT: Scalar = 140.0;
     const PAD: Scalar = 6.0;
     const TEXT_PAD: Scalar = 20.0;
-
     const SELECTED_CANVAS_H: Scalar = ITEM_HEIGHT * 2.0 + PAD * 3.0;
     let speaker_editor_canvas_h = LIST_HEIGHT + ITEM_HEIGHT + SELECTED_CANVAS_H;
 
@@ -1815,15 +1879,15 @@ fn set_source_editor(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     }
 }
 
-fn set_osc_log(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
-    let is_open = gui.state.osc_log_is_open;
+fn set_osc_in_log(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
+    let is_open = gui.state.osc_in_log_is_open;
     let log_canvas_h = 200.0;
     let (area, event) = collapsible_area(is_open, "OSC Input Log", gui.ids.side_menu)
         .align_middle_x_of(gui.ids.side_menu)
         .down_from(last_area_id, 0.0)
-        .set(gui.ids.osc_log, gui);
+        .set(gui.ids.osc_in_log, gui);
     if let Some(event) = event {
-        gui.state.osc_log_is_open = event.is_open();
+        gui.state.osc_in_log_is_open = event.is_open();
     }
     if let Some(area) = area {
 
@@ -1835,29 +1899,29 @@ fn set_osc_log(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         area.set(canvas, gui);
 
         // The text widget used to display the log.
-        let log_string = match gui.state.osc_log.len() {
+        let log_string = match gui.state.osc_in_log.len() {
             0 => format!("No messages received yet.\nListening on port {}...",
                          gui.state.config.osc_input_port),
-            _ => gui.state.osc_log.format(),
+            _ => gui.state.osc_in_log.format(),
         };
         info_text(&log_string)
             .top_left_of(area.id)
             .kid_area_w_of(area.id)
-            .set(gui.ids.osc_log_text, gui);
+            .set(gui.ids.osc_in_log_text, gui);
 
         // Scrollbars.
         widget::Scrollbar::y_axis(area.id)
             .color(color::LIGHT_CHARCOAL)
             .auto_hide(false)
-            .set(gui.ids.osc_log_scrollbar_y, gui);
+            .set(gui.ids.osc_in_log_scrollbar_y, gui);
         widget::Scrollbar::x_axis(area.id)
             .color(color::LIGHT_CHARCOAL)
             .auto_hide(true)
-            .set(gui.ids.osc_log_scrollbar_x, gui);
+            .set(gui.ids.osc_in_log_scrollbar_x, gui);
 
         area.id
     } else {
-        gui.ids.osc_log
+        gui.ids.osc_in_log
     }
 }
 
@@ -1907,6 +1971,51 @@ fn set_interaction_log(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     }
 }
 
+fn set_osc_out_log(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
+    let is_open = gui.state.osc_out_log_is_open;
+    let log_canvas_h = 200.0;
+    let (area, event) = collapsible_area(is_open, "OSC Output Log", gui.ids.side_menu)
+        .align_middle_x_of(gui.ids.side_menu)
+        .down_from(last_area_id, 0.0)
+        .set(gui.ids.osc_out_log, gui);
+    if let Some(event) = event {
+        gui.state.osc_out_log_is_open = event.is_open();
+    }
+    if let Some(area) = area {
+
+        // The canvas on which the log will be placed.
+        let canvas = widget::Canvas::new()
+            .scroll_kids()
+            .pad(10.0)
+            .h(log_canvas_h);
+        area.set(canvas, gui);
+
+        // The text widget used to display the log.
+        let log_string = match gui.state.osc_out_log.len() {
+            0 => "No messages sent yet.".into(),
+            _ => gui.state.osc_out_log.format(),
+        };
+        info_text(&log_string)
+            .top_left_of(area.id)
+            .kid_area_w_of(area.id)
+            .set(gui.ids.osc_out_log_text, gui);
+
+        // Scrollbars.
+        widget::Scrollbar::y_axis(area.id)
+            .color(color::LIGHT_CHARCOAL)
+            .auto_hide(false)
+            .set(gui.ids.osc_out_log_scrollbar_y, gui);
+        widget::Scrollbar::x_axis(area.id)
+            .color(color::LIGHT_CHARCOAL)
+            .auto_hide(true)
+            .set(gui.ids.osc_out_log_scrollbar_x, gui);
+
+        area.id
+    } else {
+        gui.ids.osc_out_log
+    }
+}
+
 // Set the widgets in the side menu.
 fn set_side_menu_widgets(gui: &mut Gui) {
 
@@ -1917,10 +2026,13 @@ fn set_side_menu_widgets(gui: &mut Gui) {
     let last_area_id = set_source_editor(last_area_id, gui);
 
     // The log of received OSC messages.
-    let last_area_id = set_osc_log(last_area_id, gui);
+    let last_area_id = set_osc_in_log(last_area_id, gui);
 
     // The log of received Interactions.
-    let _last_area_id = set_interaction_log(last_area_id, gui);
+    let last_area_id = set_interaction_log(last_area_id, gui);
+
+    // The log of sent OSC messages.
+    let _last_area_id = set_osc_out_log(last_area_id, gui);
 }
 
 // Update all widgets in the GUI with the given state.
