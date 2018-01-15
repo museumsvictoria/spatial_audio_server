@@ -13,6 +13,7 @@ pub use self::source::Source;
 pub use self::speaker::Speaker;
 pub use self::wav::Wav;
 
+pub mod dbap;
 pub mod detector;
 pub mod sound;
 pub mod source;
@@ -33,6 +34,9 @@ pub const SAMPLE_RATE: f64 = 44_100.0;
 
 /// The desired number of frames requested at a time.
 pub const FRAMES_PER_BUFFER: usize = 64;
+
+/// The rolloff decibel amount, used to attenuate speaker gains over distances.
+pub const ROLLOFF_DB: f64 = 6.0;
 
 /// Simplified type alias for the nannou audio output stream used by the audio server.
 pub type OutputStream = nannou::audio::stream::Output<Model>;
@@ -77,8 +81,8 @@ pub struct Model {
     sounds: HashMap<sound::Id, ActiveSound>,
     /// A map from speaker IDs to the speakers themselves.
     speakers: HashMap<speaker::Id, ActiveSpeaker>,
-    /// A buffer for collecting the speakers within proximity of the sound's position.
-    speakers_in_proximity: Vec<(Amplitude, usize)>,
+    // /// A map from a speaker's assigned channel to the ID of the speaker.
+    // channel_to_speaker: HashMap<usize, speaker::Id>,
     /// A buffer for collecting the speakers within proximity of the sound's position.
     unmixed_samples: Vec<f32>,
     /// A buffer for collecting sounds that have been removed due to completing.
@@ -89,6 +93,12 @@ pub struct Model {
     osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
     /// An analysis per installation to re-use for sending to the OSC output thread.
     installation_analyses: HashMap<osc::output::Installation, Vec<SpeakerAnalysis>>,
+    /// A buffer to re-use for DBAP speaker calculations.
+    ///
+    /// The index of the speaker is its channel.
+    dbap_speakers: Vec<dbap::Speaker>,
+    /// A buffer to re-use for storing the gain for each speaker produced by DBAP.
+    dbap_speaker_gains: Vec<f32>,
 }
 
 impl Model {
@@ -103,9 +113,6 @@ impl Model {
         // A map from speaker IDs to the speakers themselves.
         let speakers: HashMap<speaker::Id, ActiveSpeaker> = HashMap::with_capacity(MAX_CHANNELS);
 
-        // A buffer for collecting the speakers within proximity of the sound's position.
-        let speakers_in_proximity = Vec::with_capacity(MAX_CHANNELS);
-
         // A buffer for collecting frames from `Sound`s that have not yet been mixed and written.
         let unmixed_samples = vec![0.0; 1024];
 
@@ -115,15 +122,22 @@ impl Model {
         // A map from installations to audio analysis frames that can be re-used.
         let installation_analyses = HashMap::with_capacity(64);
 
+        // A buffer to re-use for DBAP speaker calculations.
+        let dbap_speakers = Vec::with_capacity(MAX_CHANNELS);
+
+        // A buffer to re-use for storing gains produced by DBAP.
+        let dbap_speaker_gains = Vec::with_capacity(MAX_CHANNELS);
+
         Model {
             sounds,
             speakers,
-            speakers_in_proximity,
             unmixed_samples,
             exhausted_sounds,
             installation_analyses,
             gui_audio_monitor_msg_tx,
             osc_output_msg_tx,
+            dbap_speakers,
+            dbap_speaker_gains,
         }
     }
 
@@ -196,11 +210,12 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
     {
         let Model {
             ref mut sounds,
-            ref mut speakers_in_proximity,
             ref mut unmixed_samples,
             ref mut exhausted_sounds,
             ref mut installation_analyses,
             ref mut speakers,
+            ref mut dbap_speakers,
+            ref mut dbap_speaker_gains,
             ref gui_audio_monitor_msg_tx,
             ref osc_output_msg_tx,
         } = model;
@@ -247,15 +262,36 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 let channel_point =
                     channel_point(sound.point, i, sound.channels, sound.spread, sound.radians);
 
-                // Find the speakers that are closest to the channel.
-                find_closest_speakers(&channel_point, &speakers, speakers_in_proximity);
+                // Update the dbap_speakers buffer with their distances to this sound channel.
+                dbap_speakers.clear();
+                for channel in 0..buffer.channels() {
+                    // Find the speaker for this channel.
+                    // TODO: Could speed this up by maintaining a map from channels to speaker IDs.
+                    if let Some(active) = speakers.values().find(|s| s.speaker.channel == channel) {
+                        let point_f = Point2 { x: channel_point.x.0, y: channel_point.y.0 };
+                        let speaker = &active.speaker.point;
+                        let speaker_f = Point2 { x: speaker.x.0, y: speaker.y.0 };
+                        let distance = point_f.distance(speaker_f);
+                        // TODO: Weight the speaker depending on its associated installation.
+                        let weight = 1.0;
+                        dbap_speakers.push(dbap::Speaker { distance, weight });
+                    }
+                }
+
+                // Update the speaker gains.
+                dbap_speaker_gains.clear();
+                const ROLLOFF_DB: f64 = 6.0;
+                let gains = dbap::SpeakerGains::new(&dbap_speakers, ROLLOFF_DB);
+                dbap_speaker_gains.extend(gains.map(|f| f as f32));
+
+                // For every frame in the buffer, mix the unmixed sample.
                 let mut sample_index = i;
                 for frame in buffer.frames_mut() {
                     let channel_sample = unmixed_samples[sample_index];
-                    for &(amp, channel) in speakers_in_proximity.iter() {
+                    for (channel, &gain) in dbap_speaker_gains.iter().enumerate() {
                         // Only write to the channels that will be read by the audio device.
                         if let Some(sample) = frame.get_mut(channel) {
-                            *sample += channel_sample * amp;
+                            *sample += channel_sample * gain;
                         }
                     }
                     sample_index += sound.channels;
@@ -355,40 +391,11 @@ pub fn channel_point(
 
 type Amplitude = f32;
 
-// Converts the given squared distance to an amplitude multiplier.
-//
-// The squared distance is used to avoid the need to perform square root.
-fn distance_2_to_amplitude(Metres(distance_2): Metres) -> Amplitude {
-    // TODO: This is a linear tail off - experiment with exponential tail off.
-    1.0 - (distance_2 / PROXIMITY_LIMIT_2.0) as f32
-}
-
 /// Tests whether or not the given speaker position is within the `PROXIMITY_LIMIT` distance of the
-/// given `point` (normally a `Sound`'s channel position). If so, returns the amplitude multiplier
-/// for the sound being delivered from the `point` to the `speaker`.
-pub fn speaker_is_in_range(point: &Point2<Metres>, speaker: &Point2<Metres>) -> Option<f32> {
-    // let speaker = &active.speaker;
-    // let speaker_point_f = Point2 { x: speaker.point.x.0, y: speaker.point.y.0 };
+/// given `point` (normally a `Sound`'s channel position).
+pub fn speaker_is_in_proximity(point: &Point2<Metres>, speaker: &Point2<Metres>) -> bool {
     let point_f = Point2 { x: point.x.0, y: point.y.0 };
     let speaker_f = Point2 { x: speaker.x.0, y: speaker.y.0 };
     let distance_2 = Metres(point_f.distance2(speaker_f));
-    if distance_2 < PROXIMITY_LIMIT_2 {
-        // Use a function to map distance to amp.
-        let amp = distance_2_to_amplitude(distance_2);
-        return Some(amp);
-    }
-    None
-}
-
-fn find_closest_speakers(
-    point: &Point2<Metres>,
-    speakers: &HashMap<speaker::Id, ActiveSpeaker>,
-    closest: &mut Vec<(Amplitude, usize)>, // Amplitude along with the speaker's channel index.
-) {
-    closest.clear();
-    for (_, active) in speakers.iter() {
-        if let Some(amp) = speaker_is_in_range(point, &active.speaker.point) {
-            closest.push((amp, active.speaker.channel));
-        }
-    }
+    distance_2 < PROXIMITY_LIMIT_2
 }
