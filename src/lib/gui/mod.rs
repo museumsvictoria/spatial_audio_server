@@ -868,6 +868,7 @@ widget_ids! {
 
         // The canvas for the menu to the left of the GUI.
         side_menu,
+        side_menu_scrollbar,
         // The menu button at the top of the sidebar.
         side_menu_button,
         side_menu_button_line_top,
@@ -965,8 +966,7 @@ fn set_speaker_editor(gui: &mut Gui) -> widget::Id {
     let speaker_editor_canvas_h = LIST_HEIGHT + ITEM_HEIGHT + SELECTED_CANVAS_H;
 
     let (area, event) = collapsible_area(is_open, "Speaker Editor", gui.ids.side_menu)
-        .align_middle_x_of(gui.ids.side_menu)
-        .down_from(gui.ids.side_menu_button, 0.0)
+        .mid_top_of(gui.ids.side_menu)
         .set(gui.ids.speaker_editor, gui);
     if let Some(event) = event {
         gui.state.speaker_editor.is_open = event.is_open();
@@ -2055,39 +2055,23 @@ fn set_widgets(gui: &mut Gui) {
     // Pressing these three lines opens the menu, revealing a list of options.
     const CLOSED_SIDE_MENU_W: ui::Scalar = 40.0;
     const OPEN_SIDE_MENU_W: ui::Scalar = 300.0;
+    const SIDE_MENU_BUTTON_H: ui::Scalar = CLOSED_SIDE_MENU_W;
     let side_menu_is_open = gui.state.side_menu_is_open;
     let side_menu_w = match side_menu_is_open {
         false => CLOSED_SIDE_MENU_W,
         true => OPEN_SIDE_MENU_W,
     };
-
-    // The canvas on which all side_menu widgets are placed.
-    widget::Canvas::new()
-        .w(side_menu_w)
-        .h_of(gui.ids.background)
-        .mid_left_of(gui.ids.background)
-        .pad(0.0)
-        .color(color::rgb(0.1, 0.13, 0.15))
-        .set(gui.ids.side_menu, gui);
+    let background_rect = gui.rect_of(gui.ids.background).unwrap();
+    let side_menu_h = background_rect.h() - SIDE_MENU_BUTTON_H;
 
     // The classic three line menu button for opening the side_menu.
     for _click in widget::Button::new()
-        .w_h(side_menu_w, CLOSED_SIDE_MENU_W)
-        .mid_top_of(gui.ids.side_menu)
-        //.color(color::BLACK)
+        .w_h(side_menu_w, SIDE_MENU_BUTTON_H)
+        .top_left_of(gui.ids.background)
         .color(color::rgb(0.07, 0.08, 0.09))
         .set(gui.ids.side_menu_button, gui)
     {
         gui.state.side_menu_is_open = !side_menu_is_open;
-    }
-
-    // Draw the three lines using rectangles.
-    fn menu_button_line(menu_button: widget::Id) -> widget::Rectangle {
-        let line_h = 2.0;
-        let line_w = CLOSED_SIDE_MENU_W / 3.0;
-        widget::Rectangle::fill([line_w, line_h])
-            .color(color::WHITE)
-            .graphics_for(menu_button)
     }
 
     let margin = CLOSED_SIDE_MENU_W / 3.0;
@@ -2101,9 +2085,35 @@ fn set_widgets(gui: &mut Gui) {
         .mid_bottom_with_margin_on(gui.ids.side_menu_button, margin)
         .set(gui.ids.side_menu_button_line_bottom, gui);
 
+    let scrollbar_w = gui.rect_of(gui.ids.side_menu_scrollbar).map(|r| r.w()).unwrap_or(0.0);
+    let side_menu_w_minus_scrollbar = side_menu_w - scrollbar_w;
+
+    // The canvas on which all side_menu widgets are placed.
+    widget::Canvas::new()
+        .w_h(side_menu_w_minus_scrollbar, side_menu_h)
+        .bottom_left_of(gui.ids.background)
+        .scroll_kids_vertically()
+        .pad(0.0)
+        .color(color::rgb(0.1, 0.13, 0.15))
+        .set(gui.ids.side_menu, gui);
+
+    // Draw the three lines using rectangles.
+    fn menu_button_line(menu_button: widget::Id) -> widget::Rectangle {
+        let line_h = 2.0;
+        let line_w = CLOSED_SIDE_MENU_W / 3.0;
+        widget::Rectangle::fill([line_w, line_h])
+            .color(color::WHITE)
+            .graphics_for(menu_button)
+    }
+
     // If the side_menu is open, set all the side_menu widgets.
     if side_menu_is_open {
         set_side_menu_widgets(gui);
+
+        // Set the scrollbar for the side menu.
+        widget::Scrollbar::y_axis(gui.ids.side_menu)
+            .right_from(gui.ids.side_menu, 0.0)
+            .set(gui.ids.side_menu_scrollbar, gui);
     }
 
     // The canvas on which the floorplan will be displayed.
@@ -2412,10 +2422,23 @@ fn set_widgets(gui: &mut Gui) {
                     // Amp along with the index within the given `Vec`.
                     in_proximity: &mut Vec<(f32, usize)>,
                 ) {
+                    let dbap_speakers: Vec<_> = speakers.iter()
+                        .map(|speaker| {
+                            let speaker = &speaker.audio.point;
+                            let point_f = Point2 { x: point.x.0, y: point.y.0 };
+                            let speaker_f = Point2 { x: speaker.x.0, y: speaker.y.0 };
+                            let distance = point_f.distance(speaker_f);
+                            // TODO: Weight the speaker depending on its associated installation.
+                            let weight = 1.0;
+                            audio::dbap::Speaker { distance, weight }
+                        })
+                        .collect();
+
+                    let gains = audio::dbap::SpeakerGains::new(&dbap_speakers, audio::ROLLOFF_DB);
                     in_proximity.clear();
-                    for (i, speaker) in speakers.iter().enumerate() {
-                        if let Some(amp) = audio::speaker_is_in_range(point, &speaker.audio.point) {
-                            in_proximity.push((amp, i));
+                    for (i, gain) in gains.enumerate() {
+                        if audio::speaker_is_in_proximity(point, &speakers[i].audio.point) {
+                            in_proximity.push((gain as f32, i));
                         }
                     }
                 }
