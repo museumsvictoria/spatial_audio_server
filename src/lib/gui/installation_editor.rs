@@ -198,7 +198,10 @@ pub fn set(gui: &mut Gui) -> widget::Id {
 
     // The textbox for editing the OSC output IP address.
     let color = match selected.socket_string.parse::<net::SocketAddrV4>() {
-        Ok(_) => color::BLACK,
+        Ok(socket) => match address_map[&installation].socket == socket {
+            true => color::BLACK,
+            false => color::DARK_GREEN.with_luminance(0.1),
+        },
         Err(_) => color::DARK_RED.with_luminance(0.1),
     };
     for event in widget::TextBox::new(&selected.socket_string)
