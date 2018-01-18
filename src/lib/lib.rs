@@ -1,3 +1,6 @@
+// Extend the macro recursion limit to allow for many widget IDs.
+#![recursion_limit="128"]
+
 #[macro_use] extern crate conrod;
 #[macro_use] extern crate conrod_derive;
 #[macro_use] extern crate custom_derive;
@@ -18,6 +21,7 @@ mod audio;
 mod composer;
 mod config;
 mod gui;
+mod installation;
 mod interaction;
 mod metres;
 mod osc;
@@ -62,12 +66,6 @@ fn model(app: &App) -> Model {
     // Spawn the OSC output thread.
     let (_osc_out_thread_handle, osc_out_msg_tx, osc_out_log_rx) = osc::output::spawn();
 
-    // NOTE: TEMP for testing, should be done via gui.
-    let osc_tx = nannou::osc::sender().unwrap().connect("127.0.0.1:9002").unwrap();
-    let add = osc::output::OscTarget::Add(osc::output::Installation::Cacophony, osc_tx);
-    let msg = osc::output::Message::Osc(add);
-    osc_out_msg_tx.send(msg).unwrap();
-
     // Get the default device and attempt to set it up with the target number of channels.
     let device = app.audio.default_output_device().unwrap();
     let mut supported_channels = device
@@ -81,7 +79,7 @@ fn model(app: &App) -> Model {
     let (audio_monitor_tx, audio_monitor_rx) = mpsc::sync_channel(1024);
 
     // Initialise the audio model and create the stream.
-    let audio_model = audio::Model::new(audio_monitor_tx, osc_out_msg_tx);
+    let audio_model = audio::Model::new(audio_monitor_tx, osc_out_msg_tx.clone());
     let audio_output_stream = app.audio
         .new_output_stream(audio_model, audio::render)
         .sample_rate(audio::SAMPLE_RATE as u32)
@@ -101,6 +99,7 @@ fn model(app: &App) -> Model {
     // Initalise the GUI model.
     let gui_channels = gui::Channels::new(osc_in_log_rx,
                                           osc_out_log_rx,
+                                          osc_out_msg_tx,
                                           interaction_rx,
                                           composer_msg_tx.clone(),
                                           audio_output_stream.clone(),

@@ -1,3 +1,4 @@
+use installation::Installation;
 use nannou::osc;
 use nannou::osc::Type::{Int, Float};
 use std;
@@ -13,7 +14,7 @@ pub enum Message {
 
 /// Add or remove an OSC target for a given installation.
 pub enum OscTarget {
-    Add(Installation, osc::Sender<osc::Connected>),
+    Add(Installation, osc::Sender<osc::Connected>, String),
     Remove(Installation),
 }
 
@@ -33,18 +34,6 @@ pub struct FftData {
     pub lmh: [f32; 3],
     /// More detailed 8-bin data.
     pub bins: [f32; 8],
-}
-
-/// An installation that can receive OSC.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-pub enum Installation {
-    Cacophony,
-    EnergeticVibrationsAudioVisualiser,
-    EnergeticVibrationsProjectionMapping,
-    RipplesInSpacetime,
-    TurbulentEncounters,
-    WavesAtWork,
-    WrappedInSpectrum,
 }
 
 /// Data related to a single audio channel.
@@ -76,9 +65,18 @@ pub fn spawn() -> (std::thread::JoinHandle<()>, mpsc::Sender<Message>, mpsc::Rec
 }
 
 fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
-    let mut osc_txs: HashMap<Installation, osc::Sender<osc::Connected>> = HashMap::new();
 
-    enum Update { Msg(Message), SendOsc }
+    struct Target {
+        osc_tx: osc::Sender<osc::Connected>,
+        osc_addr: String,
+    }
+
+    enum Update {
+        Msg(Message),
+        SendOsc,
+    }
+
+    let mut osc_txs: HashMap<Installation, Target> = HashMap::new();
 
     // Update channel.
     let (update_tx, update_rx) = mpsc::channel();
@@ -125,8 +123,8 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
                 },
                 // Some OSC target should be added or removed.
                 Message::Osc(osc) => match osc {
-                    OscTarget::Add(installation, osc_tx) => {
-                        osc_txs.insert(installation, osc_tx);
+                    OscTarget::Add(installation, osc_tx, osc_addr) => {
+                        osc_txs.insert(installation, Target { osc_tx, osc_addr });
                     },
                     OscTarget::Remove(installation) => {
                         osc_txs.remove(&installation);
@@ -137,20 +135,9 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
                 let AudioFrameData { avg_peak, avg_rms, avg_fft, speakers } = data;
 
                 // Retrieve the OSC sender for this installation.
-                let osc_tx = match osc_txs.get(&installation) {
-                    Some(tx) => tx,
+                let (osc_tx, addr) = match osc_txs.get(&installation) {
+                    Some(&Target { ref osc_tx, ref osc_addr }) => (osc_tx, &osc_addr[..]),
                     None => continue,
-                };
-
-                // First, determine the installation specific data.
-                let addr = match installation {
-                    Installation::Cacophony => "caco",
-                    Installation::EnergeticVibrationsAudioVisualiser => "evav",
-                    Installation::EnergeticVibrationsProjectionMapping => "evpm",
-                    Installation::RipplesInSpacetime => "ripp",
-                    Installation::TurbulentEncounters => "turb",
-                    Installation::WavesAtWork => "wave",
-                    Installation::WrappedInSpectrum => "wrap",
                 };
 
                 // The buffer used to collect arguments.

@@ -1,0 +1,30 @@
+{
+  "WrappedInSpectrum": {
+    "socket": "127.0.0.1:9002",
+    "osc_addr": "wrap"
+  },
+  "TurbulentEncounters": {
+    "socket": "127.0.0.1:9002",
+    "osc_addr": "turb"
+  },
+  "WavesAtWork": {
+    "socket": "127.0.0.1:9002",
+    "osc_addr": "wave"
+  },
+  "EnergeticVibrationsAudioVisualiser": {
+    "socket": "127.0.0.1:9002",
+    "osc_addr": "enav"
+  },
+  "Cacophony": {
+    "socket": "127.0.0.1:9002",
+    "osc_addr": "caco"
+  },
+  "EnergeticVibrationsProjectionMapping": {
+    "socket": "127.0.0.1:9002",
+    "osc_addr": "enpm"
+  },
+  "RipplesInSpacetime": {
+    "socket": "127.0.0.1:9002",
+    "osc_addr": "ripp"
+  }
+}
