@@ -58,7 +58,7 @@ impl StoredSpeakers {
 }
 
 // Instantiate the sidebar speaker editor widgets.
-pub fn set(gui: &mut Gui) -> widget::Id {
+pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     let is_open = gui.state.speaker_editor.is_open;
     const LIST_HEIGHT: Scalar = 140.0;
     const PAD: Scalar = 6.0;
@@ -67,7 +67,8 @@ pub fn set(gui: &mut Gui) -> widget::Id {
     let speaker_editor_canvas_h = LIST_HEIGHT + ITEM_HEIGHT + SELECTED_CANVAS_H;
 
     let (area, event) = collapsible_area(is_open, "Speaker Editor", gui.ids.side_menu)
-        .mid_top_of(gui.ids.side_menu)
+        .align_middle_x_of(gui.ids.side_menu)
+        .down_from(last_area_id, 0.0)
         .set(gui.ids.speaker_editor, gui);
     if let Some(event) = event {
         gui.state.speaker_editor.is_open = event.is_open();

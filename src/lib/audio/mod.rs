@@ -1,4 +1,5 @@
 use gui;
+use installation::Installation;
 use metres::Metres;
 use nannou;
 use nannou::audio::Buffer;
@@ -92,7 +93,7 @@ pub struct Model {
     /// Channel for sending sound analysis data to the OSC output thread.
     osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
     /// An analysis per installation to re-use for sending to the OSC output thread.
-    installation_analyses: HashMap<osc::output::Installation, Vec<SpeakerAnalysis>>,
+    installation_analyses: HashMap<Installation, Vec<SpeakerAnalysis>>,
     /// A buffer to re-use for DBAP speaker calculations.
     ///
     /// The index of the speaker is its channel.
@@ -150,7 +151,7 @@ impl Model {
         };
 
         // TODO: Update `installation_analyses` if speaker's installation is new.
-        let installation = osc::output::Installation::Cacophony;
+        let installation = Installation::Cacophony;
         self.installation_analyses.entry(installation).or_insert_with(Vec::new);
 
         let speaker = ActiveSpeaker { speaker, detector };
@@ -323,7 +324,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
             // Sum the rms and peak.
             // TODO: Get installation associated with speaker.
-            let installation = osc::output::Installation::Cacophony;
+            let installation = Installation::Cacophony;
             //let installation = active.speaker.installation;
             if let Some(speakers) = installation_analyses.get_mut(&installation) {
                 sum_peak += peak;

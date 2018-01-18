@@ -1,6 +1,7 @@
 use audio;
 use composer;
 use config::Config;
+use installation;
 use interaction::Interaction;
 use metres::Metres;
 use nannou;
@@ -8,6 +9,7 @@ use nannou::prelude::*;
 use nannou::glium;
 use nannou::ui;
 use nannou::ui::prelude::*;
+use osc;
 use osc::input::Log as OscInputLog;
 use osc::output::Log as OscOutputLog;
 use serde_json;
@@ -19,16 +21,21 @@ use std::path::{Path, PathBuf};
 use std::ops::{Deref, DerefMut};
 use std::sync::mpsc;
 
+use self::installation_editor::InstallationEditor;
 use self::source_editor::{SourceEditor, SourcePreview, SourcePreviewMode, StoredSources};
 use self::speaker_editor::{Speaker, SpeakerEditor, StoredSpeakers};
 
 mod custom_widget;
+pub mod installation_editor;
 pub mod interaction_log;
 pub mod osc_in_log;
 pub mod osc_out_log;
 pub mod source_editor;
 pub mod speaker_editor;
 mod theme;
+
+// The name of the file where the installation OSC mappings are saved.
+const INSTALLATIONS_FILE_STEM: &'static str = "installations";
 
 // The name of the file where the speaker layout is saved.
 const SPEAKERS_FILE_STEM: &'static str = "speakers";
@@ -77,6 +84,7 @@ pub struct State {
     osc_out_log: Log<OscOutputLog>,
     // A log of the most recently received Interactions for testing/debugging/monitoring.
     interaction_log: InteractionLog,
+    installation_editor: InstallationEditor,
     speaker_editor: SpeakerEditor,
     pub source_editor: SourceEditor,
     // Menu states.
@@ -84,6 +92,10 @@ pub struct State {
     osc_in_log_is_open: bool,
     osc_out_log_is_open: bool,
     interaction_log_is_open: bool,
+}
+
+fn installations_path(assets: &Path) -> PathBuf {
+    assets.join(Path::new(INSTALLATIONS_FILE_STEM)).with_extension("json")
 }
 
 fn speakers_path(assets: &Path) -> PathBuf {
@@ -266,6 +278,10 @@ impl Model {
         // Destructure the GUI state for serializing.
         let Model {
             state: State {
+                installation_editor: InstallationEditor {
+                    address_map,
+                    ..
+                },
                 speaker_editor: SpeakerEditor {
                     speakers,
                     next_id: next_speaker_id,
@@ -281,6 +297,12 @@ impl Model {
             assets,
             ..
         } = self;
+
+        // Save the installation address map.
+        let installations_json_string = serde_json::to_string_pretty(&address_map)
+            .expect("failed to serialize installation address map");
+        safe_file_save(&installations_path(&assets), &installations_json_string)
+            .expect("failed to save installations file");
 
         // Save the speaker configuration.
         let speakers_json_string = {
@@ -315,6 +337,42 @@ impl State {
     /// Initialise the `State` and send any loaded speakers and sources to the audio and composer
     /// threads.
     pub fn new(assets: &Path, config: Config, channels: &Channels) -> Self {
+
+        // Load the address map from file.
+        let address_map = File::open(&installations_path(assets))
+            .ok()
+            .and_then(|f| serde_json::from_reader(f).ok())
+            .unwrap_or_else(|| {
+                installation::ALL
+                    .iter()
+                    .map(|&inst| {
+                        let addr = installation_editor::Address {
+                            socket: "127.0.0.1:9002".parse().unwrap(),
+                            osc_addr: inst.default_osc_addr_str().into(),
+                        };
+                        (inst, addr)
+                    })
+                    .collect::<installation_editor::AddressMap>()
+            });
+
+        // Send the loaded OSC installation targets to the osc output thread.
+        for (&inst, addr) in &address_map {
+            let osc_tx = nannou::osc::sender()
+                .expect("failed to create OSC sender")
+                .connect(&addr.socket)
+                .expect("failed to connect OSC sender");
+            let add = osc::output::OscTarget::Add(inst, osc_tx, addr.osc_addr.clone());
+            let msg = osc::output::Message::Osc(add);
+            channels.osc_out_msg_tx.send(msg)
+                .expect("failed to send loaded OSC target");
+        }
+
+        let installation_editor = InstallationEditor {
+            is_open: false,
+            selected: None,
+            address_map,
+        };
+
         // Load the existing speaker layout configuration if there is one.
         let StoredSpeakers { speakers, next_id } = StoredSpeakers::load(&speakers_path(assets));
 
@@ -349,7 +407,7 @@ impl State {
         };
 
         let source_editor = SourceEditor {
-            is_open: true,
+            is_open: false,
             selected: None,
             next_id,
             sources,
@@ -371,6 +429,7 @@ impl State {
             config,
             // TODO: Possibly load camera from file.
             camera,
+            installation_editor,
             speaker_editor,
             source_editor,
             osc_in_log,
@@ -387,6 +446,7 @@ impl State {
 pub struct Channels {
     pub osc_in_log_rx: mpsc::Receiver<OscInputLog>,
     pub osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
+    pub osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
     pub interaction_rx: mpsc::Receiver<Interaction>,
     pub composer_msg_tx: mpsc::Sender<composer::Message>,
     /// A handle for communicating with the audio output stream.
@@ -399,6 +459,7 @@ impl Channels {
     pub fn new(
         osc_in_log_rx: mpsc::Receiver<OscInputLog>,
         osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
+        osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
         interaction_rx: mpsc::Receiver<Interaction>,
         composer_msg_tx: mpsc::Sender<composer::Message>,
         audio: audio::OutputStream,
@@ -408,6 +469,7 @@ impl Channels {
         Channels {
             osc_in_log_rx,
             osc_out_log_rx,
+            osc_out_msg_tx,
             interaction_rx,
             composer_msg_tx,
             audio,
@@ -720,6 +782,14 @@ widget_ids! {
         interaction_log_text,
         interaction_log_scrollbar_y,
         interaction_log_scrollbar_x,
+        // Installation Editor.
+        installation_editor,
+        installation_editor_list,
+        installation_editor_selected_canvas,
+        installation_editor_osc_canvas,
+        installation_editor_osc_text,
+        installation_editor_osc_ip_text_box,
+        installation_editor_osc_address_text_box,
         // Speaker Editor.
         speaker_editor,
         speaker_editor_no_speakers,
@@ -789,8 +859,11 @@ pub const DARK_A: ui::Color = ui::Color::Rgba(0.1, 0.13, 0.15, 1.0);
 
 // Set the widgets in the side menu.
 fn set_side_menu_widgets(gui: &mut Gui) {
+    // Installation Editor - for editing installation-specific data.
+    let last_area_id = installation_editor::set(gui);
+
     // Speaker Editor - for adding, editing and removing speakers.
-    let last_area_id = speaker_editor::set(gui);
+    let last_area_id = speaker_editor::set(last_area_id, gui);
 
     // For adding, changing and removing audio sources.
     let last_area_id = source_editor::set(last_area_id, gui);

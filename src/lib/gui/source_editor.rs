@@ -160,7 +160,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     }
 
     if let Some(area) = area {
-        // The canvas on which the log will be placed.
+        // The canvas on which the source editor will be placed.
         let canvas = widget::Canvas::new()
             .scroll_kids()
             .pad(0.0)
