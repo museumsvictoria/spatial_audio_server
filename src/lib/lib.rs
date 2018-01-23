@@ -97,13 +97,15 @@ fn model(app: &App) -> Model {
         composer::spawn(audio_output_stream.clone(), sound_id_gen.clone());
 
     // Initalise the GUI model.
-    let gui_channels = gui::Channels::new(osc_in_log_rx,
-                                          osc_out_log_rx,
-                                          osc_out_msg_tx,
-                                          interaction_rx,
-                                          composer_msg_tx.clone(),
-                                          audio_output_stream.clone(),
-                                          audio_monitor_rx);
+    let gui_channels = gui::Channels::new(
+        osc_in_log_rx,
+        osc_out_log_rx,
+        osc_out_msg_tx,
+        interaction_rx,
+        composer_msg_tx.clone(),
+        audio_output_stream.clone(),
+        audio_monitor_rx,
+    );
     let gui = gui::Model::new(&assets, config, app, window, gui_channels, sound_id_gen);
 
     Model {
