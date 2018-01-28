@@ -1,7 +1,6 @@
 use audio;
 use composer;
 use config::Config;
-use installation;
 use interaction::Interaction;
 use metres::Metres;
 use nannou;
@@ -279,7 +278,7 @@ impl Model {
         let Model {
             state: State {
                 installation_editor: InstallationEditor {
-                    address_map,
+                    computer_map,
                     ..
                 },
                 speaker_editor: SpeakerEditor {
@@ -299,7 +298,7 @@ impl Model {
         } = self;
 
         // Save the installation address map.
-        let installations_json_string = serde_json::to_string_pretty(&address_map)
+        let installations_json_string = serde_json::to_string_pretty(&computer_map)
             .expect("failed to serialize installation address map");
         safe_file_save(&installations_path(&assets), &installations_json_string)
             .expect("failed to save installations file");
@@ -338,39 +337,28 @@ impl State {
     /// threads.
     pub fn new(assets: &Path, config: Config, channels: &Channels) -> Self {
 
-        // Load the address map from file.
-        let address_map = File::open(&installations_path(assets))
-            .ok()
-            .and_then(|f| serde_json::from_reader(f).ok())
-            .unwrap_or_else(|| {
-                installation::ALL
-                    .iter()
-                    .map(|&inst| {
-                        let addr = installation_editor::Address {
-                            socket: "127.0.0.1:9002".parse().unwrap(),
-                            osc_addr: inst.default_osc_addr_str().into(),
-                        };
-                        (inst, addr)
-                    })
-                    .collect::<installation_editor::AddressMap>()
-            });
+        // Load the stored isntallation editor state.
+        let computer_map = installation_editor::load_computer_map(&installations_path(assets));
 
         // Send the loaded OSC installation targets to the osc output thread.
-        for (&inst, addr) in &address_map {
-            let osc_tx = nannou::osc::sender()
-                .expect("failed to create OSC sender")
-                .connect(&addr.socket)
-                .expect("failed to connect OSC sender");
-            let add = osc::output::OscTarget::Add(inst, osc_tx, addr.osc_addr.clone());
-            let msg = osc::output::Message::Osc(add);
-            channels.osc_out_msg_tx.send(msg)
-                .expect("failed to send loaded OSC target");
+        for (&inst, computers) in &computer_map {
+            for (&computer, addr) in computers {
+                let osc_tx = nannou::osc::sender()
+                    .expect("failed to create OSC sender")
+                    .connect(&addr.socket)
+                    .expect("failed to connect OSC sender");
+                let osc_addr = addr.osc_addr.clone();
+                let add = osc::output::OscTarget::Add(inst, computer, osc_tx, osc_addr);
+                let msg = osc::output::Message::Osc(add);
+                channels.osc_out_msg_tx.send(msg)
+                    .expect("failed to send loaded OSC target");
+            }
         }
 
         let installation_editor = InstallationEditor {
             is_open: false,
             selected: None,
-            address_map,
+            computer_map,
         };
 
         // Load the existing speaker layout configuration if there is one.
@@ -786,6 +774,10 @@ widget_ids! {
         installation_editor,
         installation_editor_list,
         installation_editor_selected_canvas,
+        installation_editor_computer_canvas,
+        installation_editor_computer_text,
+        installation_editor_computer_number,
+        installation_editor_computer_list,
         installation_editor_osc_canvas,
         installation_editor_osc_text,
         installation_editor_osc_ip_text_box,

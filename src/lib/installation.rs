@@ -18,6 +18,11 @@ pub enum Installation {
     WrappedInSpectrum = 6,
 }
 
+/// A unique identifier for a single computer within an installation.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Deserialize, Serialize)]
+pub struct ComputerId(pub usize);
+
 impl Installation {
     pub fn display_str(&self) -> &str {
         match *self {
@@ -45,6 +50,18 @@ impl Installation {
 
     pub fn from_usize(i: usize) -> Option<Self> {
         ALL.get(i).map(|&i| i)
+    }
+
+    pub fn default_num_computers(&self) -> usize {
+        match *self {
+            Installation::WavesAtWork => 1,
+            Installation::RipplesInSpacetime => 4,
+            Installation::EnergeticVibrationsAudioVisualiser => 1,
+            Installation::EnergeticVibrationsProjectionMapping => 3,
+            Installation::TurbulentEncounters => 1,
+            Installation::Cacophony => 1,
+            Installation::WrappedInSpectrum => 2,
+        }
     }
 }
 
