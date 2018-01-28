@@ -1,5 +1,5 @@
 use gui;
-use installation::Installation;
+use installation::{self, Installation};
 use metres::Metres;
 use nannou;
 use nannou::audio::Buffer;
@@ -121,7 +121,10 @@ impl Model {
         let exhausted_sounds = Vec::with_capacity(128);
 
         // A map from installations to audio analysis frames that can be re-used.
-        let installation_analyses = HashMap::with_capacity(64);
+        let installation_analyses = installation::ALL
+            .iter()
+            .map(|&inst| (inst, Vec::with_capacity(MAX_CHANNELS)))
+            .collect();
 
         // A buffer to re-use for DBAP speaker calculations.
         let dbap_speakers = Vec::with_capacity(MAX_CHANNELS);
@@ -150,10 +153,6 @@ impl Model {
             Some(ActiveSpeaker { speaker, detector }) => (detector, Some(speaker)),
         };
 
-        // TODO: Update `installation_analyses` if speaker's installation is new.
-        let installation = Installation::Cacophony;
-        self.installation_analyses.entry(installation).or_insert_with(Vec::new);
-
         let speaker = ActiveSpeaker { speaker, detector };
         let speaker_msg = gui::SpeakerMessage::Add;
         let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
@@ -173,10 +172,21 @@ impl Model {
         removed.map(|ActiveSpeaker { speaker, .. }| speaker)
     }
 
-    // /// Mutable access to the speaker at the given Id.
-    // pub fn speaker_mut(&mut self, id: &speaker::Id) -> Option<&mut Speaker> {
-    //     self.speakers.get_mut(id).map(|active| &mut active.speaker)
-    // }
+    /// Inserts the installation into the speaker with the given `speaker::Id`.
+    pub fn insert_speaker_installation(&mut self, id: speaker::Id, inst: Installation) -> bool {
+        self.speakers
+            .get_mut(&id)
+            .map(|active| active.speaker.installations.insert(inst))
+            .unwrap_or(false)
+    }
+
+    /// Removes the installation from the speaker with the given `speaker::Id`.
+    pub fn remove_speaker_installation(&mut self, id: speaker::Id, inst: &Installation) -> bool {
+        self.speakers
+            .get_mut(&id)
+            .map(|active| active.speaker.installations.remove(inst))
+            .unwrap_or(false)
+    }
 
     /// Inserts the sound and sends an `Start` active sound message to the GUI.
     pub fn insert_sound(&mut self, id: sound::Id, sound: ActiveSound) -> Option<ActiveSound> {
@@ -323,10 +333,11 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             gui_audio_monitor_msg_tx.try_send(msg).ok();
 
             // Sum the rms and peak.
-            // TODO: Get installation associated with speaker.
-            let installation = Installation::Cacophony;
-            //let installation = active.speaker.installation;
-            if let Some(speakers) = installation_analyses.get_mut(&installation) {
+            for installation in &active.speaker.installations {
+                let speakers = match installation_analyses.get_mut(&installation) {
+                    None => continue,
+                    Some(speakers) => speakers,
+                };
                 sum_peak += peak;
                 sum_rms += rms;
                 let analysis = SpeakerAnalysis { peak, rms, index: channel_i };
@@ -336,20 +347,19 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
         // Send the collected analysis to the OSC output thread.
         for (&installation, speakers) in installation_analyses.iter_mut() {
-            speakers.sort_by(|a, b| a.index.cmp(&b.index));
-            {
-                let avg_peak = sum_peak / speakers.len() as f32;
-                let avg_rms = sum_rms / speakers.len() as f32;
-                let avg_fft = osc::output::FftData { lmh: [0.0; 3], bins: [0.0; 8] };
-                let speakers = speakers.iter()
-                    .map(|s| osc::output::Speaker { rms: s.rms, peak: s.peak })
-                    .collect();
-                let data = osc::output::AudioFrameData { avg_peak, avg_rms, avg_fft, speakers };
-                let msg = osc::output::Message::Audio(installation, data);
-                osc_output_msg_tx.send(msg).ok();
+            if speakers.is_empty() {
+                continue;
             }
-            // Clear the speakers for the next loop.
-            speakers.clear();
+            speakers.sort_by(|a, b| a.index.cmp(&b.index));
+            let avg_peak = sum_peak / speakers.len() as f32;
+            let avg_rms = sum_rms / speakers.len() as f32;
+            let avg_fft = osc::output::FftData { lmh: [0.0; 3], bins: [0.0; 8] };
+            let speakers = speakers.drain(..)
+                .map(|s| osc::output::Speaker { rms: s.rms, peak: s.peak })
+                .collect();
+            let data = osc::output::AudioFrameData { avg_peak, avg_rms, avg_fft, speakers };
+            let msg = osc::output::Message::Audio(installation, data);
+            osc_output_msg_tx.send(msg).ok();
         }
 
         // Remove all sounds that have been exhausted.
