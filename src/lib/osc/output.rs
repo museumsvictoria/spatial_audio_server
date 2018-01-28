@@ -1,4 +1,4 @@
-use installation::Installation;
+use installation::{ComputerId, Installation};
 use nannou::osc;
 use nannou::osc::Type::{Int, Float};
 use std;
@@ -14,8 +14,8 @@ pub enum Message {
 
 /// Add or remove an OSC target for a given installation.
 pub enum OscTarget {
-    Add(Installation, osc::Sender<osc::Connected>, String),
-    Remove(Installation),
+    Add(Installation, ComputerId, osc::Sender<osc::Connected>, String),
+    Remove(Installation, ComputerId),
 }
 
 /// Data related to a single frame of audio.
@@ -46,6 +46,7 @@ pub struct Speaker {
 #[derive(Debug)]
 pub struct Log {
     pub installation: Installation,
+    pub computer: ComputerId,
     pub addr: std::net::SocketAddr,
     pub msg: osc::Message,
     pub error: Option<osc::CommunicationError>,
@@ -76,7 +77,9 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
         SendOsc,
     }
 
-    let mut osc_txs: HashMap<Installation, Target> = HashMap::new();
+    // Each installation gets its own map of ComputerId -> Target.
+    type TargetMap = HashMap<ComputerId, Target>;
+    let mut osc_txs: HashMap<Installation, TargetMap> = HashMap::new();
 
     // Update channel.
     let (update_tx, update_rx) = mpsc::channel();
@@ -123,20 +126,24 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
                 },
                 // Some OSC target should be added or removed.
                 Message::Osc(osc) => match osc {
-                    OscTarget::Add(installation, osc_tx, osc_addr) => {
-                        osc_txs.insert(installation, Target { osc_tx, osc_addr });
+                    OscTarget::Add(installation, computer, osc_tx, osc_addr) => {
+                        osc_txs
+                            .entry(installation)
+                            .or_insert_with(HashMap::default)
+                            .insert(computer, Target { osc_tx, osc_addr });
                     },
-                    OscTarget::Remove(installation) => {
-                        osc_txs.remove(&installation);
+                    OscTarget::Remove(installation, computer) => {
+                        if let Some(txs) = osc_txs.get_mut(&installation) {
+                            txs.remove(&computer);
+                        }
                     },
                 },
             },
             Update::SendOsc => for (installation, data) in last_received.drain() {
                 let AudioFrameData { avg_peak, avg_rms, avg_fft, speakers } = data;
 
-                // Retrieve the OSC sender for this installation.
-                let (osc_tx, addr) = match osc_txs.get(&installation) {
-                    Some(&Target { ref osc_tx, ref osc_addr }) => (osc_tx, &osc_addr[..]),
+                let targets = match osc_txs.get(&installation) {
+                    Some(targets) => targets,
                     None => continue,
                 };
 
@@ -161,27 +168,32 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
                     });
                 args.extend(speakers);
 
-                // Send the message!
-                let msg = osc::Message { addr: addr.into(), args: Some(args) };
+                // Retrieve the OSC sender for each computer in the installation.
+                for (&computer, &Target { ref osc_tx, ref osc_addr }) in targets.iter() {
+                    let addr = &osc_addr[..];
 
-                // If the message is the same as the last one we sent for this installation, don't
-                // bother sending it again.
-                if last_sent.get(&installation) == Some(&msg) {
-                    continue;
+                    // Send the message!
+                    let msg = osc::Message { addr: addr.into(), args: Some(args.clone()) };
+
+                    // If the message is the same as the last one we sent for this computer, don't
+                    // bother sending it again.
+                    if last_sent.get(&(installation, computer)) == Some(&msg) {
+                        continue;
+                    }
+
+                    // Send the OSC.
+                    let error = osc_tx.send(msg.clone()).err();
+
+                    // Update the `last_sent` map if there were no errors.
+                    if error.is_none() {
+                        last_sent.insert((installation, computer), msg.clone());
+                    }
+
+                    // Log the message for displaying in the GUI.
+                    let addr = osc_tx.remote_addr();
+                    let mut log = Log { installation, computer, addr, msg, error };
+                    log_tx.send(log).ok();
                 }
-
-                // Send the OSC.
-                let error = osc_tx.send(msg.clone()).err();
-
-                // Update the `last_sent` map if there were no errors.
-                if error.is_none() {
-                    last_sent.insert(installation, msg.clone());
-                }
-
-                // Log the meessage for displaying in the GUI.
-                let addr = osc_tx.remote_addr();
-                let mut log = Log { installation, addr, msg, error };
-                log_tx.send(log).ok();
             },
         }
     }
