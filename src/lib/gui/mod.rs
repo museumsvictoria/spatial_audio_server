@@ -793,6 +793,11 @@ widget_ids! {
         speaker_editor_selected_name,
         speaker_editor_selected_channel,
         speaker_editor_selected_position,
+        speaker_editor_selected_installations_canvas,
+        speaker_editor_selected_installations_text,
+        speaker_editor_selected_installations_ddl,
+        speaker_editor_selected_installations_list,
+        speaker_editor_selected_installations_remove,
         // Audio Sources.
         source_editor,
         source_editor_no_sources,

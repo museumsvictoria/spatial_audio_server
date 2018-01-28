@@ -7,7 +7,10 @@
           "x": 18.43515199768545,
           "y": 30.083772895727085
         },
-        "channel": 0
+        "channel": 0,
+        "installations": [
+          "Cacophony"
+        ]
       },
       "name": "S_ch1",
       "id": 0
@@ -18,7 +21,10 @@
           "x": 22.569953163477444,
           "y": 30.105695401800305
         },
-        "channel": 1
+        "channel": 1,
+        "installations": [
+          "Cacophony"
+        ]
       },
       "name": "S_ch2",
       "id": 1
@@ -29,7 +35,10 @@
           "x": 15.907828217771624,
           "y": 27.683100271911113
         },
-        "channel": 2
+        "channel": 2,
+        "installations": [
+          "Cacophony"
+        ]
       },
       "name": "S_ch3",
       "id": 2
@@ -40,7 +49,10 @@
           "x": 25.44432905384432,
           "y": 27.47104908095091
         },
-        "channel": 3
+        "channel": 3,
+        "installations": [
+          "Cacophony"
+        ]
       },
       "name": "S_ch4",
       "id": 3
@@ -51,7 +63,10 @@
           "x": 15.612026208874444,
           "y": 22.457726798498844
         },
-        "channel": 4
+        "channel": 4,
+        "installations": [
+          "Cacophony"
+        ]
       },
       "name": "S_ch5",
       "id": 4
@@ -62,7 +77,10 @@
           "x": 25.457377927325333,
           "y": 22.467120628008684
         },
-        "channel": 5
+        "channel": 5,
+        "installations": [
+          "Cacophony"
+        ]
       },
       "name": "S_ch6",
       "id": 5
@@ -73,7 +91,8 @@
           "x": 18.510194203151344,
           "y": 19.750314116379874
         },
-        "channel": 6
+        "channel": 6,
+        "installations": []
       },
       "name": "S_ch7",
       "id": 6
@@ -84,7 +103,8 @@
           "x": 22.45672076753277,
           "y": 19.68808640969627
         },
-        "channel": 7
+        "channel": 7,
+        "installations": []
       },
       "name": "S_ch8",
       "id": 7

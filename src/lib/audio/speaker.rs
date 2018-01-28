@@ -1,5 +1,7 @@
+use installation::Installation;
 use metres::Metres;
 use nannou::math::Point2;
+use std::collections::HashSet;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct Id(pub u64);
@@ -13,4 +15,7 @@ pub struct Speaker {
     pub point: Point2<Metres>,
     // The channel on which the output is rendered.
     pub channel: usize,
+    // Installations assigned to this speaker.
+    #[serde(default)]
+    pub installations: HashSet<Installation>,
 }
