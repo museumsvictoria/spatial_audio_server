@@ -9,9 +9,9 @@ pub enum Message {
     Exit,
 }
 
-/// Spawn the "soundscape" thread.
+/// Spawn the "composer" thread.
 ///
-/// The role of the soundscape thread is as follows:
+/// The role of the composer thread is as follows:
 ///
 /// 1. Compose `Sound`s from a stack of `Source` -> `[Effect]`.
 /// 2. Compose the path of travel through the space (including rotations for multi-channel sounds).
