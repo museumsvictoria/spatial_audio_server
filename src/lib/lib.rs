@@ -18,13 +18,13 @@ use std::sync::mpsc;
 use std::thread;
 
 mod audio;
-mod composer;
 mod config;
 mod gui;
 mod installation;
 mod interaction;
 mod metres;
 mod osc;
+mod soundscape;
 
 pub fn run() {
     nannou::app(model, update, draw).exit(exit).run();
@@ -35,7 +35,7 @@ pub fn run() {
 /// This is the state stored and updated on the main thread.
 struct Model {
     gui: gui::Model,
-    composer_msg_tx: mpsc::Sender<composer::Message>,
+    composer_msg_tx: mpsc::Sender<soundscape::Message>,
     composer_thread_handle: thread::JoinHandle<()>,
 }
 
@@ -94,7 +94,7 @@ fn model(app: &App) -> Model {
 
     // Spawn the composer thread.
     let (composer_thread_handle, composer_msg_tx) =
-        composer::spawn(audio_output_stream.clone(), sound_id_gen.clone());
+        soundscape::spawn(audio_output_stream.clone(), sound_id_gen.clone());
 
     // Initalise the GUI model.
     let gui_channels = gui::Channels::new(
@@ -154,7 +154,7 @@ fn exit(_app: &App, model: Model) {
     gui.exit();
 
     // Send exit signals to the audio and composer threads.
-    composer_msg_tx.send(composer::Message::Exit).unwrap();
+    composer_msg_tx.send(soundscape::Message::Exit).unwrap();
 
     // Wait for the composer thread to finish.
     composer_thread_handle.join().unwrap();

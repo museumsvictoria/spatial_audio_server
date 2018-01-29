@@ -1,5 +1,4 @@
 use audio;
-use composer;
 use config::Config;
 use interaction::Interaction;
 use metres::Metres;
@@ -12,6 +11,7 @@ use osc;
 use osc::input::Log as OscInputLog;
 use osc::output::Log as OscOutputLog;
 use serde_json;
+use soundscape;
 use std;
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
@@ -385,7 +385,7 @@ impl State {
 
         // Send the loaded sources to the composer thread.
         for source in &sources {
-            let msg = composer::Message::UpdateSource(source.id, source.audio.clone());
+            let msg = soundscape::Message::UpdateSource(source.id, source.audio.clone());
             channels.composer_msg_tx.send(msg).expect("composer_msg_tx was closed");
         }
 
@@ -436,7 +436,7 @@ pub struct Channels {
     pub osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
     pub osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
     pub interaction_rx: mpsc::Receiver<Interaction>,
-    pub composer_msg_tx: mpsc::Sender<composer::Message>,
+    pub composer_msg_tx: mpsc::Sender<soundscape::Message>,
     /// A handle for communicating with the audio output stream.
     pub audio: audio::OutputStream,
     pub audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
@@ -449,7 +449,7 @@ impl Channels {
         osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
         osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
         interaction_rx: mpsc::Receiver<Interaction>,
-        composer_msg_tx: mpsc::Sender<composer::Message>,
+        composer_msg_tx: mpsc::Sender<soundscape::Message>,
         audio: audio::OutputStream,
         audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
     ) -> Self
