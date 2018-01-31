@@ -46,7 +46,7 @@
           }
         },
         "role": "Soundscape",
-        "spread": 2.8282432556152345,
+        "spread": 1.1344339847564698,
         "radians": 0.0
       },
       "id": 0
@@ -80,10 +80,27 @@
           }
         },
         "role": "Scribbles",
-        "spread": 3.176348686218262,
+        "spread": 2.062016010284424,
         "radians": 0.0
       },
       "id": 2
+    },
+    {
+      "name": "Log Sine Sweep",
+      "audio": {
+        "kind": {
+          "Wav": {
+            "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Log Sine Sweep.wav",
+            "channels": 1,
+            "duration": 1016234,
+            "sample_hz": 44100.0
+          }
+        },
+        "role": null,
+        "spread": 2.5,
+        "radians": 0.0
+      },
+      "id": 6
     },
     {
       "name": "Mechanism - Clicks_Clock_001",
@@ -97,11 +114,11 @@
           }
         },
         "role": "Soundscape",
-        "spread": 2.714144229888916,
+        "spread": 2.0367722511291506,
         "radians": 0.0
       },
       "id": 4
     }
   ],
-  "next_id": 6
+  "next_id": 7
 }
