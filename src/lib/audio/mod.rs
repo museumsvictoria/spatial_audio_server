@@ -5,10 +5,12 @@ use nannou;
 use nannou::audio::Buffer;
 use nannou::math::{MetricSpace, Point2};
 use osc;
+use rustfft::num_complex::Complex;
+use rustfft::num_traits::Zero;
 use std;
 use std::collections::HashMap;
 use std::sync::mpsc;
-pub use self::detector::Detector;
+pub use self::detector::{FFT_WINDOW_LEN, FFT_BIN_STEP_HZ, EnvDetector, FftDetector, Fft};
 pub use self::sound::Sound;
 pub use self::source::Source;
 pub use self::speaker::Speaker;
@@ -16,6 +18,7 @@ pub use self::wav::Wav;
 
 pub mod dbap;
 pub mod detector;
+pub mod fft;
 pub mod sound;
 pub mod source;
 pub mod speaker;
@@ -45,19 +48,20 @@ pub type OutputStream = nannou::audio::stream::Output<Model>;
 /// A sound that is currently active on the audio thread.
 pub struct ActiveSound {
     sound: Sound,
-    channel_detectors: Box<[Detector]>,
+    channel_detectors: Box<[EnvDetector]>,
 }
 
 pub struct ActiveSpeaker {
     speaker: Speaker,
-    detector: Detector,
+    env_detector: EnvDetector,
+    fft_detector: FftDetector,
 }
 
 impl ActiveSound {
     /// Create a new `ActiveSound`.
     pub fn new(sound: Sound) -> Self {
         let channel_detectors = (0..sound.channels)
-            .map(|_| Detector::new())
+            .map(|_| EnvDetector::new())
             .collect::<Vec<_>>()
             .into_boxed_slice();
         ActiveSound { sound, channel_detectors }
@@ -100,6 +104,10 @@ pub struct Model {
     dbap_speakers: Vec<dbap::Speaker>,
     /// A buffer to re-use for storing the gain for each speaker produced by DBAP.
     dbap_speaker_gains: Vec<f32>,
+    /// The FFT to re-use by each of the `Detector`s.
+    fft: Fft,
+    /// A buffer for retrieving the frequency amplitudes from the `fft`.
+    fft_frequency_amplitudes_2: Box<[f32; FFT_WINDOW_LEN / 2]>,
 }
 
 impl Model {
@@ -132,6 +140,14 @@ impl Model {
         // A buffer to re-use for storing gains produced by DBAP.
         let dbap_speaker_gains = Vec::with_capacity(MAX_CHANNELS);
 
+        // The FFT to re-use by each of the `Detector`s.
+        let in_window = [Complex::<f32>::zero(); FFT_WINDOW_LEN];
+        let out_window = [Complex::<f32>::zero(); FFT_WINDOW_LEN];
+        let fft = Fft::new(in_window, out_window);
+
+        // A buffer for retrieving the frequency amplitudes from the `fft`.
+        let fft_frequency_amplitudes_2 = Box::new([0.0; FFT_WINDOW_LEN / 2]);
+
         Model {
             sounds,
             speakers,
@@ -142,18 +158,22 @@ impl Model {
             osc_output_msg_tx,
             dbap_speakers,
             dbap_speaker_gains,
+            fft,
+            fft_frequency_amplitudes_2,
         }
     }
 
     /// Inserts the speaker and sends an `Add` message to the GUI.
     pub fn insert_speaker(&mut self, id: speaker::Id, speaker: Speaker) -> Option<Speaker> {
-        // Re-use the old detector if there is one.
-        let (detector, old_speaker) = match self.speakers.remove(&id) {
-            None => (Detector::new(), None),
-            Some(ActiveSpeaker { speaker, detector }) => (detector, Some(speaker)),
+        // Re-use the old detectors if there are any.
+        let (env_detector, fft_detector ,old_speaker) = match self.speakers.remove(&id) {
+            None => (EnvDetector::new(), FftDetector::new(), None),
+            Some(ActiveSpeaker { speaker, env_detector, fft_detector }) => {
+                (env_detector, fft_detector, Some(speaker))
+            },
         };
 
-        let speaker = ActiveSpeaker { speaker, detector };
+        let speaker = ActiveSpeaker { speaker, env_detector, fft_detector };
         let speaker_msg = gui::SpeakerMessage::Add;
         let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
         self.gui_audio_monitor_msg_tx.try_send(msg).ok();
@@ -229,6 +249,8 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref mut dbap_speaker_gains,
             ref gui_audio_monitor_msg_tx,
             ref osc_output_msg_tx,
+            ref mut fft,
+            ref mut fft_frequency_amplitudes_2,
         } = model;
 
         // For each sound, request `buffer.len()` number of frames and sum them onto the
@@ -258,8 +280,8 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 }
 
                 // Send the latest RMS and peak for each channel to the GUI for monitoring.
-                for (index, detector) in channel_detectors.iter().enumerate() {
-                    let (rms, peak) = detector.current();
+                for (index, env_detector) in channel_detectors.iter().enumerate() {
+                    let (rms, peak) = env_detector.current();
                     let sound_msg = gui::ActiveSoundMessage::UpdateChannel { index, rms, peak };
                     let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
                     gui_audio_monitor_msg_tx.try_send(msg).ok();
@@ -310,22 +332,30 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             }
         }
 
-        // For each speaker, feed its amplitude into its detector.
+        // For each speaker, feed its amplitude into its detectors.
         let n_channels = buffer.channels();
         let mut sum_peak = 0.0;
         let mut sum_rms = 0.0;
+        let mut sum_lmh = [0.0; 3];
+        let mut sum_fft_8_band = [0.0; 8];
         for (&id, active) in speakers.iter_mut() {
             let mut channel_i = active.speaker.channel;
             if channel_i >= n_channels {
                 continue;
             }
-            let detector = &mut active.detector;
+            let ActiveSpeaker { ref mut env_detector, ref mut fft_detector, .. } = *active;
             for frame in buffer.frames() {
-                detector.next(frame[channel_i]);
+                let sample = frame[channel_i];
+                env_detector.next(sample);
+                fft_detector.push(sample);
             }
 
-            // The current detector state.
-            let (rms, peak) = detector.current();
+            // The current env and fft detector states.
+            let (rms, peak) = env_detector.current();
+            fft_detector.calc_fft(fft, &mut fft_frequency_amplitudes_2[..]);
+            let (l_2, m_2, h_2) = fft::lmh(&fft_frequency_amplitudes_2[..]);
+            let mut fft_8_bins_2 = [0.0; 8];
+            fft::mel_bins(&fft_frequency_amplitudes_2[..], &mut fft_8_bins_2);
 
             // Send the detector state for the speaker to the GUI.
             let speaker_msg = gui::SpeakerMessage::Update { rms, peak };
@@ -340,6 +370,12 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 };
                 sum_peak += peak;
                 sum_rms += rms;
+                for (sum, amp_2) in sum_lmh.iter_mut().zip(&[l_2, m_2, h_2]) {
+                    *sum += amp_2.sqrt() / (FFT_WINDOW_LEN / 2) as f32;
+                }
+                for (sum, amp_2) in sum_fft_8_band.iter_mut().zip(&fft_8_bins_2) {
+                    *sum += amp_2.sqrt() / (FFT_WINDOW_LEN / 2) as f32;
+                }
                 let analysis = SpeakerAnalysis { peak, rms, index: channel_i };
                 speakers.push(analysis);
             }
@@ -351,9 +387,15 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 continue;
             }
             speakers.sort_by(|a, b| a.index.cmp(&b.index));
-            let avg_peak = sum_peak / speakers.len() as f32;
-            let avg_rms = sum_rms / speakers.len() as f32;
-            let avg_fft = osc::output::FftData { lmh: [0.0; 3], bins: [0.0; 8] };
+            let len_f = speakers.len() as f32;
+            let avg_peak = sum_peak / len_f;
+            let avg_rms = sum_rms / len_f;
+            let avg_lmh = [sum_lmh[0] / len_f, sum_lmh[1] / len_f, sum_lmh[2] / len_f];
+            let mut avg_8_band = [0.0; 8];
+            for (avg, &sum) in avg_8_band.iter_mut().zip(&sum_fft_8_band) {
+                *avg = sum / len_f;
+            }
+            let avg_fft = osc::output::FftData { lmh: avg_lmh, bins: avg_8_band };
             let speakers = speakers.drain(..)
                 .map(|s| osc::output::Speaker { rms: s.rms, peak: s.peak })
                 .collect();

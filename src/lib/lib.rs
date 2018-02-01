@@ -4,9 +4,11 @@
 #[macro_use] extern crate conrod;
 #[macro_use] extern crate conrod_derive;
 #[macro_use] extern crate custom_derive;
+extern crate rustfft;
 extern crate hound; // wav loading
 #[macro_use] extern crate newtype_derive;
 extern crate nannou;
+extern crate pitch_calc;
 extern crate serde; // serialization
 #[macro_use] extern crate serde_derive;
 extern crate serde_json;
