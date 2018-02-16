@@ -2,15 +2,19 @@ use audio;
 use gui::{collapsible_area, Gui, State};
 use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE, DARK_A};
 use metres::Metres;
+use nannou;
 use nannou::prelude::*;
 use nannou::ui;
 use nannou::ui::prelude::*;
 use serde_json;
 use soundscape;
 use std;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs::File;
+use std::ops;
 use std::path::Path;
+use time_calc::Ms;
 
 pub struct SourceEditor {
     pub is_open: bool,
@@ -20,6 +24,14 @@ pub struct SourceEditor {
     // The next ID to be used for a new source.
     pub next_id: audio::source::Id,
     pub preview: SourcePreview,
+    pub realtime: RealtimeEditor,
+}
+
+pub struct RealtimeEditor {
+    // Devices from which a stream can be spawned.
+    pub available_input_devices: AvailableInputDevices,
+    // A handle to the stream for each device.
+    pub device_streams: DeviceStreams,
 }
 
 pub struct SourcePreview {
@@ -44,10 +56,39 @@ pub struct Source {
 // A data structure from which sources can be saved/loaded.
 #[derive(Deserialize, Serialize)]
 pub struct StoredSources {
-    #[serde(default = "Vec::new")]
+    // The name of each device that was active upon close and the sources assigned to it.
+    #[serde(default)]
+    pub devices: HashMap<String, HashSet<audio::source::Id>>,
+    #[serde(default)]
     pub sources: Vec<Source>,
     #[serde(default = "first_source_id")]
     pub next_id: audio::source::Id,
+}
+
+/// Contains all currently input devices that were available last time `refresh` was called.
+pub struct AvailableInputDevices {
+    default_input_device_name: Option<String>,
+    devices: Vec<InputDevice>,
+}
+
+/// The input stream for each device, keyed via device name.
+pub struct DeviceStreams {
+    pub map: HashMap<String, DeviceStream>,
+}
+
+/// Each of the real-time sources that currently exist on a input audio device's stream.
+pub struct DeviceStream {
+    /// A handle to the stream
+    pub stream: audio::input::Stream,
+    pub sources: HashSet<audio::source::Id>,
+}
+
+/// An input device along with its name.
+///
+/// The name is stored alongside the device to avoid having to call into the ffi.
+pub struct InputDevice {
+    device: nannou::audio::Device,
+    name: String,
 }
 
 pub fn first_source_id() -> audio::source::Id {
@@ -58,11 +99,21 @@ const SOUNDSCAPE_COLOR: ui::Color = ui::color::DARK_RED;
 const INSTALLATION_COLOR: ui::Color = ui::color::DARK_GREEN;
 const SCRIBBLES_COLOR: ui::Color = ui::color::DARK_PURPLE;
 
+impl SourceEditor {
+    // Returns the next unique source editor.
+    fn next_id(&mut self) -> audio::source::Id {
+        let next_id = self.next_id;
+        self.next_id = audio::source::Id(self.next_id.0.wrapping_add(1));
+        next_id
+    }
+}
+
 impl StoredSources {
     fn new() -> Self {
         StoredSources {
-            next_id: audio::source::Id::INITIAL,
+            devices: HashMap::new(),
             sources: Vec::new(),
+            next_id: audio::source::Id::INITIAL,
         }
     }
 
@@ -77,6 +128,32 @@ impl StoredSources {
             .ok()
             .and_then(|f| serde_json::from_reader(f).ok())
             .unwrap_or_else(StoredSources::new);
+
+        // Check the validity of the WAV source paths.
+        //
+        // If a path is invalid, check to see if it exists within the given `audio_path`. If so,
+        // update the source path. Otherwise, remove it.
+        for i in (0..stored.sources.len()).rev() {
+            if let audio::source::Kind::Wav(ref mut wav) = stored.sources[i].audio.kind {
+                // If the path is valid, continue.
+                if wav.path.exists() {
+                    continue;
+                }
+
+                // Otherwise check to see if the file is in the audio path.
+                let potential_path = match wav.path.file_name() {
+                    None => continue,
+                    Some(name) => audio_path.join(name),
+                };
+                if potential_path.exists() {
+                    wav.path = potential_path;
+                    continue;
+                }
+            }
+
+            // If no valid path was found, remove the source as we can't play it.
+            stored.sources.remove(i);
+        }
 
         // If there are any WAVs in `assets/audio/` that we have not yet listed, load them.
         if audio_path.exists() && audio_path.is_dir() {
@@ -138,7 +215,36 @@ impl StoredSources {
     }
 }
 
-pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
+impl AvailableInputDevices {
+    /// Initialise an empty `AvailableInputDevices` struct.
+    ///
+    /// Call `refresh()` to refresh the list of availble devices.
+    pub fn new() -> Self {
+        AvailableInputDevices {
+            default_input_device_name: None,
+            devices: vec![],
+        }
+    }
+
+    /// Refresh the list of available devices.
+    ///
+    /// We only do this when the relevant part of the UI is viewable or interacted with to avoid
+    /// making lots of calls through the cpal FFI which may or may not be expensive.
+    pub fn refresh(&mut self, app: &App) {
+        self.default_input_device_name = app.audio
+            .default_input_device()
+            .map(|device| device.name());
+        self.devices = app.audio
+            .input_devices()
+            .map(|device| {
+                let name = device.name();
+                InputDevice { device, name }
+            })
+            .collect();
+    }
+}
+
+pub fn set(app: &App, last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     let is_open = gui.state.source_editor.is_open;
     const LIST_HEIGHT: Scalar = 140.0;
     const PAD: Scalar = 6.0;
@@ -210,7 +316,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                                 (format!("[{}CH WAV] {}", wav.channels, source.name), true)
                             },
                             audio::source::Kind::Realtime(ref rt) => {
-                                (format!("[{}CH RT] {}", rt.channels, source.name), false)
+                                (format!("[{:?}CH RT] {}", rt.channels, source.name), false)
                             },
                         }
                     };
@@ -308,6 +414,63 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         .align_right_of(area.id)
         .set(gui.ids.source_editor_add_realtime, gui)
         .was_clicked();
+
+    // Add a new realtime source.
+    if new_realtime {
+        // Refresh the list of available input devices.
+        gui.state.source_editor.realtime.available_input_devices.refresh(app);
+
+        // Create the Realtime.
+        const DEFAULT_CHANNELS: ops::Range<usize> = 0..1;
+        const DEFAULT_DURATION: Ms = Ms(3_000.0);
+        let channels = DEFAULT_CHANNELS;
+        let duration = DEFAULT_DURATION;
+        let realtime = audio::source::Realtime { channels, duration };
+
+        // Create the Source.
+        let id = gui.state.source_editor.next_id();
+        let name = format!("Source {}", id.0);
+        let kind = audio::source::Kind::Realtime(realtime);
+        let role = Default::default();
+        let spread = audio::source::default_spread();
+        let radians = Default::default();
+        let audio = audio::Source { kind, role, spread, radians };
+        let source = Source { id, name, audio };
+
+        // Insert the source into the map.
+        gui.state.source_editor.sources.push(source);
+
+        // let id = gui.state.speaker_editor.next_id;
+        // let name = format!("S{}", id.0);
+        // let channel = {
+        //     // Search for the next available channel starting from 0.
+        //     //
+        //     // Note: This is a super naiive way of searching however there should never
+        //     // be enough speakers to make it a problem.
+        //     let mut channel = 0;
+        //     'search: loop {
+        //         for speaker in &gui.state.speaker_editor.speakers {
+        //             if channel == speaker.audio.channel.load(atomic::Ordering::Relaxed) {
+        //                 channel += 1;
+        //                 continue 'search;
+        //             }
+        //         }
+        //         break channel;
+        //     }
+        // };
+        // let audio = Arc::new(audio::Speaker {
+        //     point: Atomic::new(gui.state.camera.position),
+        //     channel: AtomicUsize::new(channel),
+        // });
+        // let speaker = Speaker { id, name, audio };
+
+        // gui.state.speaker_editor.audio_msg_tx
+        //     .send(audio::Message::AddSpeaker(speaker.id, speaker.audio.clone()))
+        //     .expect("audio_msg_tx was closed");
+        // gui.state.speaker_editor.speakers.push(speaker);
+        // gui.state.speaker_editor.next_id = audio::speaker::Id(id.0.wrapping_add(1));
+        // gui.state.speaker_editor.selected = Some(gui.state.speaker_editor.speakers.len() - 1);
+    }
 
     if new_wav || new_realtime {
         // let id = gui.state.speaker_editor.next_id;
@@ -642,8 +805,25 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
             (ids.source_editor_selected_wav_canvas, wav.channels)
         },
-        audio::source::Kind::Realtime(ref _realtime) => {
-            unreachable!();
+        audio::source::Kind::Realtime(ref realtime) => {
+
+            // Instantiate a small canvas for displaying wav-specific stuff.
+            widget::Canvas::new()
+                .down_from(ids.source_editor_preview_canvas, PAD)
+                .parent(ids.source_editor_selected_canvas)
+                .w(selected_canvas_kid_area.w())
+                .color(color::CHARCOAL)
+                .h(WAV_CANVAS_H) // TODO: change
+                .pad(PAD)
+                .set(ids.source_editor_selected_realtime_canvas, ui);
+
+            // Display the immutable WAV data.
+            widget::Text::new("REALTIME DATA")
+                .font_size(SMALL_FONT_SIZE)
+                .top_left_of(ids.source_editor_selected_realtime_canvas)
+                .set(ids.source_editor_selected_realtime_text, ui);
+
+            (ids.source_editor_selected_realtime_canvas, realtime.channels.len())
         },
     };
 

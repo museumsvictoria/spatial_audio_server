@@ -18,7 +18,7 @@ pub enum Message {
 /// 3. Send the `Sound`s to the audio thread and accompanying monitoring stuff to the GUI thread
 ///    (for tracking positions, RMS, etc).
 pub fn spawn(
-    audio_output_stream: audio::OutputStream,
+    audio_output_stream: audio::output::Stream,
     sound_id_gen: audio::sound::IdGenerator,
 ) -> (std::thread::JoinHandle<()>, mpsc::Sender<Message>) {
     let (tx, rx) = mpsc::channel();
@@ -33,7 +33,7 @@ pub fn spawn(
 
 fn run(
     msg_rx: mpsc::Receiver<Message>,
-    _audio_output_stream: audio::OutputStream,
+    _audio_output_stream: audio::output::Stream,
     _sound_id_gen: audio::sound::IdGenerator,
 ) {
     // A map for storing all audio sources.

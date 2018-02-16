@@ -133,7 +133,7 @@ impl Model {
         let images = Images { floorplan };
 
         // Initialise the GUI state.
-        let state = State::new(assets, config, &channels);
+        let state = State::new(app, assets, config, &channels);
 
         // Initialise the audio monitor.
         let active_sounds = HashMap::new();
@@ -157,7 +157,7 @@ impl Model {
     ///
     /// - Collect pending OSC and interaction messages for the logs.
     /// - Instantiate the Ui's widgets.
-    pub fn update(&mut self) {
+    pub fn update(&mut self, app: &App) {
         let Model {
             ref mut ui,
             ref mut ids,
@@ -237,7 +237,7 @@ impl Model {
 
         let ui = ui.set_widgets();
         let mut gui = Gui { ui, ids, images, fonts, state, channels, sound_id_gen, audio_monitor };
-        set_widgets(&mut gui);
+        set_widgets(app, &mut gui);
     }
 
     /// Save the speaker configuration and audio sources on exit.
@@ -289,6 +289,10 @@ impl Model {
                 source_editor: SourceEditor {
                     sources,
                     next_id: next_source_id,
+                    realtime: source_editor::RealtimeEditor {
+                        device_streams,
+                        ..
+                    },
                     ..
                 },
                 ..
@@ -316,7 +320,10 @@ impl Model {
         // Save the list of audio sources.
         let sources_json_string = {
             let next_id = next_source_id;
-            let stored_sources = StoredSources { sources, next_id };
+            let devices = device_streams.map.into_iter()
+                .map(|(name, device_stream)| (name, device_stream.sources))
+                .collect();
+            let stored_sources = StoredSources { devices, sources, next_id };
             serde_json::to_string_pretty(&stored_sources)
                 .expect("failed to serialize sources")
         };
@@ -335,7 +342,7 @@ impl Model {
 impl State {
     /// Initialise the `State` and send any loaded speakers and sources to the audio and composer
     /// threads.
-    pub fn new(assets: &Path, config: Config, channels: &Channels) -> Self {
+    pub fn new(app: &App, assets: &Path, config: Config, channels: &Channels) -> Self {
 
         // Load the stored isntallation editor state.
         let computer_map = installation_editor::load_computer_map(&installations_path(assets));
@@ -381,7 +388,61 @@ impl State {
 
         // Load the existing sound sources if there are some.
         let audio_path = assets.join(Path::new(AUDIO_DIRECTORY_NAME));
-        let StoredSources { sources, next_id } = StoredSources::load(&sources_path(assets), &audio_path);
+        let stored_sources = StoredSources::load(&sources_path(assets), &audio_path);
+        let StoredSources { devices, sources, next_id } = stored_sources;
+
+        // Build the device_streams from the serialized device names.
+        //
+        // Only store those that we can find now.
+        let device_stream_map = devices.into_iter()
+            .filter_map(|(device_name, sources)| {
+                // Attempt to find the device with this name.
+                let maybe_device = app.audio.input_devices().find(|d| d.name() == device_name);
+                let device = match maybe_device {
+                    Some(device) => device,
+                    // TODO: If no device was found...
+                    None => {
+                        return None;
+                    },
+                };
+
+                // Create the model for the device input stream.
+                let model = audio::input::Model::new();
+
+                // Spawn the input stream.
+                let maybe_stream = app.audio.new_input_stream(model, audio::input::capture)
+                    .sample_rate(audio::SAMPLE_RATE as u32)
+                    .frames_per_buffer(audio::FRAMES_PER_BUFFER)
+                    .channels(device.max_supported_input_channels())
+                    .device(device)
+                    .build();
+                let stream = match maybe_stream {
+                    Ok(stream) => stream,
+                    // TODO: If failed to spawn the stream....
+                    Err(err) => {
+                        eprintln!(
+                            "Failed to spawn \"{}\" input stream: {:?}: {}",
+                            device_name,
+                            err,
+                            err,
+                        );
+                        return None;
+                    },
+                };
+
+                // Create the device stream handle.
+                let device_stream = source_editor::DeviceStream {
+                    stream: stream,
+                    sources: sources,
+                };
+
+                // Add it to the map.
+                Some((device_name, device_stream))
+            })
+            .collect();
+        let device_streams = source_editor::DeviceStreams {
+            map: device_stream_map,
+        };
 
         // Send the loaded sources to the composer thread.
         for source in &sources {
@@ -394,12 +455,22 @@ impl State {
             point: None,
         };
 
+        // Retrieve all currently available input devices.
+        let mut available_input_devices = source_editor::AvailableInputDevices::new();
+        available_input_devices.refresh(app);
+
+        let realtime = source_editor::RealtimeEditor {
+            available_input_devices,
+            device_streams,
+        };
+
         let source_editor = SourceEditor {
             is_open: false,
             selected: None,
             next_id,
             sources,
             preview,
+            realtime,
         };
 
         let camera = Camera {
@@ -438,7 +509,7 @@ pub struct Channels {
     pub interaction_rx: mpsc::Receiver<Interaction>,
     pub composer_msg_tx: mpsc::Sender<soundscape::Message>,
     /// A handle for communicating with the audio output stream.
-    pub audio: audio::OutputStream,
+    pub audio: audio::output::Stream,
     pub audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
 }
 
@@ -450,7 +521,7 @@ impl Channels {
         osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
         interaction_rx: mpsc::Receiver<Interaction>,
         composer_msg_tx: mpsc::Sender<soundscape::Message>,
-        audio: audio::OutputStream,
+        audio: audio::output::Stream,
         audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
     ) -> Self
     {
@@ -812,6 +883,9 @@ widget_ids! {
         source_editor_selected_wav_canvas,
         source_editor_selected_wav_text,
         source_editor_selected_wav_data,
+        source_editor_selected_realtime_canvas,
+        source_editor_selected_realtime_text,
+        source_editor_selected_realtime_data,
         source_editor_selected_channel_layout_canvas,
         source_editor_selected_channel_layout_text,
         source_editor_selected_channel_layout_spread,
@@ -855,7 +929,7 @@ pub const SMALL_FONT_SIZE: FontSize = 12;
 pub const DARK_A: ui::Color = ui::Color::Rgba(0.1, 0.13, 0.15, 1.0);
 
 // Set the widgets in the side menu.
-fn set_side_menu_widgets(gui: &mut Gui) {
+fn set_side_menu_widgets(app: &App, gui: &mut Gui) {
     // Installation Editor - for editing installation-specific data.
     let last_area_id = installation_editor::set(gui);
 
@@ -863,7 +937,7 @@ fn set_side_menu_widgets(gui: &mut Gui) {
     let last_area_id = speaker_editor::set(last_area_id, gui);
 
     // For adding, changing and removing audio sources.
-    let last_area_id = source_editor::set(last_area_id, gui);
+    let last_area_id = source_editor::set(app, last_area_id, gui);
 
     // The log of received OSC messages.
     let last_area_id = osc_in_log::set(last_area_id, gui);
@@ -876,7 +950,7 @@ fn set_side_menu_widgets(gui: &mut Gui) {
 }
 
 // Update all widgets in the GUI with the given state.
-fn set_widgets(gui: &mut Gui) {
+fn set_widgets(app: &App, gui: &mut Gui) {
     let background_color = color::WHITE;
 
     // The background for the main `UI` window.
@@ -954,7 +1028,7 @@ fn set_widgets(gui: &mut Gui) {
 
     // If the side_menu is open, set all the side_menu widgets.
     if side_menu_is_open {
-        set_side_menu_widgets(gui);
+        set_side_menu_widgets(app, gui);
 
         // Set the scrollbar for the side menu.
         widget::Scrollbar::y_axis(gui.ids.side_menu)
@@ -1256,7 +1330,7 @@ fn set_widgets(gui: &mut Gui) {
             for channel in 0..channel_count {
                 let rad = channel_radians as f32;
                 let channel_point_m =
-                    audio::channel_point(position, channel, channel_count, spread_m, rad);
+                    audio::output::channel_point(position, channel, channel_count, spread_m, rad);
                 let (ch_x, ch_y) = position_metres_to_gui(channel_point_m, &state.camera);
                 let channel_amp = channel_amplitudes[channel];
                 let speakers = &state.speaker_editor.speakers;
@@ -1283,7 +1357,7 @@ fn set_widgets(gui: &mut Gui) {
                     let gains = audio::dbap::SpeakerGains::new(&dbap_speakers, audio::ROLLOFF_DB);
                     in_proximity.clear();
                     for (i, gain) in gains.enumerate() {
-                        if audio::speaker_is_in_proximity(point, &speakers[i].audio.point) {
+                        if audio::output::speaker_is_in_proximity(point, &speakers[i].audio.point) {
                             in_proximity.push((gain as f32, i));
                         }
                     }

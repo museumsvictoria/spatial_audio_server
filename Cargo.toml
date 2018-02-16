@@ -12,7 +12,7 @@ name = "audio_server"
 path = "src/lib/lib.rs"
 
 [dependencies]
-conrod = { version = "0.57", features = ["winit", "glium"] }
+conrod = { version = "0.58", features = ["winit", "glium"] }
 conrod_derive = "0.1"
 custom_derive = "0.1"
 hound = "3.3"
@@ -25,3 +25,6 @@ serde_derive = "1.0"
 serde_json = "1.0"
 time_calc = { version = "0.13", features = ["serde"] }
 toml = "0.4"
+
+[replace]
+"nannou:0.2.0" = { path = "../../nannou" }

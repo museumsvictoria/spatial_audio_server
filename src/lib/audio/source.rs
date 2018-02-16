@@ -1,5 +1,6 @@
 use audio::Wav;
 use metres::Metres;
+use std::ops;
 use time_calc::Ms;
 
 /// Items related to audio sources.
@@ -29,7 +30,7 @@ impl Source {
     pub fn channel_count(&self) -> usize {
         match self.kind {
             Kind::Wav(ref wav) => wav.channels,
-            Kind::Realtime(ref rt) => rt.channels,
+            Kind::Realtime(ref rt) => rt.channels.len(),
         }
     }
 }
@@ -56,12 +57,12 @@ pub enum Kind {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Realtime {
-    pub channels: usize,
-    // Durationn for which the realtime input is played.
+    // Duration for which the realtime input is played.
     pub duration: Ms,
-    // Need some input type
+    // The number of channels blah (should be rannge).
+    pub channels: ops::Range<usize>,
 }
 
-fn default_spread() -> Metres {
+pub fn default_spread() -> Metres {
     Metres(2.5)
 }

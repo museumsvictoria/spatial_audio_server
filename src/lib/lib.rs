@@ -68,25 +68,20 @@ fn model(app: &App) -> Model {
     // Spawn the OSC output thread.
     let (_osc_out_thread_handle, osc_out_msg_tx, osc_out_log_rx) = osc::output::spawn();
 
-    // Get the default device and attempt to set it up with the target number of channels.
+    // Get the default output device and attempt to set it up with the target number of channels.
     let device = app.audio.default_output_device().unwrap();
-    let mut supported_channels = device
-        .supported_formats()
-        .unwrap()
-        .map(|fmt| fmt.channels.len());
-    let first_supported_channels = supported_channels.next().unwrap();
-    let supported_channels = supported_channels.fold(first_supported_channels, std::cmp::max);
+    let max_supported_channels = device.max_supported_output_channels();
 
     // A channel for sending active sound info from the audio thread to the GUI.
     let (audio_monitor_tx, audio_monitor_rx) = mpsc::sync_channel(1024);
 
     // Initialise the audio model and create the stream.
-    let audio_model = audio::Model::new(audio_monitor_tx, osc_out_msg_tx.clone());
+    let audio_model = audio::output::Model::new(audio_monitor_tx, osc_out_msg_tx.clone());
     let audio_output_stream = app.audio
-        .new_output_stream(audio_model, audio::render)
+        .new_output_stream(audio_model, audio::output::render)
         .sample_rate(audio::SAMPLE_RATE as u32)
         .frames_per_buffer(audio::FRAMES_PER_BUFFER)
-        .channels(std::cmp::min(supported_channels, audio::MAX_CHANNELS))
+        .channels(std::cmp::min(max_supported_channels, audio::MAX_CHANNELS))
         .build()
         .unwrap();
 
@@ -123,7 +118,7 @@ fn update(app: &App, mut model: Model, event: Event) -> Model {
         Event::WindowEvent { simple: Some(_event), .. } => {
         },
         Event::Update(_update) => {
-            model.gui.update();
+            model.gui.update(app);
 
             // If there are active sounds playing we should loop at a consistent rate for
             // visualisation. Otherwise, only update on interactions.
