@@ -1,4 +1,4 @@
-// Extend the macro recursion limit to allow for many widget IDs.
+// Extend the macro recursion limit to allow for many GUI widget IDs.
 #![recursion_limit="128"]
 
 #[macro_use] extern crate conrod;
@@ -37,7 +37,7 @@ pub fn run() {
 /// This is the state stored and updated on the main thread.
 struct Model {
     gui: gui::Model,
-    composer_msg_tx: mpsc::Sender<soundscape::Message>,
+    soundscape_msg_tx: mpsc::Sender<soundscape::Message>,
     composer_thread_handle: thread::JoinHandle<()>,
 }
 
@@ -68,25 +68,41 @@ fn model(app: &App) -> Model {
     // Spawn the OSC output thread.
     let (_osc_out_thread_handle, osc_out_msg_tx, osc_out_log_rx) = osc::output::spawn();
 
-    // Get the default device and attempt to set it up with the target number of channels.
-    let device = app.audio.default_output_device().unwrap();
-    let mut supported_channels = device
-        .supported_formats()
-        .unwrap()
-        .map(|fmt| fmt.channels.len());
-    let first_supported_channels = supported_channels.next().unwrap();
-    let supported_channels = supported_channels.fold(first_supported_channels, std::cmp::max);
-
     // A channel for sending active sound info from the audio thread to the GUI.
     let (audio_monitor_tx, audio_monitor_rx) = mpsc::sync_channel(1024);
 
-    // Initialise the audio model and create the stream.
-    let audio_model = audio::Model::new(audio_monitor_tx, osc_out_msg_tx.clone());
-    let audio_output_stream = app.audio
-        .new_output_stream(audio_model, audio::render)
+    // Initialise the audio input model and create the input stream.
+    let input_device = app.audio.default_input_device().unwrap();
+    let max_supported_input_channels = if cfg!(feature = "test_with_stereo") {
+        std::cmp::min(input_device.max_supported_input_channels(), 2)
+    } else {
+        input_device.max_supported_input_channels()
+    };
+    let max_supported_input_channels = std::cmp::min(max_supported_input_channels, 2);
+    let audio_input_model = audio::input::Model::new();
+    let audio_input_stream = app.audio
+        .new_input_stream(audio_input_model, audio::input::capture)
         .sample_rate(audio::SAMPLE_RATE as u32)
         .frames_per_buffer(audio::FRAMES_PER_BUFFER)
-        .channels(std::cmp::min(supported_channels, audio::MAX_CHANNELS))
+        .channels(max_supported_input_channels)
+        .device(input_device)
+        .build()
+        .unwrap();
+
+    // Initialise the audio output model and create the output stream.
+    let output_device = app.audio.default_output_device().unwrap();
+    let max_supported_output_channels = if cfg!(feature = "test_with_stereo") {
+        std::cmp::min(output_device.max_supported_output_channels(), 2)
+    } else {
+        output_device.max_supported_output_channels()
+    };
+    let audio_output_model = audio::output::Model::new(audio_monitor_tx, osc_out_msg_tx.clone());
+    let audio_output_stream = app.audio
+        .new_output_stream(audio_output_model, audio::output::render)
+        .sample_rate(audio::SAMPLE_RATE as u32)
+        .frames_per_buffer(audio::FRAMES_PER_BUFFER)
+        .channels(std::cmp::min(max_supported_output_channels, audio::MAX_CHANNELS))
+        .device(output_device)
         .build()
         .unwrap();
 
@@ -95,7 +111,7 @@ fn model(app: &App) -> Model {
     let sound_id_gen = audio::sound::IdGenerator::new();
 
     // Spawn the composer thread.
-    let (composer_thread_handle, composer_msg_tx) =
+    let (composer_thread_handle, soundscape_msg_tx) =
         soundscape::spawn(audio_output_stream.clone(), sound_id_gen.clone());
 
     // Initalise the GUI model.
@@ -104,15 +120,24 @@ fn model(app: &App) -> Model {
         osc_out_log_rx,
         osc_out_msg_tx,
         interaction_rx,
-        composer_msg_tx.clone(),
+        soundscape_msg_tx.clone(),
+        audio_input_stream.clone(),
         audio_output_stream.clone(),
         audio_monitor_rx,
     );
-    let gui = gui::Model::new(&assets, config, app, window, gui_channels, sound_id_gen);
+    let gui = gui::Model::new(
+        &assets,
+        config,
+        app,
+        window,
+        gui_channels,
+        sound_id_gen,
+        max_supported_input_channels,
+    );
 
     Model {
         composer_thread_handle,
-        composer_msg_tx,
+        soundscape_msg_tx,
         gui,
     }
 }
@@ -148,7 +173,7 @@ fn draw(app: &App, model: &Model, frame: Frame) -> Frame {
 fn exit(_app: &App, model: Model) {
     let Model {
         gui,
-        composer_msg_tx,
+        soundscape_msg_tx,
         composer_thread_handle,
         ..
     } = model;
@@ -156,7 +181,7 @@ fn exit(_app: &App, model: Model) {
     gui.exit();
 
     // Send exit signals to the audio and composer threads.
-    composer_msg_tx.send(soundscape::Message::Exit).unwrap();
+    soundscape_msg_tx.send(soundscape::Message::Exit).unwrap();
 
     // Wait for the composer thread to finish.
     composer_thread_handle.join().unwrap();

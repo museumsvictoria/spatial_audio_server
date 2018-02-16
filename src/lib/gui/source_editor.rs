@@ -10,7 +10,10 @@ use soundscape;
 use std;
 use std::ffi::OsStr;
 use std::fs::File;
+use std::ops;
 use std::path::Path;
+use std::sync::mpsc;
+use time_calc::Ms;
 
 pub struct SourceEditor {
     pub is_open: bool,
@@ -44,7 +47,7 @@ pub struct Source {
 // A data structure from which sources can be saved/loaded.
 #[derive(Deserialize, Serialize)]
 pub struct StoredSources {
-    #[serde(default = "Vec::new")]
+    #[serde(default)]
     pub sources: Vec<Source>,
     #[serde(default = "first_source_id")]
     pub next_id: audio::source::Id,
@@ -58,11 +61,20 @@ const SOUNDSCAPE_COLOR: ui::Color = ui::color::DARK_RED;
 const INSTALLATION_COLOR: ui::Color = ui::color::DARK_GREEN;
 const SCRIBBLES_COLOR: ui::Color = ui::color::DARK_PURPLE;
 
+impl SourceEditor {
+    // Returns the next unique source editor.
+    fn next_id(&mut self) -> audio::source::Id {
+        let next_id = self.next_id;
+        self.next_id = audio::source::Id(self.next_id.0.wrapping_add(1));
+        next_id
+    }
+}
+
 impl StoredSources {
     fn new() -> Self {
         StoredSources {
-            next_id: audio::source::Id::INITIAL,
             sources: Vec::new(),
+            next_id: audio::source::Id::INITIAL,
         }
     }
 
@@ -77,6 +89,36 @@ impl StoredSources {
             .ok()
             .and_then(|f| serde_json::from_reader(f).ok())
             .unwrap_or_else(StoredSources::new);
+
+        // Check the validity of the WAV source paths.
+        //
+        // If a path is invalid, check to see if it exists within the given `audio_path`. If so,
+        // update the source path. Otherwise, remove it.
+        for i in (0..stored.sources.len()).rev() {
+            let mut remove = false;
+            if let audio::source::Kind::Wav(ref mut wav) = stored.sources[i].audio.kind {
+                // If the path is valid, continue.
+                if wav.path.exists() {
+                    continue;
+                }
+
+                // Otherwise check to see if the file is in the audio path.
+                let potential_path = match wav.path.file_name() {
+                    None => continue,
+                    Some(name) => audio_path.join(name),
+                };
+                if potential_path.exists() {
+                    wav.path = potential_path;
+                    continue;
+                }
+
+                remove = true;
+            }
+            if remove {
+                // If no valid path was found, remove the source as we can't play it.
+                stored.sources.remove(i);
+            }
+        }
 
         // If there are any WAVs in `assets/audio/` that we have not yet listed, load them.
         if audio_path.exists() && audio_path.is_dir() {
@@ -113,10 +155,10 @@ impl StoredSources {
                     None => continue,
                 };
                 // Load the `Wav`.
-                let wav = match audio::Wav::from_path(path) {
+                let wav = match audio::source::Wav::from_path(path) {
                     Ok(w) => w,
                     Err(e) => {
-                        println!("Failed to load wav file {:?}: {}", name, e);
+                        eprintln!("Failed to load wav file {:?}: {}", name, e);
                         continue;
                     },
                 };
@@ -132,8 +174,17 @@ impl StoredSources {
             }
         }
 
-        // Sort all sources by name.
-        stored.sources.sort_by(|a, b| a.name.cmp(&b.name));
+        // Sort all sources by kind then name.
+        stored.sources.sort_by(|a, b| {
+            match (&a.audio.kind, &b.audio.kind) {
+                (&audio::source::Kind::Wav(_), &audio::source::Kind::Realtime(_)) => {
+                    std::cmp::Ordering::Less
+                },
+                _ => {
+                    a.name.cmp(&b.name)
+                },
+            }
+        });
         stored
     }
 }
@@ -147,9 +198,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     // 200.0 is just some magic, temp, extra height.
     const PREVIEW_CANVAS_H: Scalar = 66.0;
     const WAV_CANVAS_H: Scalar = 100.0;
+    const REALTIME_CANVAS_H: Scalar = 94.0;
     const CHANNEL_LAYOUT_CANVAS_H: Scalar = 200.0;
     const SELECTED_CANVAS_H: Scalar = ITEM_HEIGHT * 2.0 + PAD * 6.0 + PREVIEW_CANVAS_H + WAV_CANVAS_H + CHANNEL_LAYOUT_CANVAS_H;
-    let source_editor_canvas_h = LIST_HEIGHT + ITEM_HEIGHT + SELECTED_CANVAS_H;
+    let kind_specific_h = WAV_CANVAS_H.max(REALTIME_CANVAS_H);
+    let selected_canvas_h = ITEM_HEIGHT * 2.0 + PAD * 6.0 + PREVIEW_CANVAS_H + kind_specific_h + CHANNEL_LAYOUT_CANVAS_H;
+    let source_editor_canvas_h = LIST_HEIGHT + ITEM_HEIGHT + selected_canvas_h;
 
     let (area, event) = collapsible_area(is_open, "Source Editor", gui.ids.side_menu)
         .align_middle_x_of(gui.ids.side_menu)
@@ -210,7 +264,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                                 (format!("[{}CH WAV] {}", wav.channels, source.name), true)
                             },
                             audio::source::Kind::Realtime(ref rt) => {
-                                (format!("[{}CH RT] {}", rt.channels, source.name), false)
+                                (format!("[{}-{}CH RT] {}",
+                                         rt.channels.start, rt.channels.end-1, source.name), false)
                             },
                         }
                     };
@@ -262,7 +317,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
                     // If a source was being previewed, stop it.
                     if let Some((_, sound_id)) = gui.state.source_editor.preview.current {
-                        gui.channels.audio.send(move |audio| {
+                        gui.channels.audio_output.send(move |audio| {
                             audio.remove_sound(sound_id);
                         }).ok();
                         gui.state.source_editor.preview.current = None;
@@ -283,7 +338,20 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             if Some(i) == gui.state.source_editor.selected {
                 gui.state.source_editor.selected = None;
             }
-            unimplemented!();
+
+            // Remove local copy.
+            let source = gui.state.source_editor.sources.remove(i);
+            let id = source.id;
+
+            // Remove audio input copy.
+            gui.channels.audio_input.send(move |audio| {
+                audio.sources.remove(&id);
+                audio.active_sounds.remove(&id);
+            }).ok();
+
+            // Remove soundscape copy.
+            let msg = soundscape::Message::RemoveSource(id);
+            gui.channels.soundscape_msg_tx.send(msg).expect("soundscape_msg_tx was closed");
         }
     }
 
@@ -309,37 +377,37 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         .set(gui.ids.source_editor_add_realtime, gui)
         .was_clicked();
 
-    if new_wav || new_realtime {
-        // let id = gui.state.speaker_editor.next_id;
-        // let name = format!("S{}", id.0);
-        // let channel = {
-        //     // Search for the next available channel starting from 0.
-        //     //
-        //     // Note: This is a super naiive way of searching however there should never
-        //     // be enough speakers to make it a problem.
-        //     let mut channel = 0;
-        //     'search: loop {
-        //         for speaker in &gui.state.speaker_editor.speakers {
-        //             if channel == speaker.audio.channel.load(atomic::Ordering::Relaxed) {
-        //                 channel += 1;
-        //                 continue 'search;
-        //             }
-        //         }
-        //         break channel;
-        //     }
-        // };
-        // let audio = Arc::new(audio::Speaker {
-        //     point: Atomic::new(gui.state.camera.position),
-        //     channel: AtomicUsize::new(channel),
-        // });
-        // let speaker = Speaker { id, name, audio };
+    // Add a new WAV source.
+    if new_wav {
+        // Not sure if we want to support this in software yet.
+    }
 
-        // gui.state.speaker_editor.audio_msg_tx
-        //     .send(audio::Message::AddSpeaker(speaker.id, speaker.audio.clone()))
-        //     .expect("audio_msg_tx was closed");
-        // gui.state.speaker_editor.speakers.push(speaker);
-        // gui.state.speaker_editor.next_id = audio::speaker::Id(id.0.wrapping_add(1));
-        // gui.state.speaker_editor.selected = Some(gui.state.speaker_editor.speakers.len() - 1);
+    // Add a new realtime source.
+    if new_realtime {
+        // Create the Realtime.
+        const DEFAULT_CHANNELS: ops::Range<usize> = 0..1;
+        const DEFAULT_DURATION: Ms = Ms(3_000.0);
+        let channels = DEFAULT_CHANNELS;
+        let duration = DEFAULT_DURATION;
+        let realtime = audio::source::Realtime { channels, duration };
+
+        // Create the Source.
+        let id = gui.state.source_editor.next_id();
+        let name = format!("Source {}", id.0);
+        let kind = audio::source::Kind::Realtime(realtime.clone());
+        let role = Default::default();
+        let spread = audio::source::default_spread();
+        let radians = Default::default();
+        let audio = audio::Source { kind, role, spread, radians };
+        let source = Source { id, name, audio };
+
+        // Insert the source into the map.
+        gui.state.source_editor.sources.push(source);
+
+        // Send the source to the audio input thread.
+        gui.channels.audio_input.send(move |audio| {
+            audio.sources.insert(id, realtime);
+        }).ok();
     }
 
     let area_rect = gui.rect_of(area.id).unwrap();
@@ -378,6 +446,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         sound_id_gen,
         state: &mut State {
             ref camera,
+            max_input_channels,
             source_editor: SourceEditor {
                 ref mut sources,
                 ref mut preview,
@@ -403,7 +472,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         }
     }
 
-    // TODO: 4 Role Buttons
+    // 4 Role Buttons
     let role_button_w = selected_canvas_kid_area.w() / 4.0;
     const NUM_ROLES: usize = 4;
     let (mut events, _) = widget::ListSelect::single(NUM_ROLES)
@@ -469,8 +538,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             Event::Selection(idx) => {
                 let source = &mut sources[i];
                 source.audio.role = int_to_role(idx);
-                let msg = soundscape::Message::UpdateSource(source.id, source.audio.clone());
-                channels.composer_msg_tx.send(msg).expect("composer_msg_tx was closed");
+                let msg = soundscape::Message::InsertSource(source.id, source.audio.clone());
+                channels.soundscape_msg_tx.send(msg).expect("soundscape_msg_tx was closed");
             },
 
             _ => (),
@@ -498,6 +567,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     let button_w = preview_kid_area.w() / 2.0 - PAD / 2.0;
 
     fn sound_from_source(
+        channels: &super::Channels,
         source_id: audio::source::Id,
         source: &audio::Source,
         point: Point2<Metres>,
@@ -507,8 +577,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             audio::source::Kind::Wav(ref wav) => {
                 // The wave signal iterator.
                 let signal = match should_cycle {
-                    false => audio::wav::stream_signal(&wav.path).unwrap(),
-                    true => audio::wav::stream_signal_cycled(&wav.path).unwrap(),
+                    false => audio::source::wav::stream_signal(&wav.path).unwrap(),
+                    true => audio::source::wav::stream_signal_cycled(&wav.path).unwrap(),
                 };
                 audio::Sound {
                     source_id: source_id,
@@ -519,8 +589,45 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     radians: source.radians,
                 }
             },
-            audio::source::Kind::Realtime(ref _realtime) => {
-                unimplemented!();
+            audio::source::Kind::Realtime(ref realtime) => {
+                // Add some latency in case input and output streams aren't synced.
+                const LATENCY: Ms = Ms(500.0);
+                let n_channels = realtime.channels.len();
+                let delay_frames = LATENCY.samples(audio::SAMPLE_RATE as _);
+                let delay_samples = delay_frames as usize * n_channels;
+                let sync_channel_len = delay_samples * 2;
+                let duration = if should_cycle {
+                    audio::input::Duration::Infinite
+                } else {
+                    audio::input::Duration::Frames(realtime.duration.samples(audio::SAMPLE_RATE as _) as _)
+                };
+                let (sample_tx, sample_rx) = mpsc::sync_channel(sync_channel_len);
+
+
+                // Insert the silence for the delay.
+                for _ in 0..delay_samples {
+                    sample_tx.send(0.0).ok();
+                }
+
+                // Create the `ActiveSound` for the input stream.
+                let active_sound = audio::input::ActiveSound { duration, sample_tx };
+                channels.audio_input.send(move |audio| {
+                    audio.active_sounds
+                        .entry(source_id)
+                        .or_insert_with(Vec::new)
+                        .push(active_sound);
+                }).ok();
+
+                let signal = Box::new(audio::source::realtime::Signal { sample_rx }) as Box<_>;
+
+                audio::Sound {
+                    source_id,
+                    channels: n_channels,
+                    signal,
+                    point,
+                    spread: source.spread,
+                    radians: source.radians,
+                }
             },
         }
     }
@@ -537,7 +644,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             match preview.current {
                 // If a preview exists, remove it.
                 Some((mode, sound_id)) => {
-                    channels.audio.send(move |audio| {
+                    channels.audio_output.send(move |audio| {
                         audio.remove_sound(sound_id);
                     }).ok();
 
@@ -561,12 +668,13 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         SourcePreviewMode::Continuous => true,
                     };
                     let sound = sound_from_source(
+                        channels,
                         source.id,
                         &source.audio,
                         preview.point.unwrap(),
                         should_cycle,
                     );
-                    channels.audio.send(move |audio| {
+                    channels.audio_output.send(move |audio| {
                         audio.insert_sound(sound_id, sound.into());
                     }).ok();
                 },
@@ -606,6 +714,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     }
 
     // Kind-specific data.
+    let source_id = sources[i].id;
     let (kind_canvas_id, num_channels) = match sources[i].audio.kind {
         audio::source::Kind::Wav(ref wav) => {
 
@@ -642,8 +751,137 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
             (ids.source_editor_selected_wav_canvas, wav.channels)
         },
-        audio::source::Kind::Realtime(ref _realtime) => {
-            unreachable!();
+        audio::source::Kind::Realtime(ref mut realtime) => {
+
+            // Instantiate a small canvas for displaying wav-specific stuff.
+            widget::Canvas::new()
+                .down_from(ids.source_editor_preview_canvas, PAD)
+                .parent(ids.source_editor_selected_canvas)
+                .w(selected_canvas_kid_area.w())
+                .color(color::CHARCOAL)
+                .h(REALTIME_CANVAS_H)
+                .pad(PAD)
+                .set(ids.source_editor_selected_realtime_canvas, ui);
+
+            // Display the immutable WAV data.
+            widget::Text::new("REALTIME DATA")
+                .font_size(SMALL_FONT_SIZE)
+                .top_left_of(ids.source_editor_selected_realtime_canvas)
+                .set(ids.source_editor_selected_realtime_text, ui);
+
+            // A small macro to simplify updating each of the local, soundscape and audio input
+            // stream support.
+            //
+            // We use a macro so that a unique `FnOnce` is generated for each unique call. This way
+            // we can avoid the `update_fn` requiring `FnMut` which adds some ownership
+            // constraints.
+            macro_rules! update_realtime {
+                ($update_fn:expr) => {
+                    $update_fn(realtime);
+
+                    // Update the audio input thread copy.
+                    channels.audio_input.send(move |audio| {
+                        if let Some(realtime) = audio.sources.get_mut(&source_id) {
+                            $update_fn(realtime);
+                        }
+                    }).ok();
+
+                    // Update the soundscape thread copy.
+                    let update = soundscape::UpdateSourceFn::from(move |source: &mut audio::Source| {
+                        if let audio::source::Kind::Realtime(ref mut realtime) = source.kind {
+                            $update_fn(realtime);
+                        }
+                    });
+                    let msg = soundscape::Message::UpdateSource(source_id, update);
+                    channels.soundscape_msg_tx.send(msg).expect("soundscape_msg_tx was closed");
+                };
+            }
+
+            // Playback duration.
+            const SEC_MS: f32 = 1_000.0;
+            const MIN_MS: f32 = SEC_MS * 60.0;
+            const HR_MS: f32 = MIN_MS * 60.0;
+            const DAY_MS: f32 = HR_MS * 24.0;
+            let min = 0.0;
+            let max = HR_MS;
+            let ms = realtime.duration.ms() as f32;
+            let label = if ms < SEC_MS {
+                format!("{:.2} ms", ms)
+            } else if ms < MIN_MS {
+                let secs = (ms / SEC_MS) as u32;
+                let ms = ms - (secs as f32 * SEC_MS);
+                format!("{} secs {:.2} ms", secs, ms)
+            } else if ms < HR_MS {
+                let mins = (ms / MIN_MS) as u32;
+                let secs = (ms - (mins as f32 * MIN_MS)) / SEC_MS;
+                format!("{} mins {:.2} secs", mins, secs)
+            } else if ms < DAY_MS {
+                let hrs = (ms / HR_MS) as u32;
+                let mins = (ms - (hrs as f32 * HR_MS)) / MIN_MS;
+                format!("{} hrs {:.2} mins", hrs, mins)
+            } else {
+                let days = ms / DAY_MS;
+                format!("{:.2} days", days)
+            };
+            for new_ms in widget::Slider::new(ms, min, max)
+                .label(&format!("Duration: {}", label))
+                .label_font_size(SMALL_FONT_SIZE)
+                .kid_area_w_of(ids.source_editor_selected_realtime_canvas)
+                .h(ITEM_HEIGHT)
+                .down(PAD)
+                .skew(10.0)
+                .set(ids.source_editor_selected_realtime_duration, ui)
+            {
+                // Update the local copy.
+                let new_duration = Ms(new_ms as _);
+                update_realtime!(|realtime: &mut audio::source::Realtime| realtime.duration = new_duration);
+            }
+
+            // Starting channel index (to the left).
+            let start_channel_indices = 0..realtime.channels.end;
+            let start_channel_labels = start_channel_indices.clone()
+                .map(|ch| format!("Start Channel: {}", ch))
+                .collect::<Vec<_>>();
+            let selected_start = Some(realtime.channels.start as usize);
+            let channel_w = ui.kid_area_of(ids.source_editor_selected_realtime_canvas).unwrap().w() / 2.0
+                - PAD / 2.0;
+            for new_start in widget::DropDownList::new(&start_channel_labels, selected_start)
+                .down(PAD)
+                .align_left()
+                .label("Start Channel")
+                .label_font_size(SMALL_FONT_SIZE)
+                .scrollbar_on_top()
+                .max_visible_items(5)
+                .w(channel_w)
+                .h(ITEM_HEIGHT)
+                .set(ids.source_editor_selected_realtime_start_channel, ui)
+            {
+                // Update the local copy.
+                update_realtime!(|rt: &mut audio::source::Realtime| rt.channels.start = new_start);
+            }
+
+            // End channel index (to the right).
+            let mut end_channel_indices = realtime.channels.start+1..max_input_channels+1;
+            let end_channel_labels = end_channel_indices.clone()
+                .map(|ch| format!("End Channel: {}", ch - 1))
+                .collect::<Vec<_>>();
+            let selected_end = Some((realtime.channels.end - (realtime.channels.start+1)) as usize);
+            for new_end in widget::DropDownList::new(&end_channel_labels, selected_end)
+                .right(PAD)
+                .align_top()
+                .label("End Channel")
+                .label_font_size(SMALL_FONT_SIZE)
+                .scrollbar_on_top()
+                .max_visible_items(5)
+                .w(channel_w)
+                .h(ITEM_HEIGHT)
+                .set(ids.source_editor_selected_realtime_end_channel, ui)
+            {
+                // Update the local copy.
+                update_realtime!(|rt: &mut audio::source::Realtime| rt.channels.start = new_end);
+            }
+
+            (ids.source_editor_selected_realtime_canvas, realtime.channels.len())
         },
     };
 
@@ -686,8 +924,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     {
         spread = new_spread;
         sources[i].audio.spread = Metres(spread as _);
-        let msg = soundscape::Message::UpdateSource(sources[i].id, sources[i].audio.clone());
-        channels.composer_msg_tx.send(msg).expect("composer_msg_tx was closed");
+        let msg = soundscape::Message::InsertSource(sources[i].id, sources[i].audio.clone());
+        channels.soundscape_msg_tx.send(msg).expect("soundscape_msg_tx was closed");
     }
 
     // Slider for controlling how channels should be rotated.
@@ -703,8 +941,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     {
         rotation = new_rotation;
         sources[i].audio.radians = rotation;
-        let msg = soundscape::Message::UpdateSource(sources[i].id, sources[i].audio.clone());
-        channels.composer_msg_tx.send(msg).expect("composer_msg_tx was closed");
+        let msg = soundscape::Message::InsertSource(sources[i].id, sources[i].audio.clone());
+        channels.soundscape_msg_tx.send(msg).expect("soundscape_msg_tx was closed");
     }
 
     // The field over which the channel layout will be visualised.
