@@ -118,7 +118,25 @@
         "radians": 0.0
       },
       "id": 4
+    },
+    {
+      "name": "Test Mic Input",
+      "audio": {
+        "kind": {
+          "Realtime": {
+            "duration": 1675.7939453125,
+            "channels": {
+              "start": 0,
+              "end": 2
+            }
+          }
+        },
+        "role": null,
+        "spread": 2.5,
+        "radians": 0.0
+      },
+      "id": 7
     }
   ],
-  "next_id": 7
+  "next_id": 8
 }

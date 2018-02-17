@@ -19,7 +19,7 @@ pub enum OscTarget {
 }
 
 /// Data related to a single frame of audio.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct AudioFrameData {
     pub avg_peak: f32,
     pub avg_rms: f32,
@@ -28,7 +28,7 @@ pub struct AudioFrameData {
 }
 
 /// Basic FFT audio analysis results.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct FftData {
     /// Low, mid and high bands.
     pub lmh: [f32; 3],
@@ -37,6 +37,7 @@ pub struct FftData {
 }
 
 /// Data related to a single audio channel.
+#[derive(Debug)]
 pub struct Speaker {
     pub peak: f32,
     pub rms: f32,
@@ -66,7 +67,6 @@ pub fn spawn() -> (std::thread::JoinHandle<()>, mpsc::Sender<Message>, mpsc::Rec
 }
 
 fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
-
     struct Target {
         osc_tx: osc::Sender<osc::Connected>,
         osc_addr: String,
@@ -90,10 +90,10 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
         .name("osc_output_timer".into())
         .spawn(move || {
             loop {
+                std::thread::sleep(std::time::Duration::from_millis(16));
                 if update_tx_2.send(Update::SendOsc).is_err() {
                     break;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(16));
             }
         })
         .unwrap();
@@ -102,13 +102,9 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
     std::thread::Builder::new()
         .name("osc_output_msg_to_update".into())
         .spawn(move || {
-            loop {
-                match msg_rx.recv() {
-                    Ok(msg) => match update_tx.send(Update::Msg(msg)) {
-                        Err(_) => break,
-                        Ok(_) => (),
-                    },
-                    Err(_) => break,
+            for msg in msg_rx {
+                if update_tx.send(Update::Msg(msg)).is_err() {
+                    break;
                 }
             }
         })

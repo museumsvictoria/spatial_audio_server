@@ -85,7 +85,8 @@ pub struct State {
     interaction_log: InteractionLog,
     installation_editor: InstallationEditor,
     speaker_editor: SpeakerEditor,
-    pub source_editor: SourceEditor,
+    source_editor: SourceEditor,
+    max_input_channels: usize,
     // Menu states.
     side_menu_is_open: bool,
     osc_in_log_is_open: bool,
@@ -114,6 +115,7 @@ impl Model {
         window_id: WindowId,
         channels: Channels,
         sound_id_gen: audio::sound::IdGenerator,
+        max_input_channels: usize,
     ) -> Self {
         let mut ui = app.new_ui(window_id).with_theme(theme::construct()).build().unwrap();
 
@@ -133,7 +135,7 @@ impl Model {
         let images = Images { floorplan };
 
         // Initialise the GUI state.
-        let state = State::new(assets, config, &channels);
+        let state = State::new(assets, config, &channels, max_input_channels);
 
         // Initialise the audio monitor.
         let active_sounds = HashMap::new();
@@ -335,8 +337,13 @@ impl Model {
 impl State {
     /// Initialise the `State` and send any loaded speakers and sources to the audio and composer
     /// threads.
-    pub fn new(assets: &Path, config: Config, channels: &Channels) -> Self {
-
+    pub fn new(
+        assets: &Path,
+        config: Config,
+        channels: &Channels,
+        max_input_channels: usize,
+    ) -> Self
+    {
         // Load the stored isntallation editor state.
         let computer_map = installation_editor::load_computer_map(&installations_path(assets));
 
@@ -367,7 +374,7 @@ impl State {
         // Send the loaded speakers to the audio thread.
         for speaker in &speakers {
             let (speaker_id, speaker_clone) = (speaker.id, speaker.audio.clone());
-            channels.audio.send(move |audio| {
+            channels.audio_output.send(move |audio| {
                 audio.insert_speaker(speaker_id, speaker_clone);
             }).ok();
         }
@@ -381,12 +388,24 @@ impl State {
 
         // Load the existing sound sources if there are some.
         let audio_path = assets.join(Path::new(AUDIO_DIRECTORY_NAME));
-        let StoredSources { sources, next_id } = StoredSources::load(&sources_path(assets), &audio_path);
+        let stored_sources = StoredSources::load(&sources_path(assets), &audio_path);
+        let StoredSources { sources, next_id } = stored_sources;
+
+        // Send the realtime sources to the input thread.
+        for source in &sources {
+            if let audio::source::Kind::Realtime(ref realtime) = source.audio.kind {
+                let id = source.id;
+                let realtime = realtime.clone();
+                channels.audio_input.send(move |audio| {
+                    audio.sources.insert(id, realtime);
+                }).ok();
+            }
+        }
 
         // Send the loaded sources to the composer thread.
         for source in &sources {
-            let msg = soundscape::Message::UpdateSource(source.id, source.audio.clone());
-            channels.composer_msg_tx.send(msg).expect("composer_msg_tx was closed");
+            let msg = soundscape::Message::InsertSource(source.id, source.audio.clone());
+            channels.soundscape_msg_tx.send(msg).expect("soundscape_msg_tx was closed");
         }
 
         let preview = SourcePreview {
@@ -423,6 +442,7 @@ impl State {
             osc_in_log,
             osc_out_log,
             interaction_log,
+            max_input_channels,
             side_menu_is_open: true,
             osc_in_log_is_open: false,
             osc_out_log_is_open: false,
@@ -436,9 +456,11 @@ pub struct Channels {
     pub osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
     pub osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
     pub interaction_rx: mpsc::Receiver<Interaction>,
-    pub composer_msg_tx: mpsc::Sender<soundscape::Message>,
+    pub soundscape_msg_tx: mpsc::Sender<soundscape::Message>,
+    /// A handle for communicating with the audio input stream.
+    pub audio_input: audio::input::Stream,
     /// A handle for communicating with the audio output stream.
-    pub audio: audio::OutputStream,
+    pub audio_output: audio::output::Stream,
     pub audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
 }
 
@@ -449,8 +471,9 @@ impl Channels {
         osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
         osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
         interaction_rx: mpsc::Receiver<Interaction>,
-        composer_msg_tx: mpsc::Sender<soundscape::Message>,
-        audio: audio::OutputStream,
+        soundscape_msg_tx: mpsc::Sender<soundscape::Message>,
+        audio_input: audio::input::Stream,
+        audio_output: audio::output::Stream,
         audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
     ) -> Self
     {
@@ -459,8 +482,9 @@ impl Channels {
             osc_out_log_rx,
             osc_out_msg_tx,
             interaction_rx,
-            composer_msg_tx,
-            audio,
+            soundscape_msg_tx,
+            audio_input,
+            audio_output,
             audio_monitor_msg_rx,
         }
     }
@@ -812,6 +836,11 @@ widget_ids! {
         source_editor_selected_wav_canvas,
         source_editor_selected_wav_text,
         source_editor_selected_wav_data,
+        source_editor_selected_realtime_canvas,
+        source_editor_selected_realtime_text,
+        source_editor_selected_realtime_duration,
+        source_editor_selected_realtime_start_channel,
+        source_editor_selected_realtime_end_channel,
         source_editor_selected_channel_layout_canvas,
         source_editor_selected_channel_layout_text,
         source_editor_selected_channel_layout_spread,
@@ -1124,7 +1153,7 @@ fn set_widgets(gui: &mut Gui) {
                 if p != new_p {
                     speakers[i].audio.point = new_p;
                     let (speaker_id, speaker_clone) = (speakers[i].id, speakers[i].audio.clone());
-                    channels.audio.send(move |audio| {
+                    channels.audio_output.send(move |audio| {
                         audio.insert_speaker(speaker_id, speaker_clone);
                     }).ok();
                 }
@@ -1212,7 +1241,7 @@ fn set_widgets(gui: &mut Gui) {
                         let new_p = Point2 { x, y };
                         if point != new_p {
                             state.source_editor.preview.point = Some(new_p);
-                            channels.audio.send(move |audio| {
+                            channels.audio_output.send(move |audio| {
                                 if let Some(sound) = audio.sound_mut(&sound_id) {
                                     sound.point = new_p;
                                 }
@@ -1256,7 +1285,7 @@ fn set_widgets(gui: &mut Gui) {
             for channel in 0..channel_count {
                 let rad = channel_radians as f32;
                 let channel_point_m =
-                    audio::channel_point(position, channel, channel_count, spread_m, rad);
+                    audio::output::channel_point(position, channel, channel_count, spread_m, rad);
                 let (ch_x, ch_y) = position_metres_to_gui(channel_point_m, &state.camera);
                 let channel_amp = channel_amplitudes[channel];
                 let speakers = &state.speaker_editor.speakers;
@@ -1283,7 +1312,7 @@ fn set_widgets(gui: &mut Gui) {
                     let gains = audio::dbap::SpeakerGains::new(&dbap_speakers, audio::ROLLOFF_DB);
                     in_proximity.clear();
                     for (i, gain) in gains.enumerate() {
-                        if audio::speaker_is_in_proximity(point, &speakers[i].audio.point) {
+                        if audio::output::speaker_is_in_proximity(point, &speakers[i].audio.point) {
                             in_proximity.push((gain as f32, i));
                         }
                     }

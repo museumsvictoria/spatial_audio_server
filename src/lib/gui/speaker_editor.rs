@@ -190,7 +190,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             }
             let speaker = gui.state.speaker_editor.speakers.remove(i);
             let speaker_id = speaker.id;
-            gui.channels.audio.send(move |audio| {
+            gui.channels.audio_output.send(move |audio| {
                 audio.remove_speaker(speaker_id);
             }).ok();
         }
@@ -237,7 +237,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             };
 
             let speaker = audio.clone();
-            gui.channels.audio.send(move |audio| {
+            gui.channels.audio_output.send(move |audio| {
                 audio.insert_speaker(id, speaker);
             }).ok();
 
@@ -323,7 +323,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         speakers[i].audio.channel = new_index;
         let id = speakers[i].id;
         let speaker = speakers[i].audio.clone();
-        gui.channels.audio.send(move |audio| {
+        gui.channels.audio_output.send(move |audio| {
             audio.insert_speaker(id, speaker);
         }).ok();
 
@@ -338,7 +338,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             speaker.audio.channel = selected_channel;
             let id = speaker.id;
             let speaker = speaker.audio.clone();
-            gui.channels.audio.send(move |audio| {
+            gui.channels.audio_output.send(move |audio| {
                 audio.insert_speaker(id, speaker);
             }).ok();
         }
@@ -384,7 +384,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let speaker = &mut speakers[i];
         let speaker_id = speaker.id;
         speaker.audio.installations.insert(installation);
-        gui.channels.audio.send(move |audio| {
+        gui.channels.audio_output.send(move |audio| {
             audio.insert_speaker_installation(speaker_id, installation);
         }).ok();
     }
@@ -455,7 +455,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let speaker = &mut speakers[i];
         let speaker_id = speaker.id;
         speaker.audio.installations.remove(&inst);
-        gui.channels.audio.send(move |audio| {
+        gui.channels.audio_output.send(move |audio| {
             audio.remove_speaker_installation(speaker_id, &inst);
         }).ok();
     }
