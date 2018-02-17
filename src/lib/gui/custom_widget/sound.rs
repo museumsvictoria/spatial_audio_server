@@ -80,8 +80,21 @@ impl<'a> Widget for Sound<'a> {
     }
 
     fn update(self, args: widget::UpdateArgs<Self>) -> Self::Event {
-        let widget::UpdateArgs { id, state, style, rect, ui, .. } = args;
-        let Sound { channels, spread, radians, channel_radians, .. } = self;
+        let widget::UpdateArgs {
+            id,
+            state,
+            style,
+            rect,
+            ui,
+            ..
+        } = args;
+        let Sound {
+            channels,
+            spread,
+            radians,
+            channel_radians,
+            ..
+        } = self;
 
         let (x, y, w, _) = rect.x_y_w_h();
         let radius = w / 2.0;
@@ -89,9 +102,11 @@ impl<'a> Widget for Sound<'a> {
         // The circle of the sound's source position.
         let color = style.color(&ui.theme);
         let color = match ui.widget_input(id).mouse() {
-            Some(mouse) =>
-                if mouse.buttons.left().is_down() { color.clicked() }
-                else { color.highlighted() },
+            Some(mouse) => if mouse.buttons.left().is_down() {
+                color.clicked()
+            } else {
+                color.highlighted()
+            },
             None => color,
         };
         widget::Circle::fill(radius)
@@ -111,8 +126,7 @@ impl<'a> Widget for Sound<'a> {
             total_channels: usize,
             spread: Scalar,
             radians: f64,
-        ) -> (Scalar, Scalar)
-        {
+        ) -> (Scalar, Scalar) {
             assert!(channel_index < total_channels);
             if total_channels == 1 {
                 (sound_x, sound_y)
@@ -143,7 +157,8 @@ impl<'a> Widget for Sound<'a> {
             let circle_id = state.ids.channel_circles[i];
             let line_id = state.ids.channel_lines[i];
             let label_id = state.ids.channel_labels[i];
-            let (ch_x, ch_y) = channel_point((x, y), i, channels.len(), spread, radians + channel_radians);
+            let (ch_x, ch_y) =
+                channel_point((x, y), i, channels.len(), spread, radians + channel_radians);
 
             let base_thickness = 1.0;
             let amp_thickness = amp as f64 * 10.0;
@@ -164,7 +179,7 @@ impl<'a> Widget for Sound<'a> {
                 .parent(id)
                 .set(circle_id, ui);
 
-            let label = format!("{}", i+1);
+            let label = format!("{}", i + 1);
             widget::Text::new(&label)
                 .font_size((radius * 0.8) as FontSize)
                 .x_y(ch_x, ch_y + radius / 6.0)
@@ -179,9 +194,18 @@ impl<'a> Widget for Sound<'a> {
         let front_to_back_radians = std::f64::consts::PI * 2.5 / 3.0;
         let br_radians = radians + front_to_back_radians;
         let bl_radians = radians - front_to_back_radians;
-        let rel_front = [x + -radians.cos() * tri_radius, y + radians.sin() * tri_radius];
-        let rel_back_right = [x + -bl_radians.cos() * tri_radius, y + bl_radians.sin() * tri_radius];
-        let rel_back_left = [x + -br_radians.cos() * tri_radius, y + br_radians.sin() * tri_radius];
+        let rel_front = [
+            x + -radians.cos() * tri_radius,
+            y + radians.sin() * tri_radius,
+        ];
+        let rel_back_right = [
+            x + -bl_radians.cos() * tri_radius,
+            y + bl_radians.sin() * tri_radius,
+        ];
+        let rel_back_left = [
+            x + -br_radians.cos() * tri_radius,
+            y + br_radians.sin() * tri_radius,
+        ];
         let points = [rel_front, rel_back_right, rel_back_left];
         widget::Polygon::centred_fill(points.iter().cloned())
             .x_y(x, y)

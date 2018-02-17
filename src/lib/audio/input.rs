@@ -122,11 +122,9 @@ pub fn capture(mut model: Model, buffer: &Buffer) -> Model {
         // Remove sounds that have no more remaining samples to capture.
         let n_frames = buffer.len_frames();
         for sounds in active_sounds.values_mut() {
-            sounds.retain(|s| {
-                match s.duration {
-                    Duration::Frames(frames) => frames > n_frames,
-                    Duration::Infinite => true,
-                }
+            sounds.retain(|s| match s.duration {
+                Duration::Frames(frames) => frames > n_frames,
+                Duration::Infinite => true,
             });
             for sound in sounds.iter_mut() {
                 if let Duration::Frames(ref mut frames) = sound.duration {

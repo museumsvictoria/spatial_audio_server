@@ -94,9 +94,7 @@ impl FftDetector {
     /// Construct a new `EnvDetector` with a zeroed RMS window.
     pub fn new() -> Self {
         let fft_samples = ring_buffer::Fixed::from([0.0; FFT_WINDOW_LEN]);
-        FftDetector {
-            fft_samples,
-        }
+        FftDetector { fft_samples }
     }
 
     /// Insert a new sample into the ring buffer.

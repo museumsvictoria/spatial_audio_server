@@ -73,13 +73,19 @@ fn a_coefficient(rolloff_db: f64) -> f64 {
 /// `k` is a coefficient depending on the position of the source and all speakers.
 fn k_coefficient(a: f64, speakers: &[Speaker]) -> f64 {
     assert!(speakers.len() >= 1);
-    2.0 * a / speakers.iter().fold(0.0, |acc, s| acc + s.weight.powi(2) / s.distance.powi(2))
+    2.0 * a
+        / speakers
+            .iter()
+            .fold(0.0, |acc, s| acc + s.weight.powi(2) / s.distance.powi(2))
 }
 
 #[test]
 fn speaker_gains() {
     let src = vec2(5.0, 5.0);
-    let speaker = |v: Vector2<f64>, w| Speaker { distance: v.distance(src), weight: w };
+    let speaker = |v: Vector2<f64>, w| Speaker {
+        distance: v.distance(src),
+        weight: w,
+    };
     let a = speaker(vec2(0.0, 0.0), 1.0);
     let b = speaker(vec2(10.0, 0.0), 1.0);
     let c = speaker(vec2(10.0, 10.0), 1.0);

@@ -5,7 +5,6 @@ use std;
 /// The default width for a widget within a column.
 pub const DEFAULT_WIDTH: ui::Scalar = 220.0;
 
-
 fn common_style(w: ui::Scalar, h: ui::Scalar) -> widget::CommonStyle {
     widget::CommonStyle {
         maybe_x_dimension: Some(ui::position::Dimension::Absolute(w)),
@@ -20,7 +19,6 @@ where
 {
     std::any::TypeId::of::<T>()
 }
-
 
 /// The theme to use for the SynthEditor.
 pub fn construct() -> ui::Theme {

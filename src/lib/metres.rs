@@ -15,10 +15,18 @@ custom_derive! {
 
 impl Metres {
     pub fn min(self, other: Self) -> Self {
-        if other < self { other } else { self }
+        if other < self {
+            other
+        } else {
+            self
+        }
     }
 
     pub fn max(self, other: Self) -> Self {
-        if other > self { other } else { self }
+        if other > self {
+            other
+        } else {
+            self
+        }
     }
 }

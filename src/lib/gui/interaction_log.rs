@@ -22,8 +22,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
         // The text widget used to display the log.
         let log_string = match gui.state.interaction_log.len() {
-            0 => format!("No interactions received yet.\nListening on port {}...",
-                         gui.state.config.osc_input_port),
+            0 => format!(
+                "No interactions received yet.\nListening on port {}...",
+                gui.state.config.osc_input_port
+            ),
             _ => gui.state.interaction_log.format(),
         };
         info_text(&log_string)

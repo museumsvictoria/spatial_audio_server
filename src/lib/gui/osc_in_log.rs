@@ -12,7 +12,6 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         gui.state.osc_in_log_is_open = event.is_open();
     }
     if let Some(area) = area {
-
         // The canvas on which the log will be placed.
         let canvas = widget::Canvas::new()
             .scroll_kids()
@@ -22,8 +21,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
         // The text widget used to display the log.
         let log_string = match gui.state.osc_in_log.len() {
-            0 => format!("No messages received yet.\nListening on port {}...",
-                         gui.state.config.osc_input_port),
+            0 => format!(
+                "No messages received yet.\nListening on port {}...",
+                gui.state.config.osc_input_port
+            ),
             _ => gui.state.osc_in_log.format(),
         };
         info_text(&log_string)

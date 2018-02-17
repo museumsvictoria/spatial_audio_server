@@ -95,15 +95,21 @@ pub struct State {
 }
 
 fn installations_path(assets: &Path) -> PathBuf {
-    assets.join(Path::new(INSTALLATIONS_FILE_STEM)).with_extension("json")
+    assets
+        .join(Path::new(INSTALLATIONS_FILE_STEM))
+        .with_extension("json")
 }
 
 fn speakers_path(assets: &Path) -> PathBuf {
-    assets.join(Path::new(SPEAKERS_FILE_STEM)).with_extension("json")
+    assets
+        .join(Path::new(SPEAKERS_FILE_STEM))
+        .with_extension("json")
 }
 
 fn sources_path(assets: &Path) -> PathBuf {
-    assets.join(Path::new(SOURCES_FILE_STEM)).with_extension("json")
+    assets
+        .join(Path::new(SOURCES_FILE_STEM))
+        .with_extension("json")
 }
 
 impl Model {
@@ -117,7 +123,10 @@ impl Model {
         sound_id_gen: audio::sound::IdGenerator,
         max_input_channels: usize,
     ) -> Self {
-        let mut ui = app.new_ui(window_id).with_theme(theme::construct()).build().unwrap();
+        let mut ui = app.new_ui(window_id)
+            .with_theme(theme::construct())
+            .build()
+            .unwrap();
 
         // The type containing the unique ID for each widget in the GUI.
         let ids = Ids::new(ui.widget_id_generator());
@@ -129,9 +138,11 @@ impl Model {
 
         // Load and insert the images to be used.
         let floorplan_path = images_directory(assets).join("floorplan.png");
-        let floorplan = insert_image(&floorplan_path,
-                                     app.window(window_id).unwrap().inner_glium_display(),
-                                     &mut ui.image_map);
+        let floorplan = insert_image(
+            &floorplan_path,
+            app.window(window_id).unwrap().inner_glium_display(),
+            &mut ui.image_map,
+        );
         let images = Images { floorplan };
 
         // Initialise the GUI state.
@@ -140,7 +151,10 @@ impl Model {
         // Initialise the audio monitor.
         let active_sounds = HashMap::new();
         let speakers = HashMap::new();
-        let audio_monitor = AudioMonitor { active_sounds, speakers };
+        let audio_monitor = AudioMonitor {
+            active_sounds,
+            speakers,
+        };
 
         Model {
             ui,
@@ -191,23 +205,34 @@ impl Model {
         for msg in channels.audio_monitor_msg_rx.try_iter() {
             match msg {
                 AudioMonitorMessage::ActiveSound(id, msg) => match msg {
-                    ActiveSoundMessage::Start { source_id, position, channels } => {
+                    ActiveSoundMessage::Start {
+                        source_id,
+                        position,
+                        channels,
+                    } => {
                         let channels = (0..channels)
-                            .map(|_| ChannelLevels { rms: 0.0, peak: 0.0 })
+                            .map(|_| ChannelLevels {
+                                rms: 0.0,
+                                peak: 0.0,
+                            })
                             .collect();
-                        let mut active_sound = ActiveSound { source_id, position, channels };
+                        let mut active_sound = ActiveSound {
+                            source_id,
+                            position,
+                            channels,
+                        };
                         audio_monitor.active_sounds.insert(id, active_sound);
-                    },
+                    }
                     ActiveSoundMessage::Update { position } => {
                         let active_sound = audio_monitor.active_sounds.get_mut(&id).unwrap();
                         active_sound.position = position;
-                    },
+                    }
                     ActiveSoundMessage::UpdateChannel { index, rms, peak } => {
                         let active_sound = audio_monitor.active_sounds.get_mut(&id).unwrap();
                         let mut channel = &mut active_sound.channels[index];
                         channel.rms = rms;
                         channel.peak = peak;
-                    },
+                    }
                     ActiveSoundMessage::End => {
                         audio_monitor.active_sounds.remove(&id);
 
@@ -216,29 +241,41 @@ impl Model {
                         match state.source_editor.preview.current {
                             Some((SourcePreviewMode::OneShot, s_id)) if id == s_id => {
                                 state.source_editor.preview.current = None;
-                            },
+                            }
                             _ => (),
                         }
-                    },
+                    }
                 },
                 AudioMonitorMessage::Speaker(id, msg) => match msg {
                     SpeakerMessage::Add => {
-                        let speaker = ChannelLevels { rms: 0.0, peak: 0.0 };
+                        let speaker = ChannelLevels {
+                            rms: 0.0,
+                            peak: 0.0,
+                        };
                         audio_monitor.speakers.insert(id, speaker);
-                    },
+                    }
                     SpeakerMessage::Update { rms, peak } => {
                         let speaker = ChannelLevels { rms, peak };
                         audio_monitor.speakers.insert(id, speaker);
-                    },
+                    }
                     SpeakerMessage::Remove => {
                         audio_monitor.speakers.remove(&id);
-                    },
+                    }
                 },
             }
         }
 
         let ui = ui.set_widgets();
-        let mut gui = Gui { ui, ids, images, fonts, state, channels, sound_id_gen, audio_monitor };
+        let mut gui = Gui {
+            ui,
+            ids,
+            images,
+            fonts,
+            state,
+            channels,
+            sound_id_gen,
+            audio_monitor,
+        };
         set_widgets(&mut gui);
     }
 
@@ -278,23 +315,23 @@ impl Model {
 
         // Destructure the GUI state for serializing.
         let Model {
-            state: State {
-                installation_editor: InstallationEditor {
-                    computer_map,
+            state:
+                State {
+                    installation_editor: InstallationEditor { computer_map, .. },
+                    speaker_editor:
+                        SpeakerEditor {
+                            speakers,
+                            next_id: next_speaker_id,
+                            ..
+                        },
+                    source_editor:
+                        SourceEditor {
+                            sources,
+                            next_id: next_source_id,
+                            ..
+                        },
                     ..
                 },
-                speaker_editor: SpeakerEditor {
-                    speakers,
-                    next_id: next_speaker_id,
-                    ..
-                },
-                source_editor: SourceEditor {
-                    sources,
-                    next_id: next_source_id,
-                    ..
-                },
-                ..
-            },
             assets,
             ..
         } = self;
@@ -319,8 +356,7 @@ impl Model {
         let sources_json_string = {
             let next_id = next_source_id;
             let stored_sources = StoredSources { sources, next_id };
-            serde_json::to_string_pretty(&stored_sources)
-                .expect("failed to serialize sources")
+            serde_json::to_string_pretty(&stored_sources).expect("failed to serialize sources")
         };
         safe_file_save(&sources_path(&assets), &sources_json_string)
             .expect("failed to save sources file");
@@ -342,8 +378,7 @@ impl State {
         config: Config,
         channels: &Channels,
         max_input_channels: usize,
-    ) -> Self
-    {
+    ) -> Self {
         // Load the stored isntallation editor state.
         let computer_map = installation_editor::load_computer_map(&installations_path(assets));
 
@@ -357,7 +392,9 @@ impl State {
                 let osc_addr = addr.osc_addr.clone();
                 let add = osc::output::OscTarget::Add(inst, computer, osc_tx, osc_addr);
                 let msg = osc::output::Message::Osc(add);
-                channels.osc_out_msg_tx.send(msg)
+                channels
+                    .osc_out_msg_tx
+                    .send(msg)
                     .expect("failed to send loaded OSC target");
             }
         }
@@ -374,9 +411,12 @@ impl State {
         // Send the loaded speakers to the audio thread.
         for speaker in &speakers {
             let (speaker_id, speaker_clone) = (speaker.id, speaker.audio.clone());
-            channels.audio_output.send(move |audio| {
-                audio.insert_speaker(speaker_id, speaker_clone);
-            }).ok();
+            channels
+                .audio_output
+                .send(move |audio| {
+                    audio.insert_speaker(speaker_id, speaker_clone);
+                })
+                .ok();
         }
 
         let speaker_editor = SpeakerEditor {
@@ -396,16 +436,22 @@ impl State {
             if let audio::source::Kind::Realtime(ref realtime) = source.audio.kind {
                 let id = source.id;
                 let realtime = realtime.clone();
-                channels.audio_input.send(move |audio| {
-                    audio.sources.insert(id, realtime);
-                }).ok();
+                channels
+                    .audio_input
+                    .send(move |audio| {
+                        audio.sources.insert(id, realtime);
+                    })
+                    .ok();
             }
         }
 
         // Send the loaded sources to the composer thread.
         for source in &sources {
             let msg = soundscape::Message::InsertSource(source.id, source.audio.clone());
-            channels.soundscape_msg_tx.send(msg).expect("soundscape_msg_tx was closed");
+            channels
+                .soundscape_msg_tx
+                .send(msg)
+                .expect("soundscape_msg_tx was closed");
         }
 
         let preview = SourcePreview {
@@ -423,7 +469,10 @@ impl State {
 
         let camera = Camera {
             floorplan_pixels_per_metre: config.floorplan_pixels_per_metre,
-            position: Point2 { x: Metres(0.0), y: Metres(0.0) },
+            position: Point2 {
+                x: Metres(0.0),
+                y: Metres(0.0),
+            },
             zoom: 0.0,
         };
 
@@ -475,8 +524,7 @@ impl Channels {
         audio_input: audio::input::Stream,
         audio_output: audio::output::Stream,
         audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
-    ) -> Self
-    {
+    ) -> Self {
         Channels {
             osc_in_log_rx,
             osc_out_log_rx,
@@ -609,7 +657,13 @@ impl Log<OscOutputLog> {
     fn format(&self) -> String {
         let mut s = String::new();
         let mut index = self.start_index + self.deque.len();
-        for &OscOutputLog { addr, ref msg, ref error, .. } in &self.deque {
+        for &OscOutputLog {
+            addr,
+            ref msg,
+            ref error,
+            ..
+        } in &self.deque
+        {
             let addr_string = format!("{}: [{}] \"{}\"\n", index, addr, msg.addr);
             s.push_str(&addr_string);
 
@@ -672,7 +726,6 @@ impl<T> Deref for Log<T> {
     }
 }
 
-
 // A structure for monitoring the state of the audio thread for visualisation.
 struct AudioMonitor {
     active_sounds: ActiveSoundMap,
@@ -719,10 +772,7 @@ pub enum ActiveSoundMessage {
 /// A message related to a speaker.
 pub enum SpeakerMessage {
     Add,
-    Update {
-        rms: f32,
-        peak: f32,
-    },
+    Update { rms: f32, peak: f32 },
     Remove,
 }
 
@@ -754,11 +804,7 @@ fn load_image(
 /// Insert the image at the given path into the given `ImageMap`.
 ///
 /// Return its Id and Dimensions in the form of an `Image`.
-fn insert_image(
-    path: &Path,
-    display: &glium::Display,
-    image_map: &mut ui::Texture2dMap,
-) -> Image {
+fn insert_image(path: &Path, display: &glium::Display, image_map: &mut ui::Texture2dMap) -> Image {
     let ((width, height), texture) = load_image(path, display);
     let id = image_map.insert(texture);
     let image = Image { id, width, height };
@@ -864,9 +910,11 @@ widget_ids! {
 }
 
 // Begin building a `CollapsibleArea` for the sidebar.
-pub fn collapsible_area(is_open: bool, text: &str, side_menu_id: widget::Id)
-    -> widget::CollapsibleArea
-{
+pub fn collapsible_area(
+    is_open: bool,
+    text: &str,
+    side_menu_id: widget::Id,
+) -> widget::CollapsibleArea {
     widget::CollapsibleArea::new(is_open, text)
         .w_of(side_menu_id)
         .h(ITEM_HEIGHT)
@@ -960,7 +1008,7 @@ fn set_widgets(gui: &mut Gui) {
                 .map(|r| r.w())
                 .unwrap_or(0.0);
             side_menu_w - scrollbar_w
-        },
+        }
     };
 
     // The canvas on which all side_menu widgets are placed.
@@ -1050,8 +1098,18 @@ fn set_widgets(gui: &mut Gui) {
     let max_cam_x_m = centre_x_m + half_invisible_w_m;
     let min_cam_y_m = centre_y_m - half_invisible_h_m;
     let max_cam_y_m = centre_y_m + half_invisible_h_m;
-    gui.state.camera.position.x = gui.state.camera.position.x.max(min_cam_x_m).min(max_cam_x_m);
-    gui.state.camera.position.y = gui.state.camera.position.y.max(min_cam_y_m).min(max_cam_y_m);
+    gui.state.camera.position.x = gui.state
+        .camera
+        .position
+        .x
+        .max(min_cam_x_m)
+        .min(max_cam_x_m);
+    gui.state.camera.position.y = gui.state
+        .camera
+        .position
+        .y
+        .max(min_cam_y_m)
+        .min(max_cam_y_m);
 
     let visible_x = metres_to_floorplan_pixels(gui.state.camera.position.x);
     let visible_y = metres_to_floorplan_pixels(gui.state.camera.position.y);
@@ -1060,7 +1118,12 @@ fn set_widgets(gui: &mut Gui) {
     let visible_rect = ui::Rect::from_xy_dim([visible_x, visible_y], [visible_w, visible_h]);
 
     // If the left mouse button was clicked on the floorplan, deselect the speaker.
-    if gui.widget_input(gui.ids.floorplan).clicks().left().next().is_some() {
+    if gui.widget_input(gui.ids.floorplan)
+        .clicks()
+        .left()
+        .next()
+        .is_some()
+    {
         gui.state.speaker_editor.selected = None;
     }
 
@@ -1083,10 +1146,10 @@ fn set_widgets(gui: &mut Gui) {
     let radius_min = gui.state.camera.metres_to_scalar(radius_min_m);
     let radius_max = gui.state.camera.metres_to_scalar(radius_max_m);
 
-    fn x_position_metres_to_floorplan (x: Metres, cam: &Camera) -> Scalar {
+    fn x_position_metres_to_floorplan(x: Metres, cam: &Camera) -> Scalar {
         cam.metres_to_scalar(x - cam.position.x)
     }
-    fn y_position_metres_to_floorplan (y: Metres, cam: &Camera) -> Scalar {
+    fn y_position_metres_to_floorplan(y: Metres, cam: &Camera) -> Scalar {
         cam.metres_to_scalar(y - cam.position.y)
     }
 
@@ -1140,12 +1203,16 @@ fn set_widgets(gui: &mut Gui) {
             let (dragged_x, dragged_y) = ui.widget_input(widget_id)
                 .drags()
                 .left()
-                .fold((0.0, 0.0), |(x, y), drag| (x + drag.delta_xy[0], y + drag.delta_xy[1]));
+                .fold((0.0, 0.0), |(x, y), drag| {
+                    (x + drag.delta_xy[0], y + drag.delta_xy[1])
+                });
             let dragged_x_m = state.camera.scalar_to_metres(dragged_x);
             let dragged_y_m = state.camera.scalar_to_metres(dragged_y);
 
             let position = {
-                let SpeakerEditor { ref mut speakers, .. } = state.speaker_editor;
+                let SpeakerEditor {
+                    ref mut speakers, ..
+                } = state.speaker_editor;
                 let p = speakers[i].audio.point;
                 let x = p.x + dragged_x_m;
                 let y = p.y + dragged_y_m;
@@ -1153,9 +1220,12 @@ fn set_widgets(gui: &mut Gui) {
                 if p != new_p {
                     speakers[i].audio.point = new_p;
                     let (speaker_id, speaker_clone) = (speakers[i].id, speakers[i].audio.clone());
-                    channels.audio_output.send(move |audio| {
-                        audio.insert_speaker(speaker_id, speaker_clone);
-                    }).ok();
+                    channels
+                        .audio_output
+                        .send(move |audio| {
+                            audio.insert_speaker(speaker_id, speaker_clone);
+                        })
+                        .ok();
                 }
                 new_p
             };
@@ -1174,11 +1244,17 @@ fn set_widgets(gui: &mut Gui) {
             }
 
             // Give some tactile colour feedback if the speaker is interacted with.
-            let color = if Some(i) == state.speaker_editor.selected { color::BLUE } else { color::DARK_RED };
+            let color = if Some(i) == state.speaker_editor.selected {
+                color::BLUE
+            } else {
+                color::DARK_RED
+            };
             let color = match ui.widget_input(widget_id).mouse() {
-                Some(mouse) =>
-                    if mouse.buttons.left().is_down() { color.clicked() }
-                    else { color.highlighted() },
+                Some(mouse) => if mouse.buttons.left().is_down() {
+                    color.clicked()
+                } else {
+                    color.highlighted()
+                },
                 None => color,
             };
 
@@ -1197,7 +1273,14 @@ fn set_widgets(gui: &mut Gui) {
     // Draw the currently active sounds over the floorplan.
     let mut speakers_in_proximity = vec![]; // TODO: Move this to where it can be re-used.
     {
-        let Gui { ref mut ids, ref mut state, ref mut ui, ref channels, audio_monitor, .. } = *gui;
+        let Gui {
+            ref mut ids,
+            ref mut state,
+            ref mut ui,
+            ref channels,
+            audio_monitor,
+            ..
+        } = *gui;
 
         let current = state.source_editor.preview.current;
         let point = state.source_editor.preview.point;
@@ -1230,7 +1313,9 @@ fn set_widgets(gui: &mut Gui) {
                     let (dragged_x, dragged_y) = ui.widget_input(sound_widget_id)
                         .drags()
                         .left()
-                        .fold((0.0, 0.0), |(x, y), drag| (x + drag.delta_xy[0], y + drag.delta_xy[1]));
+                        .fold((0.0, 0.0), |(x, y), drag| {
+                            (x + drag.delta_xy[0], y + drag.delta_xy[1])
+                        });
                     let dragged_x_m = state.camera.scalar_to_metres(dragged_x);
                     let dragged_y_m = state.camera.scalar_to_metres(dragged_y);
 
@@ -1241,20 +1326,31 @@ fn set_widgets(gui: &mut Gui) {
                         let new_p = Point2 { x, y };
                         if point != new_p {
                             state.source_editor.preview.point = Some(new_p);
-                            channels.audio_output.send(move |audio| {
-                                if let Some(sound) = audio.sound_mut(&sound_id) {
-                                    sound.point = new_p;
-                                }
-                            }).ok();
+                            channels
+                                .audio_output
+                                .send(move |audio| {
+                                    if let Some(sound) = audio.sound_mut(&sound_id) {
+                                        sound.point = new_p;
+                                    }
+                                })
+                                .ok();
                         }
                         new_p
                     };
 
-                    (spread, channel_radians, channel_count, position, color::LIGHT_BLUE)
-                },
+                    (
+                        spread,
+                        channel_radians,
+                        channel_count,
+                        position,
+                        color::LIGHT_BLUE,
+                    )
+                }
                 _ => {
                     // Find the source.
-                    let source = state.source_editor.sources
+                    let source = state
+                        .source_editor
+                        .sources
                         .iter()
                         .find(|s| s.id == active_sound.source_id)
                         .expect("No source found for active sound");
@@ -1262,8 +1358,14 @@ fn set_widgets(gui: &mut Gui) {
                     let channel_radians = source.audio.radians as f64;
                     let channel_count = source.audio.channel_count();
                     let position = active_sound.position;
-                    (spread, channel_radians, channel_count, position, color::DARK_BLUE)
-                },
+                    (
+                        spread,
+                        channel_radians,
+                        channel_count,
+                        position,
+                        color::DARK_BLUE,
+                    )
+                }
             };
 
             let spread = state.camera.metres_to_scalar(spread_m);
@@ -1273,9 +1375,11 @@ fn set_widgets(gui: &mut Gui) {
 
             // Determine the line colour by checking for interactions with the sound.
             let line_color = match ui.widget_input(sound_widget_id).mouse() {
-                Some(mouse) =>
-                    if mouse.buttons.left().is_down() { color.clicked() }
-                    else { color.highlighted() },
+                Some(mouse) => if mouse.buttons.left().is_down() {
+                    color.clicked()
+                } else {
+                    color.highlighted()
+                },
                 None => color,
             };
 
@@ -1297,11 +1401,18 @@ fn set_widgets(gui: &mut Gui) {
                     // Amp along with the index within the given `Vec`.
                     in_proximity: &mut Vec<(f32, usize)>,
                 ) {
-                    let dbap_speakers: Vec<_> = speakers.iter()
+                    let dbap_speakers: Vec<_> = speakers
+                        .iter()
                         .map(|speaker| {
                             let speaker = &speaker.audio.point;
-                            let point_f = Point2 { x: point.x.0, y: point.y.0 };
-                            let speaker_f = Point2 { x: speaker.x.0, y: speaker.y.0 };
+                            let point_f = Point2 {
+                                x: point.x.0,
+                                y: point.y.0,
+                            };
+                            let speaker_f = Point2 {
+                                x: speaker.x.0,
+                                y: speaker.y.0,
+                            };
                             let distance = point_f.distance(speaker_f);
                             // TODO: Weight the speaker depending on its associated installation.
                             let weight = 1.0;
@@ -1329,7 +1440,8 @@ fn set_widgets(gui: &mut Gui) {
                     // Ensure there is a unique `Id` for this line.
                     if ids.floorplan_channel_to_speaker_lines.len() <= line_index {
                         let mut gen = ui.widget_id_generator();
-                        ids.floorplan_channel_to_speaker_lines.resize(line_index+1, &mut gen);
+                        ids.floorplan_channel_to_speaker_lines
+                            .resize(line_index + 1, &mut gen);
                     }
 
                     let line_id = ids.floorplan_channel_to_speaker_lines[line_index];

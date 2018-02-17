@@ -3,7 +3,7 @@
 //! The render function is passed to `nannou::App`'s build output stream method and describes how
 //! audio should be rendered to the output.
 
-use audio::{Sound, Speaker, PROXIMITY_LIMIT_2, MAX_CHANNELS, ROLLOFF_DB};
+use audio::{PROXIMITY_LIMIT_2, Sound, Speaker, MAX_CHANNELS, ROLLOFF_DB};
 use audio::detector::{EnvDetector, Fft, FftDetector, FFT_WINDOW_LEN};
 use audio::{dbap, sound, speaker};
 use audio::fft;
@@ -42,7 +42,10 @@ impl ActiveSound {
             .map(|_| EnvDetector::new())
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        ActiveSound { sound, channel_detectors }
+        ActiveSound {
+            sound,
+            channel_detectors,
+        }
     }
 }
 
@@ -144,14 +147,20 @@ impl Model {
     /// Inserts the speaker and sends an `Add` message to the GUI.
     pub fn insert_speaker(&mut self, id: speaker::Id, speaker: Speaker) -> Option<Speaker> {
         // Re-use the old detectors if there are any.
-        let (env_detector, fft_detector ,old_speaker) = match self.speakers.remove(&id) {
+        let (env_detector, fft_detector, old_speaker) = match self.speakers.remove(&id) {
             None => (EnvDetector::new(), FftDetector::new(), None),
-            Some(ActiveSpeaker { speaker, env_detector, fft_detector }) => {
-                (env_detector, fft_detector, Some(speaker))
-            },
+            Some(ActiveSpeaker {
+                speaker,
+                env_detector,
+                fft_detector,
+            }) => (env_detector, fft_detector, Some(speaker)),
         };
 
-        let speaker = ActiveSpeaker { speaker, env_detector, fft_detector };
+        let speaker = ActiveSpeaker {
+            speaker,
+            env_detector,
+            fft_detector,
+        };
         let speaker_msg = gui::SpeakerMessage::Add;
         let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
         self.gui_audio_monitor_msg_tx.try_send(msg).ok();
@@ -191,7 +200,11 @@ impl Model {
         let position = sound.sound.point;
         let channels = sound.sound.channels;
         let source_id = sound.sound.source_id;
-        let sound_msg = gui::ActiveSoundMessage::Start { source_id, position, channels };
+        let sound_msg = gui::ActiveSoundMessage::Start {
+            source_id,
+            position,
+            channels,
+        };
         let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
         self.gui_audio_monitor_msg_tx.try_send(msg).ok();
         self.sounds.insert(id, sound)
@@ -239,7 +252,10 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
         // For each sound, request `buffer.len()` number of frames and sum them onto the
         // relevant output channels.
         for (&sound_id, active_sound) in sounds.iter_mut() {
-            let ActiveSound { ref mut sound, ref mut channel_detectors } = *active_sound;
+            let ActiveSound {
+                ref mut sound,
+                ref mut channel_detectors,
+            } = *active_sound;
 
             // The number of samples to request from the sound for this buffer.
             let num_samples = buffer.len_frames() * sound.channels;
@@ -273,7 +289,6 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
             // Mix the audio from the signal onto each of the output channels.
             for i in 0..sound.channels {
-
                 // Find the absolute position of the channel.
                 let channel_point =
                     channel_point(sound.point, i, sound.channels, sound.spread, sound.radians);
@@ -284,9 +299,15 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     // Find the speaker for this channel.
                     // TODO: Could speed this up by maintaining a map from channels to speaker IDs.
                     if let Some(active) = speakers.values().find(|s| s.speaker.channel == channel) {
-                        let point_f = Point2 { x: channel_point.x.0, y: channel_point.y.0 };
+                        let point_f = Point2 {
+                            x: channel_point.x.0,
+                            y: channel_point.y.0,
+                        };
                         let speaker = &active.speaker.point;
-                        let speaker_f = Point2 { x: speaker.x.0, y: speaker.y.0 };
+                        let speaker_f = Point2 {
+                            x: speaker.x.0,
+                            y: speaker.y.0,
+                        };
                         let distance = point_f.distance(speaker_f);
                         // TODO: Weight the speaker depending on its associated installation.
                         let weight = 1.0;
@@ -325,7 +346,11 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             if channel_i >= n_channels {
                 continue;
             }
-            let ActiveSpeaker { ref mut env_detector, ref mut fft_detector, .. } = *active;
+            let ActiveSpeaker {
+                ref mut env_detector,
+                ref mut fft_detector,
+                ..
+            } = *active;
             for frame in buffer.frames() {
                 let sample = frame[channel_i];
                 env_detector.next(sample);
@@ -358,7 +383,11 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 for (sum, amp_2) in sum_fft_8_band.iter_mut().zip(&fft_8_bins_2) {
                     *sum += amp_2.sqrt() / (FFT_WINDOW_LEN / 2) as f32;
                 }
-                let analysis = SpeakerAnalysis { peak, rms, index: channel_i };
+                let analysis = SpeakerAnalysis {
+                    peak,
+                    rms,
+                    index: channel_i,
+                };
                 speakers.push(analysis);
             }
         }
@@ -377,11 +406,23 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             for (avg, &sum) in avg_8_band.iter_mut().zip(&sum_fft_8_band) {
                 *avg = sum / len_f;
             }
-            let avg_fft = osc::output::FftData { lmh: avg_lmh, bins: avg_8_band };
-            let speakers = speakers.drain(..)
-                .map(|s| osc::output::Speaker { rms: s.rms, peak: s.peak })
+            let avg_fft = osc::output::FftData {
+                lmh: avg_lmh,
+                bins: avg_8_band,
+            };
+            let speakers = speakers
+                .drain(..)
+                .map(|s| osc::output::Speaker {
+                    rms: s.rms,
+                    peak: s.peak,
+                })
                 .collect();
-            let data = osc::output::AudioFrameData { avg_peak, avg_rms, avg_fft, speakers };
+            let data = osc::output::AudioFrameData {
+                avg_peak,
+                avg_rms,
+                avg_fft,
+                speakers,
+            };
             let msg = osc::output::Message::Audio(installation, data);
             osc_output_msg_tx.send(msg).ok();
         }
@@ -407,8 +448,7 @@ pub fn channel_point(
     total_channels: usize,
     spread: Metres,
     radians: f32,
-) -> Point2<Metres>
-{
+) -> Point2<Metres> {
     assert!(channel_index < total_channels);
     if total_channels == 1 {
         sound_point
@@ -427,8 +467,14 @@ pub fn channel_point(
 /// Tests whether or not the given speaker position is within the `PROXIMITY_LIMIT` distance of the
 /// given `point` (normally a `Sound`'s channel position).
 pub fn speaker_is_in_proximity(point: &Point2<Metres>, speaker: &Point2<Metres>) -> bool {
-    let point_f = Point2 { x: point.x.0, y: point.y.0 };
-    let speaker_f = Point2 { x: speaker.x.0, y: speaker.y.0 };
+    let point_f = Point2 {
+        x: point.x.0,
+        y: point.y.0,
+    };
+    let speaker_f = Point2 {
+        x: speaker.x.0,
+        y: speaker.y.0,
+    };
     let distance_2 = Metres(point_f.distance2(speaker_f));
     distance_2 < PROXIMITY_LIMIT_2
 }

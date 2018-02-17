@@ -6,8 +6,7 @@
 
 use std::fmt;
 
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-#[derive(Deserialize, Serialize)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub enum Installation {
     WavesAtWork = 0,
     RipplesInSpacetime = 1,
@@ -19,8 +18,7 @@ pub enum Installation {
 }
 
 /// A unique identifier for a single computer within an installation.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct ComputerId(pub usize);
 
 impl Installation {
@@ -28,8 +26,12 @@ impl Installation {
         match *self {
             Installation::WavesAtWork => "Waves At Work",
             Installation::RipplesInSpacetime => "Ripples In Spacetime",
-            Installation::EnergeticVibrationsAudioVisualiser => "Energetic Vibrations - Audio Visualiser",
-            Installation::EnergeticVibrationsProjectionMapping => "Energetic Vibrations - Projection Mapping",
+            Installation::EnergeticVibrationsAudioVisualiser => {
+                "Energetic Vibrations - Audio Visualiser"
+            }
+            Installation::EnergeticVibrationsProjectionMapping => {
+                "Energetic Vibrations - Projection Mapping"
+            }
             Installation::TurbulentEncounters => "Turbulent Encounters",
             Installation::Cacophony => "Cacophony",
             Installation::WrappedInSpectrum => "Wrapped In Spectrum",

@@ -1,16 +1,21 @@
 // Extend the macro recursion limit to allow for many GUI widget IDs.
-#![recursion_limit="128"]
+#![recursion_limit = "128"]
 
-#[macro_use] extern crate conrod;
-#[macro_use] extern crate conrod_derive;
-#[macro_use] extern crate custom_derive;
-extern crate rustfft;
+#[macro_use]
+extern crate conrod;
+#[macro_use]
+extern crate conrod_derive;
+#[macro_use]
+extern crate custom_derive;
 extern crate hound; // wav loading
-#[macro_use] extern crate newtype_derive;
 extern crate nannou;
+#[macro_use]
+extern crate newtype_derive;
 extern crate pitch_calc;
+extern crate rustfft;
 extern crate serde; // serialization
-#[macro_use] extern crate serde_derive;
+#[macro_use]
+extern crate serde_derive;
 extern crate serde_json;
 extern crate time_calc;
 extern crate toml;
@@ -101,7 +106,10 @@ fn model(app: &App) -> Model {
         .new_output_stream(audio_output_model, audio::output::render)
         .sample_rate(audio::SAMPLE_RATE as u32)
         .frames_per_buffer(audio::FRAMES_PER_BUFFER)
-        .channels(std::cmp::min(max_supported_output_channels, audio::MAX_CHANNELS))
+        .channels(std::cmp::min(
+            max_supported_output_channels,
+            audio::MAX_CHANNELS,
+        ))
         .device(output_device)
         .build()
         .unwrap();
@@ -145,8 +153,10 @@ fn model(app: &App) -> Model {
 // Update the application in accordance with the given event.
 fn update(app: &App, mut model: Model, event: Event) -> Model {
     match event {
-        Event::WindowEvent { simple: Some(_event), .. } => {
-        },
+        Event::WindowEvent {
+            simple: Some(_event),
+            ..
+        } => {}
         Event::Update(_update) => {
             model.gui.update();
 
@@ -157,7 +167,7 @@ fn update(app: &App, mut model: Model, event: Event) -> Model {
             } else {
                 app.set_loop_mode(LoopMode::wait(3));
             }
-        },
+        }
         _ => (),
     }
     model

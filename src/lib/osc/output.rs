@@ -1,6 +1,6 @@
 use installation::{ComputerId, Installation};
 use nannou::osc;
-use nannou::osc::Type::{Int, Float};
+use nannou::osc::Type::{Float, Int};
 use std;
 use std::collections::HashMap;
 use std::iter::once;
@@ -14,7 +14,12 @@ pub enum Message {
 
 /// Add or remove an OSC target for a given installation.
 pub enum OscTarget {
-    Add(Installation, ComputerId, osc::Sender<osc::Connected>, String),
+    Add(
+        Installation,
+        ComputerId,
+        osc::Sender<osc::Connected>,
+        String,
+    ),
     Remove(Installation, ComputerId),
 }
 
@@ -54,7 +59,11 @@ pub struct Log {
 }
 
 /// Spawn the osc sender thread.
-pub fn spawn() -> (std::thread::JoinHandle<()>, mpsc::Sender<Message>, mpsc::Receiver<Log>) {
+pub fn spawn() -> (
+    std::thread::JoinHandle<()>,
+    mpsc::Sender<Message>,
+    mpsc::Receiver<Log>,
+) {
     let (msg_tx, msg_rx) = mpsc::channel();
     let (log_tx, log_rx) = mpsc::channel();
     let handle = std::thread::Builder::new()
@@ -88,12 +97,10 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
     let update_tx_2 = update_tx.clone();
     std::thread::Builder::new()
         .name("osc_output_timer".into())
-        .spawn(move || {
-            loop {
-                std::thread::sleep(std::time::Duration::from_millis(16));
-                if update_tx_2.send(Update::SendOsc).is_err() {
-                    break;
-                }
+        .spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(16));
+            if update_tx_2.send(Update::SendOsc).is_err() {
+                break;
             }
         })
         .unwrap();
@@ -119,7 +126,7 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
                 // Audio data received that is to be delivered to the given installation.
                 Message::Audio(installation, data) => {
                     last_received.insert(installation, data);
-                },
+                }
                 // Some OSC target should be added or removed.
                 Message::Osc(osc) => match osc {
                     OscTarget::Add(installation, computer, osc_tx, osc_addr) => {
@@ -127,16 +134,21 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
                             .entry(installation)
                             .or_insert_with(HashMap::default)
                             .insert(computer, Target { osc_tx, osc_addr });
-                    },
+                    }
                     OscTarget::Remove(installation, computer) => {
                         if let Some(txs) = osc_txs.get_mut(&installation) {
                             txs.remove(&computer);
                         }
-                    },
+                    }
                 },
             },
             Update::SendOsc => for (installation, data) in last_received.drain() {
-                let AudioFrameData { avg_peak, avg_rms, avg_fft, speakers } = data;
+                let AudioFrameData {
+                    avg_peak,
+                    avg_rms,
+                    avg_fft,
+                    speakers,
+                } = data;
 
                 let targets = match osc_txs.get(&installation) {
                     Some(targets) => targets,
@@ -155,21 +167,29 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
                 args.extend(bins);
 
                 // Push the Peak and RMS per speaker.
-                let speakers = speakers.into_iter()
-                    .enumerate()
-                    .flat_map(|(i, s)| {
-                        once(Int(i as _))
-                            .chain(once(Float(s.peak)))
-                            .chain(once(Float(s.rms)))
-                    });
+                let speakers = speakers.into_iter().enumerate().flat_map(|(i, s)| {
+                    once(Int(i as _))
+                        .chain(once(Float(s.peak)))
+                        .chain(once(Float(s.rms)))
+                });
                 args.extend(speakers);
 
                 // Retrieve the OSC sender for each computer in the installation.
-                for (&computer, &Target { ref osc_tx, ref osc_addr }) in targets.iter() {
+                for target in targets.iter() {
+                    let (
+                        &computer,
+                        &Target {
+                            ref osc_tx,
+                            ref osc_addr,
+                        },
+                    ) = target;
                     let addr = &osc_addr[..];
 
                     // Send the message!
-                    let msg = osc::Message { addr: addr.into(), args: Some(args.clone()) };
+                    let msg = osc::Message {
+                        addr: addr.into(),
+                        args: Some(args.clone()),
+                    };
 
                     // If the message is the same as the last one we sent for this computer, don't
                     // bother sending it again.
@@ -187,7 +207,13 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
 
                     // Log the message for displaying in the GUI.
                     let addr = osc_tx.remote_addr();
-                    let mut log = Log { installation, computer, addr, msg, error };
+                    let mut log = Log {
+                        installation,
+                        computer,
+                        addr,
+                        msg,
+                        error,
+                    };
                     log_tx.send(log).ok();
                 }
             },

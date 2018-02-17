@@ -1,6 +1,6 @@
 use audio;
 use gui::{collapsible_area, Gui};
-use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE, DARK_A};
+use gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
 use installation::{self, Installation};
 use nannou::ui;
 use nannou::ui::prelude::*;
@@ -65,7 +65,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     const PAD: Scalar = 6.0;
     const TEXT_PAD: Scalar = 20.0;
     const INSTALLATION_LIST_H: Scalar = ITEM_HEIGHT * 3.0;
-    const INSTALLATIONS_CANVAS_H: Scalar = PAD + ITEM_HEIGHT * 2.0 + PAD + INSTALLATION_LIST_H + PAD;
+    const INSTALLATIONS_CANVAS_H: Scalar =
+        PAD + ITEM_HEIGHT * 2.0 + PAD + INSTALLATION_LIST_H + PAD;
     const SELECTED_CANVAS_H: Scalar = ITEM_HEIGHT * 2.0 + PAD * 4.0 + INSTALLATIONS_CANVAS_H;
     let speaker_editor_canvas_h = LIST_HEIGHT + ITEM_HEIGHT + SELECTED_CANVAS_H;
 
@@ -115,10 +116,11 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         // invalid indices.
         let mut maybe_remove_index = None;
 
-        while let Some(event) = list_events.next(gui, |i| gui.state.speaker_editor.selected == Some(i)) {
+        while let Some(event) =
+            list_events.next(gui, |i| gui.state.speaker_editor.selected == Some(i))
+        {
             use self::ui::widget::list_select::Event;
             match event {
-
                 // Instantiate a button for each speaker.
                 Event::Item(item) => {
                     let selected = gui.state.speaker_editor.selected == Some(item.i);
@@ -126,31 +128,42 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         let speaker = &gui.state.speaker_editor.speakers[item.i];
                         let channel = speaker.audio.channel;
                         let position = speaker.audio.point;
-                        let label = format!("{} - CH {} - ({}mx, {}my)",
-                                            speaker.name, channel,
-                                            (position.x.0 * 100.0).trunc() / 100.0,
-                                            (position.y.0 * 100.0).trunc() / 100.0);
+                        let label = format!(
+                            "{} - CH {} - ({}mx, {}my)",
+                            speaker.name,
+                            channel,
+                            (position.x.0 * 100.0).trunc() / 100.0,
+                            (position.y.0 * 100.0).trunc() / 100.0
+                        );
                         label
                     };
 
                     // Blue if selected, gray otherwise.
-                    let color = if selected { color::BLUE } else { color::CHARCOAL };
+                    let color = if selected {
+                        color::BLUE
+                    } else {
+                        color::CHARCOAL
+                    };
 
                     // Use `Button`s for the selectable items.
                     let button = widget::Button::new()
                         .label(&label)
                         .label_font_size(SMALL_FONT_SIZE)
-                        .label_x(position::Relative::Place(position::Place::Start(Some(10.0))))
+                        .label_x(position::Relative::Place(position::Place::Start(Some(
+                            10.0,
+                        ))))
                         .color(color);
                     item.set(button, gui);
 
                     // If the button or any of its children are capturing the mouse, display
                     // the `remove` button.
-                    let show_remove_button = gui.global_input().current.widget_capturing_mouse
+                    let show_remove_button = gui.global_input()
+                        .current
+                        .widget_capturing_mouse
                         .map(|id| {
-                            id == item.widget_id ||
-                            gui.widget_graph()
-                                .does_recursive_depth_edge_exist(item.widget_id, id)
+                            id == item.widget_id
+                                || gui.widget_graph()
+                                    .does_recursive_depth_edge_exist(item.widget_id, id)
                         })
                         .unwrap_or(false);
 
@@ -171,7 +184,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     {
                         maybe_remove_index = Some(item.i);
                     }
-                },
+                }
 
                 // Update the selected speaker.
                 Event::Selection(idx) => gui.state.speaker_editor.selected = Some(idx),
@@ -181,7 +194,9 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         }
 
         // The scrollbar for the list.
-        if let Some(s) = scrollbar { s.set(gui); }
+        if let Some(s) = scrollbar {
+            s.set(gui);
+        }
 
         // Remove a speaker if necessary.
         if let Some(i) = maybe_remove_index {
@@ -190,9 +205,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             }
             let speaker = gui.state.speaker_editor.speakers.remove(i);
             let speaker_id = speaker.id;
-            gui.channels.audio_output.send(move |audio| {
-                audio.remove_speaker(speaker_id);
-            }).ok();
+            gui.channels
+                .audio_output
+                .send(move |audio| {
+                    audio.remove_speaker(speaker_id);
+                })
+                .ok();
         }
     }
 
@@ -237,9 +255,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             };
 
             let speaker = audio.clone();
-            gui.channels.audio_output.send(move |audio| {
-                audio.insert_speaker(id, speaker);
-            }).ok();
+            gui.channels
+                .audio_output
+                .send(move |audio| {
+                    audio.insert_speaker(id, speaker);
+                })
+                .ok();
 
             let speaker = Speaker { id, name, audio };
             gui.state.speaker_editor.speakers.push(speaker);
@@ -272,12 +293,19 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .center_justify()
                 .set(gui.ids.speaker_editor_selected_none, gui);
             return area.id;
-        },
+        }
         Some(i) => i,
     };
 
-    let Gui { ref mut state, ref mut ui, ref ids, .. } = *gui;
-    let SpeakerEditor { ref mut speakers, .. } = state.speaker_editor;
+    let Gui {
+        ref mut state,
+        ref mut ui,
+        ref ids,
+        ..
+    } = *gui;
+    let SpeakerEditor {
+        ref mut speakers, ..
+    } = state.speaker_editor;
 
     // The name of the speaker.
     for event in widget::TextBox::new(&speakers[i].name)
@@ -323,13 +351,17 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         speakers[i].audio.channel = new_index;
         let id = speakers[i].id;
         let speaker = speakers[i].audio.clone();
-        gui.channels.audio_output.send(move |audio| {
-            audio.insert_speaker(id, speaker);
-        }).ok();
+        gui.channels
+            .audio_output
+            .send(move |audio| {
+                audio.insert_speaker(id, speaker);
+            })
+            .ok();
 
         // If an existing speaker was assigned to `index`, swap it with the original
         // selection.
-        let maybe_index = speakers.iter()
+        let maybe_index = speakers
+            .iter()
             .enumerate()
             .find(|&(ix, s)| i != ix && s.audio.channel == new_index)
             .map(|(ix, _)| ix);
@@ -338,9 +370,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             speaker.audio.channel = selected_channel;
             let id = speaker.id;
             let speaker = speaker.audio.clone();
-            gui.channels.audio_output.send(move |audio| {
-                audio.insert_speaker(id, speaker);
-            }).ok();
+            gui.channels
+                .audio_output
+                .send(move |audio| {
+                    audio.insert_speaker(id, speaker);
+                })
+                .ok();
         }
     }
 
@@ -384,13 +419,18 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let speaker = &mut speakers[i];
         let speaker_id = speaker.id;
         speaker.audio.installations.insert(installation);
-        gui.channels.audio_output.send(move |audio| {
-            audio.insert_speaker_installation(speaker_id, installation);
-        }).ok();
+        gui.channels
+            .audio_output
+            .send(move |audio| {
+                audio.insert_speaker_installation(speaker_id, installation);
+            })
+            .ok();
     }
 
     // A scrollable list showing each of the assigned installations.
-    let mut selected_installations = speakers[i].audio.installations
+    let mut selected_installations = speakers[i]
+        .audio
+        .installations
         .iter()
         .cloned()
         .collect::<Vec<_>>();
@@ -413,16 +453,20 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let button = widget::Button::new()
             .label(&label)
             .label_font_size(SMALL_FONT_SIZE)
-            .label_x(position::Relative::Place(position::Place::Start(Some(10.0))));
+            .label_x(position::Relative::Place(position::Place::Start(Some(
+                10.0,
+            ))));
         item.set(button, ui);
 
         // If the button or any of its children are capturing the mouse, display
         // the `remove` button.
-        let show_remove_button = ui.global_input().current.widget_capturing_mouse
+        let show_remove_button = ui.global_input()
+            .current
+            .widget_capturing_mouse
             .map(|id| {
-                id == item.widget_id ||
-                ui.widget_graph()
-                    .does_recursive_depth_edge_exist(item.widget_id, id)
+                id == item.widget_id
+                    || ui.widget_graph()
+                        .does_recursive_depth_edge_exist(item.widget_id, id)
             })
             .unwrap_or(false);
 
@@ -455,9 +499,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let speaker = &mut speakers[i];
         let speaker_id = speaker.id;
         speaker.audio.installations.remove(&inst);
-        gui.channels.audio_output.send(move |audio| {
-            audio.remove_speaker_installation(speaker_id, &inst);
-        }).ok();
+        gui.channels
+            .audio_output
+            .send(move |audio| {
+                audio.remove_speaker_installation(speaker_id, &inst);
+            })
+            .ok();
     }
 
     area.id

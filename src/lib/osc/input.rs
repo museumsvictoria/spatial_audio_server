@@ -14,7 +14,11 @@ pub struct Log {
 /// Spawn the OSC receiver thread.
 pub fn spawn(
     osc_receiver: osc::Receiver,
-) -> (std::thread::JoinHandle<()>, mpsc::Receiver<Log>, mpsc::Receiver<Interaction>) {
+) -> (
+    std::thread::JoinHandle<()>,
+    mpsc::Receiver<Log>,
+    mpsc::Receiver<Interaction>,
+) {
     let (msg_tx, msg_rx) = mpsc::channel();
     let (interaction_gui_tx, interaction_gui_rx) = mpsc::channel();
 
@@ -33,7 +37,10 @@ pub fn spawn(
                 // Unfold the packet into its messages.
                 for message in packet.into_msgs() {
                     // Forward messages to GUI thread for displaying in the log.
-                    let log = Log { addr: addr.clone(), msg: message.clone() };
+                    let log = Log {
+                        addr: addr.clone(),
+                        msg: message.clone(),
+                    };
                     msg_tx.send(log).ok();
 
                     // OSC -> Interaction

@@ -1,6 +1,6 @@
 use metres::Metres;
 
-pub use self::detector::{FFT_WINDOW_LEN, FFT_BIN_STEP_HZ, EnvDetector, FftDetector, Fft};
+pub use self::detector::{EnvDetector, Fft, FftDetector, FFT_BIN_STEP_HZ, FFT_WINDOW_LEN};
 pub use self::sound::Sound;
 pub use self::source::Source;
 pub use self::speaker::Speaker;

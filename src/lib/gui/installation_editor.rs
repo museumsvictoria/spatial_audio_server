@@ -12,8 +12,7 @@ use std::fs::File;
 use std::net;
 use std::path::Path;
 
-#[derive(Clone, Debug)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Address {
     // The IP address of the target installation computer.
     pub socket: net::SocketAddrV4,
@@ -71,14 +70,16 @@ pub fn set(gui: &mut Gui) -> widget::Id {
         ref mut ui,
         ref ids,
         channels,
-        state: &mut State {
-            installation_editor: InstallationEditor {
-                ref mut is_open,
-                ref mut selected,
-                ref mut computer_map,
+        state:
+            &mut State {
+                installation_editor:
+                    InstallationEditor {
+                        ref mut is_open,
+                        ref mut selected,
+                        ref mut computer_map,
+                    },
+                ..
             },
-            ..
-        },
         ..
     } = gui;
 
@@ -95,7 +96,7 @@ pub fn set(gui: &mut Gui) -> widget::Id {
     // - Music Data OSC Output (Text and TextBox)
     let osc_canvas_h = PAD + ITEM_HEIGHT * 3.0 + PAD;
     let computer_canvas_h = ITEM_HEIGHT + PAD + ITEM_HEIGHT + PAD + COMPUTER_LIST_HEIGHT;
-    let selected_canvas_h  = PAD + computer_canvas_h + PAD + osc_canvas_h + PAD;
+    let selected_canvas_h = PAD + computer_canvas_h + PAD + osc_canvas_h + PAD;
 
     // The total height of the installation editor as a sum of the previous heights plus necessary
     // padding.
@@ -115,9 +116,7 @@ pub fn set(gui: &mut Gui) -> widget::Id {
     };
 
     // The canvas on which the installation editor widgets will be placed.
-    let canvas = widget::Canvas::new()
-        .pad(0.0)
-        .h(installation_editor_h);
+    let canvas = widget::Canvas::new().pad(0.0).h(installation_editor_h);
     area.set(canvas, ui);
 
     // Display the installation list.
@@ -136,24 +135,32 @@ pub fn set(gui: &mut Gui) -> widget::Id {
         match event {
             // Instantiate a button for each installation.
             Event::Item(item) => {
-                let installation = Installation::from_usize(item.i).expect("no installation for index");
+                let installation =
+                    Installation::from_usize(item.i).expect("no installation for index");
                 let is_selected = selected.as_ref().map(|s| s.index) == Some(item.i);
                 // Blue if selected, gray otherwise.
-                let color = if is_selected { color::BLUE } else { color::CHARCOAL };
+                let color = if is_selected {
+                    color::BLUE
+                } else {
+                    color::CHARCOAL
+                };
                 let label = installation.display_str();
 
                 // Use `Button`s for the selectable items.
                 let button = widget::Button::new()
                     .label(&label)
                     .label_font_size(SMALL_FONT_SIZE)
-                    .label_x(position::Relative::Place(position::Place::Start(Some(10.0))))
+                    .label_x(position::Relative::Place(position::Place::Start(Some(
+                        10.0,
+                    ))))
                     .color(color);
                 item.set(button, ui);
-            },
+            }
 
             // Update the selected source.
             Event::Selection(index) => {
-                let installation = Installation::from_usize(index).expect("no installation for index");
+                let installation =
+                    Installation::from_usize(index).expect("no installation for index");
                 let addresses = &computer_map[&installation];
                 let selected_computer = match addresses.len() {
                     0 => None,
@@ -163,11 +170,18 @@ pub fn set(gui: &mut Gui) -> widget::Id {
                             let address = &computer_map[&installation][&computer];
                             (format!("{}", address.socket), address.osc_addr.clone())
                         };
-                        Some(SelectedComputer { computer, socket_string, osc_addr })
-                    },
+                        Some(SelectedComputer {
+                            computer,
+                            socket_string,
+                            osc_addr,
+                        })
+                    }
                 };
-                *selected = Some(Selected { index, selected_computer });
-            },
+                *selected = Some(Selected {
+                    index,
+                    selected_computer,
+                });
+            }
 
             _ => (),
         }
@@ -189,7 +203,8 @@ pub fn set(gui: &mut Gui) -> widget::Id {
         .y(selected_canvas_y.middle())
         .align_middle_x_of(ids.side_menu)
         .set(ids.installation_editor_selected_canvas, ui);
-    let selected_canvas_kid_area = ui.kid_area_of(ids.installation_editor_selected_canvas).unwrap();
+    let selected_canvas_kid_area = ui.kid_area_of(ids.installation_editor_selected_canvas)
+        .unwrap();
 
     // If an installation is selected, display the installation computer canvas.
     let selected = match *selected {
@@ -197,7 +212,10 @@ pub fn set(gui: &mut Gui) -> widget::Id {
         None => return area.id,
     };
 
-    let Selected { ref mut index, ref mut selected_computer } = *selected;
+    let Selected {
+        ref mut index,
+        ref mut selected_computer,
+    } = *selected;
     let installation = Installation::from_usize(*index).expect("no installation for index");
 
     // The canvas for displaying the computer selection / editor.
@@ -245,7 +263,8 @@ pub fn set(gui: &mut Gui) -> widget::Id {
                 let osc_addr_base = installation.default_osc_addr_str();
                 let osc_addr = format!("{}/{}", osc_addr_base, i);
                 let osc_tx = osc_sender(&socket);
-                let add = osc::output::OscTarget::Add(installation, computer, osc_tx, osc_addr.clone());
+                let add =
+                    osc::output::OscTarget::Add(installation, computer, osc_tx, osc_addr.clone());
                 let msg = osc::output::Message::Osc(add);
                 if channels.osc_out_msg_tx.send(msg).ok().is_some() {
                     let addr = Address { socket, osc_addr };
@@ -261,7 +280,11 @@ pub fn set(gui: &mut Gui) -> widget::Id {
                     computers.remove(&computer);
                 }
             }
-            if selected_computer.as_ref().map(|s| s.computer.0 >= n).unwrap_or(true) {
+            if selected_computer
+                .as_ref()
+                .map(|s| s.computer.0 >= n)
+                .unwrap_or(true)
+            {
                 *selected_computer = None;
             }
         }
@@ -280,8 +303,7 @@ pub fn set(gui: &mut Gui) -> widget::Id {
 
     while let Some(event) = events.next(ui, |i| {
         selected_computer.as_ref().map(|s| s.computer) == Some(ComputerId(i))
-    })
-    {
+    }) {
         use self::ui::widget::list_select::Event;
         match event {
             // Instantiate a button for each computer.
@@ -289,7 +311,11 @@ pub fn set(gui: &mut Gui) -> widget::Id {
                 let computer = ComputerId(item.i);
                 let is_selected = selected_computer.as_ref().map(|s| s.computer) == Some(computer);
                 // Blue if selected, gray otherwise.
-                let color = if is_selected { color::BLUE } else { color::BLACK };
+                let color = if is_selected {
+                    color::BLUE
+                } else {
+                    color::BLACK
+                };
                 let addr = &computer_map[&installation][&computer];
                 let label = format!("{} {}", addr.socket, addr.osc_addr);
 
@@ -297,10 +323,12 @@ pub fn set(gui: &mut Gui) -> widget::Id {
                 let button = widget::Button::new()
                     .label(&label)
                     .label_font_size(SMALL_FONT_SIZE)
-                    .label_x(position::Relative::Place(position::Place::Start(Some(10.0))))
+                    .label_x(position::Relative::Place(position::Place::Start(Some(
+                        10.0,
+                    ))))
                     .color(color);
                 item.set(button, ui);
-            },
+            }
 
             // Update the selected source.
             Event::Selection(index) => {
@@ -308,8 +336,12 @@ pub fn set(gui: &mut Gui) -> widget::Id {
                 let addr = &computer_map[&installation][&computer];
                 let socket_string = format!("{}", addr.socket);
                 let osc_addr = addr.osc_addr.clone();
-                *selected_computer = Some(SelectedComputer { computer, socket_string, osc_addr });
-            },
+                *selected_computer = Some(SelectedComputer {
+                    computer,
+                    socket_string,
+                    osc_addr,
+                });
+            }
 
             _ => (),
         }
@@ -318,8 +350,6 @@ pub fn set(gui: &mut Gui) -> widget::Id {
     if let Some(scrollbar) = scrollbar {
         scrollbar.set(ui);
     }
-
-
 
     // If a computer within the installation is selected, display the cpu stuff.
     let selected_computer = match *selected_computer {
@@ -355,11 +385,15 @@ pub fn set(gui: &mut Gui) -> widget::Id {
         };
         let osc_tx = osc_sender(&socket);
         let osc_addr = selected.osc_addr.clone();
-        let add = osc::output::OscTarget::Add(installation, selected.computer, osc_tx, osc_addr.clone());
+        let add =
+            osc::output::OscTarget::Add(installation, selected.computer, osc_tx, osc_addr.clone());
         let msg = osc::output::Message::Osc(add);
         if channels.osc_out_msg_tx.send(msg).ok().is_some() {
             let addr = Address { socket, osc_addr };
-            computer_map.get_mut(&installation).unwrap().insert(selected.computer, addr);
+            computer_map
+                .get_mut(&installation)
+                .unwrap()
+                .insert(selected.computer, addr);
         }
     }
 
@@ -370,7 +404,7 @@ pub fn set(gui: &mut Gui) -> widget::Id {
                 true => color::BLACK,
                 false => color::DARK_GREEN.with_luminance(0.1),
             }
-        },
+        }
         Err(_) => color::DARK_RED.with_luminance(0.1),
     };
     for event in widget::TextBox::new(&selected_computer.socket_string)
@@ -387,10 +421,10 @@ pub fn set(gui: &mut Gui) -> widget::Id {
         match event {
             Event::Enter => {
                 update_addr(installation, &selected_computer, channels, computer_map);
-            },
+            }
             Event::Update(new_string) => {
                 selected_computer.socket_string = new_string;
-            },
+            }
         }
     }
 
@@ -408,10 +442,10 @@ pub fn set(gui: &mut Gui) -> widget::Id {
         match event {
             Event::Enter => {
                 update_addr(installation, &selected_computer, channels, computer_map);
-            },
+            }
             Event::Update(new_string) => {
                 selected_computer.osc_addr = new_string;
-            },
+            }
         }
     }
 

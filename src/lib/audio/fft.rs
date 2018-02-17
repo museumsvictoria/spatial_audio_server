@@ -28,7 +28,7 @@ impl Slice for [Complex<f32>; super::detector::FFT_WINDOW_LEN] {
 
 impl<S> Fft<S>
 where
-    S: Slice<Element=Complex<f32>>,
+    S: Slice<Element = Complex<f32>>,
 {
     /// Create a new `Fft` from the necessary buffers.
     ///
@@ -70,9 +70,8 @@ pub fn process<I>(
     input_window: &mut [Complex<f32>],
     output_window: &mut [Complex<f32>],
     frequency_amplitudes_2: &mut [f32],
-)
-where
-    I: IntoIterator<Item=f32>,
+) where
+    I: IntoIterator<Item = f32>,
 {
     assert_eq!(input_window.len(), output_window.len());
     assert_eq!(output_window.len() / 2, frequency_amplitudes_2.len());
@@ -82,7 +81,10 @@ where
     // The real part is set to the amplitude, the imaginary set to 0.
     let mut count = 0;
     for (complex, sample) in input_window.iter_mut().zip(channel_samples) {
-        *complex = Complex { re: sample, im: 0.0 };
+        *complex = Complex {
+            re: sample,
+            im: 0.0,
+        };
         count += 1;
     }
     // Ensure there were as many samples in channel_samples as the length of the windows.
@@ -107,7 +109,8 @@ pub fn lmh(freq_amps_2: &[f32]) -> (f32, f32, f32) {
     const LOW_MAX_HZ: f32 = 200.0;
     const MID_MAX_HZ: f32 = 2_000.0;
     assert_eq!(freq_amps_2.len(), super::detector::FFT_WINDOW_LEN / 2);
-    freq_amps_2.iter()
+    freq_amps_2
+        .iter()
         .enumerate()
         .map(|(i, &amp_2)| (linear_bin_max_hz(i), amp_2))
         .fold((0.0, 0.0, 0.0), |(l, m, h), (f_max, amp)| {
@@ -145,7 +148,8 @@ pub fn mel_bins(in_freq_amps_2: &[f32], out_freq_amps_2: &mut [f32]) {
     let n_out_bins = out_freq_amps_2.len();
 
     // The the input bin frequency ranges and their amplitudes.
-    let mut in_bins = in_freq_amps_2.iter()
+    let mut in_bins = in_freq_amps_2
+        .iter()
         .enumerate()
         .map(|(i, &amp_2)| {
             let freq_max = (i + 1) as f32 * super::detector::FFT_BIN_STEP_HZ as f32;

@@ -43,7 +43,7 @@ pub enum Reaction {}
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum TurbulentEncounters {
-    /// Each of the rotary encoders for the 
+    /// Each of the rotary encoders for the
     RotaryEncoder {
         /// The unique identifier associated with the encoder.
         id: i32,
@@ -53,7 +53,6 @@ pub enum TurbulentEncounters {
         value: f32,
     },
 }
-
 
 impl From<CosmicWave> for Interaction {
     fn from(cw: CosmicWave) -> Self {
@@ -66,7 +65,6 @@ impl From<TurbulentEncounters> for Interaction {
         Interaction::TurbulentEncounters(te)
     }
 }
-
 
 /// Parse the given OSC message as an `Interaction`.
 ///
@@ -89,8 +87,13 @@ pub fn from_osc(msg: &osc::Message) -> Option<Interaction> {
     let interaction = match (&msg.addr[BP_PREFIX.len()..], args.len()) {
         // Cosmic Wave Interactions.
         ("cw", 5) => match (&args[0], &args[1], &args[2], &args[3], &args[4]) {
-            (&Int(screen_id), &Int(id), &Float(x), &Float(y), &Float(z)) =>
-                CosmicWave::Touch { screen_id, id, x, y, z }.into(),
+            (&Int(screen_id), &Int(id), &Float(x), &Float(y), &Float(z)) => CosmicWave::Touch {
+                screen_id,
+                id,
+                x,
+                y,
+                z,
+            }.into(),
             _ => return None,
         },
         ("cw", 1) => match &args[0] {
@@ -115,7 +118,13 @@ fn test_from_osc() {
         addr: "/bp/cw".into(),
         args: Some(vec![Int(2), Int(4), Float(0.1), Float(0.2), Float(0.3)]),
     };
-    let a_expected = Interaction::CosmicWave(CosmicWave::Touch { screen_id: 2, id: 4, x: 0.1, y: 0.2, z: 0.3 });
+    let a_expected = Interaction::CosmicWave(CosmicWave::Touch {
+        screen_id: 2,
+        id: 4,
+        x: 0.1,
+        y: 0.2,
+        z: 0.3,
+    });
     assert_eq!(from_osc(&a), Some(a_expected));
 
     // Test invalid message == None.
@@ -130,6 +139,7 @@ fn test_from_osc() {
         addr: "/bp/te".into(),
         args: Some(vec![Int(0), Float(0.66)]),
     };
-    let c_expected = Interaction::TurbulentEncounters(TurbulentEncounters::RotaryEncoder { id: 0, value: 0.66 });
+    let c_expected =
+        Interaction::TurbulentEncounters(TurbulentEncounters::RotaryEncoder { id: 0, value: 0.66 });
     assert_eq!(from_osc(&c), Some(c_expected));
 }

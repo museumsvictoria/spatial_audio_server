@@ -29,15 +29,33 @@ pub struct Config {
 // Fallback parameters in the case that they are missing from the file or invalid.
 pub mod default {
     use metres::Metres;
-    pub fn window_width() -> u32 { 1280 }
-    pub fn window_height() -> u32 { 720 }
-    pub fn osc_input_port() -> u16 { 9001 }
-    pub fn osc_input_log_limit() -> usize { 50 }
-    pub fn osc_output_log_limit() -> usize { 10 }
-    pub fn interaction_log_limit() -> usize { 50 }
-    pub fn floorplan_pixels_per_metre() -> f64 { 148.0 }
-    pub fn min_speaker_radius_metres() -> Metres { Metres(0.25) }
-    pub fn max_speaker_radius_metres() -> Metres { Metres(1.0) }
+    pub fn window_width() -> u32 {
+        1280
+    }
+    pub fn window_height() -> u32 {
+        720
+    }
+    pub fn osc_input_port() -> u16 {
+        9001
+    }
+    pub fn osc_input_log_limit() -> usize {
+        50
+    }
+    pub fn osc_output_log_limit() -> usize {
+        10
+    }
+    pub fn interaction_log_limit() -> usize {
+        50
+    }
+    pub fn floorplan_pixels_per_metre() -> f64 {
+        148.0
+    }
+    pub fn min_speaker_radius_metres() -> Metres {
+        Metres(0.25)
+    }
+    pub fn max_speaker_radius_metres() -> Metres {
+        Metres(1.0)
+    }
 }
 
 /// Load the `Config` from the toml file at the given path.

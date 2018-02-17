@@ -12,7 +12,6 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         gui.state.osc_out_log_is_open = event.is_open();
     }
     if let Some(area) = area {
-
         // The canvas on which the log will be placed.
         let canvas = widget::Canvas::new()
             .scroll_kids()
@@ -45,5 +44,3 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         gui.ids.osc_out_log
     }
 }
-
-

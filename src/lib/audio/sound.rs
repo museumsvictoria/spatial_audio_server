@@ -19,7 +19,7 @@ pub struct Sound {
     //
     // The sound is "complete" when the signal returns `None` and will be removed from the map on
     // the audio thread.
-    pub signal: Box<Iterator<Item=f32> + Send>,
+    pub signal: Box<Iterator<Item = f32> + Send>,
     // The location of the sound within the space.
     pub point: Point2<Metres>,
     pub spread: Metres,
@@ -42,7 +42,7 @@ pub struct IdGenerator {
 impl IdGenerator {
     pub fn new() -> Self {
         IdGenerator {
-            next: Arc::new(Mutex::new(Id::INITIAL))
+            next: Arc::new(Mutex::new(Id::INITIAL)),
         }
     }
 

@@ -1,10 +1,10 @@
 use audio;
 use hound::{self, SampleFormat};
-use nannou::audio::sample::{self, Sample, signal, Signal};
+use nannou::audio::sample::{self, signal, Sample, Signal};
 use std::io::BufReader;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use time_calc::{Ms, Samples, SampleHz};
+use time_calc::{Ms, SampleHz, Samples};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Wav {
@@ -22,7 +22,12 @@ impl Wav {
         let channels = spec.channels as usize;
         let sample_hz = spec.sample_rate as _;
         let duration = Samples(reader.duration() as _);
-        Ok(Wav { path, channels, duration, sample_hz })
+        Ok(Wav {
+            path,
+            channels,
+            duration,
+            sample_hz,
+        })
     }
 
     /// The duration of the `Wav` in milliseconds.
@@ -32,7 +37,7 @@ impl Wav {
 }
 
 /// Load the WAV file at the given path and return a boxed signal.
-pub fn stream_signal(path: &Path) -> Result<Box<Iterator<Item=f32> + Send>, hound::Error> {
+pub fn stream_signal(path: &Path) -> Result<Box<Iterator<Item = f32> + Send>, hound::Error> {
     let reader = hound::WavReader::open(path)?;
     let spec = reader.spec();
 
@@ -65,8 +70,10 @@ pub fn stream_signal(path: &Path) -> Result<Box<Iterator<Item=f32> + Send>, houn
         (SampleFormat::Int, 8) => box_signal!(i8),
         (SampleFormat::Int, 16) => box_signal!(i16),
         (SampleFormat::Int, 32) => box_signal!(i32),
-        _ => panic!("Unsupported bit depth {} - currently only 8, 16 and 32 are supported",
-                    spec.bits_per_sample),
+        _ => panic!(
+            "Unsupported bit depth {} - currently only 8, 16 and 32 are supported",
+            spec.bits_per_sample
+        ),
     };
 
     Ok(boxed_signal)
@@ -101,8 +108,10 @@ impl Iterator for WavCycle {
                 (SampleFormat::Int, 8) => next_sample!(i8),
                 (SampleFormat::Int, 16) => next_sample!(i16),
                 (SampleFormat::Int, 32) => next_sample!(i32),
-                _ => panic!("Unsupported bit depth {} - currently only 8, 16 and 32 are supported",
-                            spec.bits_per_sample),
+                _ => panic!(
+                    "Unsupported bit depth {} - currently only 8, 16 and 32 are supported",
+                    spec.bits_per_sample
+                ),
             }
 
             if self.reader.seek(0).is_err() {
@@ -113,7 +122,7 @@ impl Iterator for WavCycle {
 }
 
 /// Load the WAV file at the given path and return a cycled boxed signal.
-pub fn stream_signal_cycled(path: &Path) -> Result<Box<Iterator<Item=f32> + Send>, hound::Error> {
+pub fn stream_signal_cycled(path: &Path) -> Result<Box<Iterator<Item = f32> + Send>, hound::Error> {
     let reader = hound::WavReader::open(path)?;
     let spec = reader.spec();
     let cycled = WavCycle { reader };
@@ -125,8 +134,8 @@ pub fn stream_signal_cycled(path: &Path) -> Result<Box<Iterator<Item=f32> + Send
         let interp = sample::interpolate::Linear::from_source(&mut signal);
         let signal = signal.from_hz_to_hz(interp, source_hz, target_hz);
         let iter = signal.until_exhausted().map(|s| s[0]);
-        Ok(Box::new(iter) as Box<Iterator<Item=f32> + Send>)
+        Ok(Box::new(iter) as Box<Iterator<Item = f32> + Send>)
     } else {
-        Ok(Box::new(cycled) as Box<Iterator<Item=f32> + Send>)
+        Ok(Box::new(cycled) as Box<Iterator<Item = f32> + Send>)
     }
 }
