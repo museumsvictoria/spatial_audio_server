@@ -11,7 +11,7 @@ use osc;
 use osc::input::Log as OscInputLog;
 use osc::output::Log as OscOutputLog;
 use serde_json;
-use soundscape;
+use soundscape::Soundscape;
 use std;
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
@@ -447,11 +447,11 @@ impl State {
 
         // Send the loaded sources to the composer thread.
         for source in &sources {
-            let msg = soundscape::Message::InsertSource(source.id, source.audio.clone());
-            channels
-                .soundscape_msg_tx
-                .send(msg)
-                .expect("soundscape_msg_tx was closed");
+            let id = source.id;
+            let clone = source.audio.clone();
+            channels.soundscape.send(move |soundscape| {
+                soundscape.insert_source(id, clone);
+            }).expect("soundscape was closed");
         }
 
         let preview = SourcePreview {
@@ -505,7 +505,7 @@ pub struct Channels {
     pub osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
     pub osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
     pub interaction_rx: mpsc::Receiver<Interaction>,
-    pub soundscape_msg_tx: mpsc::Sender<soundscape::Message>,
+    pub soundscape: Soundscape,
     /// A handle for communicating with the audio input stream.
     pub audio_input: audio::input::Stream,
     /// A handle for communicating with the audio output stream.
@@ -520,7 +520,7 @@ impl Channels {
         osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
         osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
         interaction_rx: mpsc::Receiver<Interaction>,
-        soundscape_msg_tx: mpsc::Sender<soundscape::Message>,
+        soundscape: Soundscape,
         audio_input: audio::input::Stream,
         audio_output: audio::output::Stream,
         audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
@@ -530,7 +530,7 @@ impl Channels {
             osc_out_log_rx,
             osc_out_msg_tx,
             interaction_rx,
-            soundscape_msg_tx,
+            soundscape,
             audio_input,
             audio_output,
             audio_monitor_msg_rx,

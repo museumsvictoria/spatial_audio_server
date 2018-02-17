@@ -6,7 +6,6 @@ use nannou::prelude::*;
 use nannou::ui;
 use nannou::ui::prelude::*;
 use serde_json;
-use soundscape;
 use std;
 use std::ffi::OsStr;
 use std::fs::File;
@@ -374,11 +373,9 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .ok();
 
             // Remove soundscape copy.
-            let msg = soundscape::Message::RemoveSource(id);
-            gui.channels
-                .soundscape_msg_tx
-                .send(msg)
-                .expect("soundscape_msg_tx was closed");
+            gui.channels.soundscape.send(move |soundscape| {
+                soundscape.remove_source(&id);
+            }).expect("soundscape was closed");
         }
     }
 
@@ -579,11 +576,11 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             Event::Selection(idx) => {
                 let source = &mut sources[i];
                 source.audio.role = int_to_role(idx);
-                let msg = soundscape::Message::InsertSource(source.id, source.audio.clone());
-                channels
-                    .soundscape_msg_tx
-                    .send(msg)
-                    .expect("soundscape_msg_tx was closed");
+                let id = source.id;
+                let clone = source.audio.clone();
+                channels.soundscape.send(move |soundscape| {
+                    soundscape.insert_source(id, clone);
+                }).expect("soundscape was closed");
             }
 
             _ => (),
@@ -860,13 +857,13 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     }).ok();
 
                     // Update the soundscape thread copy.
-                    let update = soundscape::UpdateSourceFn::from(move |source: &mut audio::Source| {
-                        if let audio::source::Kind::Realtime(ref mut realtime) = source.kind {
-                            $update_fn(realtime);
-                        }
-                    });
-                    let msg = soundscape::Message::UpdateSource(source_id, update);
-                    channels.soundscape_msg_tx.send(msg).expect("soundscape_msg_tx was closed");
+                    channels.soundscape.send(move |soundscape| {
+                        soundscape.update_source(&source_id, |source| {
+                            if let audio::source::Kind::Realtime(ref mut realtime) = source.kind {
+                                $update_fn(realtime);
+                            }
+                        });
+                    }).expect("soundscape was closed");
                 };
             }
 
@@ -1005,11 +1002,11 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     {
         spread = new_spread;
         sources[i].audio.spread = Metres(spread as _);
-        let msg = soundscape::Message::InsertSource(sources[i].id, sources[i].audio.clone());
-        channels
-            .soundscape_msg_tx
-            .send(msg)
-            .expect("soundscape_msg_tx was closed");
+        let id = sources[i].id;
+        let clone = sources[i].audio.clone();
+        channels.soundscape.send(move |soundscape| {
+            soundscape.insert_source(id, clone);
+        }).expect("soundscape was closed");
     }
 
     // Slider for controlling how channels should be rotated.
@@ -1025,11 +1022,11 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     {
         rotation = new_rotation;
         sources[i].audio.radians = rotation;
-        let msg = soundscape::Message::InsertSource(sources[i].id, sources[i].audio.clone());
-        channels
-            .soundscape_msg_tx
-            .send(msg)
-            .expect("soundscape_msg_tx was closed");
+        let id = sources[i].id;
+        let clone = sources[i].audio.clone();
+        channels.soundscape.send(move |soundscape| {
+            soundscape.insert_source(id, clone);
+        }).expect("soundscape was closed");
     }
 
     // The field over which the channel layout will be visualised.
