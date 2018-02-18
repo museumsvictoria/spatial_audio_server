@@ -57,12 +57,24 @@ pub struct Source {
     pub radians: f32,
 }
 
+/// Represents a currently active sound spawned by the soundscape thread.
+pub struct ActiveSound {
+    // movement: fn(Tick) -> (Point2<Metres>, f32)
+    // TODO: We can probably remove these as we can always get them from `movement`.
+    /// The current location of the sound.
+    point: Point2<Metres>,
+    /// The direction the sound is facing in radians.
+    direction_radians: f32,
+}
+
 /// The model containing all state running on the soundscape thread.
 pub struct Model {
     /// All sources available to the soundscape for producing audio.
     sources: HashMap<audio::source::Id, Source>,
     /// All speakers within the exhibition.
     speakers: HashMap<audio::speaker::Id, Speaker>,
+    /// All sounds currently being played that were spawned by the soundscape thread.
+    active_sounds: HashMap<audio::source::Id, ActiveSound>,
     /// This is used to determine the "area" for each installation.
     installation_speakers: HashMap<Installation, audio::speaker::Id>,
     /// A handle for submitting new sounds to the output stream.
@@ -176,6 +188,7 @@ impl Model {
 
     /// Remove a source from the inner hashmap.
     pub fn remove_source(&mut self, id: &audio::source::Id) -> Option<Source> {
+        self.active_sounds.retain(|s_id, _| id != s_id);
         self.sources.remove(id)
     }
 }
@@ -242,10 +255,12 @@ pub fn spawn(
     // The model maintaining state between messages.
     let sources = HashMap::new();
     let speakers = HashMap::new();
+    let active_sounds = HashMap::new();
     let installation_speakers = HashMap::new();
     let model = Model {
         sources,
         speakers,
+        active_sounds,
         installation_speakers,
         audio_output_stream,
         sound_id_gen,
