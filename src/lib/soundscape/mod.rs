@@ -41,9 +41,12 @@ pub struct Soundscape {
 }
 
 /// Data related to a single speaker that is relevant to the soundscape.
+#[derive(Clone, Debug)]
 pub struct Speaker {
     /// The position of the speaker in metres.
     pub point: Point2<Metres>,
+    /// All installations assigned to the speaker.
+    pub installations: HashSet<Installation>,
 }
 
 /// Properties of an audio source that are relevant to the soundscape thread.
@@ -58,14 +61,25 @@ pub struct Source {
 pub struct Model {
     /// All sources available to the soundscape for producing audio.
     sources: HashMap<audio::source::Id, Source>,
+    /// All speakers within the exhibition.
+    speakers: HashMap<audio::speaker::Id, Speaker>,
     /// This is used to determine the "area" for each installation.
-    installation_speakers: HashMap<Installation, HashMap<audio::speaker::Id, Speaker>>,
+    installation_speakers: HashMap<Installation, audio::speaker::Id>,
     /// A handle for submitting new sounds to the output stream.
     audio_output_stream: audio::output::Stream,
     /// For generating unique IDs for each new sound.
     sound_id_gen: audio::sound::IdGenerator,
     // A handle to the ticker thread.
     tick_thread: thread::JoinHandle<()>,
+}
+
+impl Speaker {
+    pub fn from_audio_speaker(s: &audio::Speaker) -> Self {
+        Speaker {
+            point: s.point,
+            installations: s.installations.clone(),
+        }
+    }
 }
 
 impl Source {
@@ -113,6 +127,32 @@ impl Soundscape {
 }
 
 impl Model {
+    /// Insert a speaker into the inner map.
+    pub fn insert_speaker(&mut self, id: audio::speaker::Id, speaker: Speaker) -> Option<Speaker> {
+        self.speakers.insert(id, speaker)
+    }
+
+    /// Updates the speaker with the given function.
+    ///
+    /// Returns `false` if the speaker wasn't there.
+    pub fn update_speaker<F>(&mut self, id: &audio::speaker::Id, update: F) -> bool
+    where
+        F: FnOnce(&mut Speaker),
+    {
+        match self.speakers.get_mut(id) {
+            None => false,
+            Some(s) => {
+                update(s);
+                true
+            },
+        }
+    }
+
+    /// Remove a speaker from the inner hashmap.
+    pub fn remove_speaker(&mut self, id: &audio::speaker::Id) -> Option<Speaker> {
+        self.speakers.remove(id)
+    }
+
     /// Insert a source into the inner hashmap.
     pub fn insert_source(&mut self, id: audio::source::Id, source: Source) -> Option<Source> {
         self.sources.insert(id, source)
@@ -134,7 +174,7 @@ impl Model {
         }
     }
 
-    /// Insert a source into the inner hashmap.
+    /// Remove a source from the inner hashmap.
     pub fn remove_source(&mut self, id: &audio::source::Id) -> Option<Source> {
         self.sources.remove(id)
     }
@@ -201,9 +241,11 @@ pub fn spawn(
 
     // The model maintaining state between messages.
     let sources = HashMap::new();
+    let speakers = HashMap::new();
     let installation_speakers = HashMap::new();
     let model = Model {
         sources,
+        speakers,
         installation_speakers,
         audio_output_stream,
         sound_id_gen,

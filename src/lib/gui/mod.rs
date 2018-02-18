@@ -408,13 +408,25 @@ impl State {
         // Load the existing speaker layout configuration if there is one.
         let StoredSpeakers { speakers, next_id } = StoredSpeakers::load(&speakers_path(assets));
 
-        // Send the loaded speakers to the audio thread.
+        // Send the loaded speakers to the audio and soundscape threads.
         for speaker in &speakers {
-            let (speaker_id, speaker_clone) = (speaker.id, speaker.audio.clone());
+            let speaker_id = speaker.id;
+
+            // Audio output thread.
+            let speaker_clone = speaker.audio.clone();
             channels
                 .audio_output
                 .send(move |audio| {
                     audio.insert_speaker(speaker_id, speaker_clone);
+                })
+                .ok();
+
+            // Soundscape thread.
+            let soundscape_speaker = soundscape::Speaker::from_audio_speaker(&speaker.audio);
+            channels
+                .soundscape
+                .send(move |soundscape| {
+                    soundscape.insert_speaker(speaker_id, soundscape_speaker);
                 })
                 .ok();
         }
@@ -1224,12 +1236,24 @@ fn set_widgets(gui: &mut Gui) {
                 let y = p.y + dragged_y_m;
                 let new_p = Point2 { x, y };
                 if p != new_p {
+                    // Update the local copy.
                     speakers[i].audio.point = new_p;
-                    let (speaker_id, speaker_clone) = (speakers[i].id, speakers[i].audio.clone());
+
+                    // Update the audio copy.
+                    let speaker_id = speakers[i].id;
+                    let speaker_clone = speakers[i].audio.clone();
                     channels
                         .audio_output
                         .send(move |audio| {
                             audio.insert_speaker(speaker_id, speaker_clone);
+                        })
+                        .ok();
+
+                    // Update the soundscape copy.
+                    channels
+                        .soundscape
+                        .send(move |soundscape| {
+                            soundscape.update_speaker(&speaker_id, |s| s.point = new_p);
                         })
                         .ok();
                 }
@@ -1331,7 +1355,10 @@ fn set_widgets(gui: &mut Gui) {
                         let y = point.y + dragged_y_m;
                         let new_p = Point2 { x, y };
                         if point != new_p {
+                            // Update the local copy.
                             state.source_editor.preview.point = Some(new_p);
+
+                            // Update the output audio thread.
                             channels
                                 .audio_output
                                 .send(move |audio| {

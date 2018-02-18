@@ -5,6 +5,7 @@ use installation::{self, Installation};
 use nannou::ui;
 use nannou::ui::prelude::*;
 use serde_json;
+use soundscape;
 use std::fs::File;
 use std::path::Path;
 
@@ -203,12 +204,24 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             if Some(i) == gui.state.speaker_editor.selected {
                 gui.state.speaker_editor.selected = None;
             }
+
+            // Remove the local copy.
             let speaker = gui.state.speaker_editor.speakers.remove(i);
+
+            // Remove the speaker from the audio output thread.
             let speaker_id = speaker.id;
             gui.channels
                 .audio_output
                 .send(move |audio| {
                     audio.remove_speaker(speaker_id);
+                })
+                .ok();
+
+            // Remove the soundscape copy.
+            gui.channels
+                .soundscape
+                .send(move |soundscape| {
+                    soundscape.remove_speaker(&speaker_id);
                 })
                 .ok();
         }
@@ -254,11 +267,21 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 installations: Default::default(),
             };
 
+            // Update the audio output copy.
             let speaker = audio.clone();
             gui.channels
                 .audio_output
                 .send(move |audio| {
                     audio.insert_speaker(id, speaker);
+                })
+                .ok();
+
+            // Update the soundscape copy.
+            let soundscape_speaker = soundscape::Speaker::from_audio_speaker(&audio);
+            gui.channels
+                .soundscape
+                .send(move |soundscape| {
+                    soundscape.insert_speaker(id, soundscape_speaker);
                 })
                 .ok();
 
@@ -348,8 +371,11 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         .label_font_size(SMALL_FONT_SIZE)
         .set(ids.speaker_editor_selected_channel, ui)
     {
+        // Update the local copy.
         speakers[i].audio.channel = new_index;
         let id = speakers[i].id;
+
+        // Update the audio output copy.
         let speaker = speakers[i].audio.clone();
         gui.channels
             .audio_output
@@ -366,8 +392,11 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             .find(|&(ix, s)| i != ix && s.audio.channel == new_index)
             .map(|(ix, _)| ix);
         if let Some(ix) = maybe_index {
+            // Update the local copy.
             let speaker = &mut speakers[ix];
             speaker.audio.channel = selected_channel;
+
+            // Update the audio output copy.
             let id = speaker.id;
             let speaker = speaker.audio.clone();
             gui.channels
@@ -418,11 +447,25 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let installation = installations[index];
         let speaker = &mut speakers[i];
         let speaker_id = speaker.id;
+
+        // Update the local copy.
         speaker.audio.installations.insert(installation);
+
+        // Update the audio output copy.
         gui.channels
             .audio_output
             .send(move |audio| {
                 audio.insert_speaker_installation(speaker_id, installation);
+            })
+            .ok();
+
+        // Update the soundscape copy.
+        gui.channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.update_speaker(&speaker_id, |speaker| {
+                    speaker.installations.insert(installation);
+                });
             })
             .ok();
     }
@@ -498,11 +541,25 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     if let Some(inst) = maybe_remove_index.map(|i| selected_installations[i]) {
         let speaker = &mut speakers[i];
         let speaker_id = speaker.id;
+
+        // Remove the local copy.
         speaker.audio.installations.remove(&inst);
+
+        // Remove the audio output copy.
         gui.channels
             .audio_output
             .send(move |audio| {
                 audio.remove_speaker_installation(speaker_id, &inst);
+            })
+            .ok();
+
+        // Update the soundscape copy.
+        gui.channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.update_speaker(&speaker_id, |speaker| {
+                    speaker.installations.remove(&inst);
+                });
             })
             .ok();
     }
