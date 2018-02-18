@@ -1,5 +1,8 @@
-use nannou::math::Point2;
+use audio::source;
+use installation::Installation;
 use metres::Metres;
+use nannou::math::Point2;
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 /// `Sound`s can be thought of as a stack of three primary components:
@@ -9,7 +12,7 @@ use std::sync::{Arc, Mutex};
 /// 3. **Spatial Output**: maps the sound from a position in space to the output channels.
 pub struct Sound {
     // The unique identifier for the source of the sound's signal.
-    pub source_id: super::source::Id,
+    pub source_id: source::Id,
     // The number of channels yielded by the `Sound`.
     pub channels: usize,
     // Includes the source and pre-spatial effects.
@@ -19,11 +22,40 @@ pub struct Sound {
     //
     // The sound is "complete" when the signal returns `None` and will be removed from the map on
     // the audio thread.
+    //
+    // TODO: This could potentially just be an actual type? `audio::sound::Signal` that matched on
+    // the source kind, stored its own stack of effects, etc?
     pub signal: Box<Iterator<Item = f32> + Send>,
     // The location of the sound within the space.
     pub point: Point2<Metres>,
     pub spread: Metres,
     pub radians: f32,
+    // Installations in which this sound can be played.
+    pub installations: Installations,
+}
+
+#[derive(Debug)]
+pub enum Installations {
+    All,
+    Set(HashSet<Installation>),
+}
+
+impl From<Option<source::Role>> for Installations {
+    fn from(role: Option<source::Role>) -> Self {
+        match role {
+            None => Installations::All,
+            Some(role) => role.into(),
+        }
+    }
+}
+
+impl From<source::Role> for Installations {
+    fn from(role: source::Role) -> Self {
+        match role {
+            source::Role::Soundscape(s) => Installations::Set(s.installations),
+            _ => Installations::All,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]

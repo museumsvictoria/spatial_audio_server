@@ -91,6 +91,18 @@ pub struct Model {
     fft_frequency_amplitudes_2: Box<[f32; FFT_WINDOW_LEN / 2]>,
 }
 
+/// An iterator yielding all `Sound`s in the model.
+pub struct SoundsMut<'a> {
+    iter: std::collections::hash_map::IterMut<'a, sound::Id, ActiveSound>,
+}
+
+impl<'a> Iterator for SoundsMut<'a> {
+    type Item = (&'a sound::Id, &'a mut Sound);
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().map(|(id, active)| (id, &mut active.sound))
+    }
+}
+
 impl Model {
     /// Initialise the `Model`.
     pub fn new(
@@ -210,6 +222,20 @@ impl Model {
         self.sounds.insert(id, sound)
     }
 
+    /// Update the sound associated with the given Id by applying the given function to it.
+    pub fn update_sound<F>(&mut self, id: &sound::Id, update: F) -> bool
+    where
+        F: FnOnce(&mut Sound),
+    {
+        match self.sounds.get_mut(id) {
+            None => false,
+            Some(active) => {
+                update(&mut active.sound);
+                true
+            },
+        }
+    }
+
     /// Removes the sound and sends an `End` active sound message to the GUI.
     pub fn remove_sound(&mut self, id: sound::Id) -> Option<ActiveSound> {
         let removed = self.sounds.remove(&id);
@@ -221,9 +247,10 @@ impl Model {
         removed
     }
 
-    /// Mutable access to the sound at the given Id.
-    pub fn sound_mut(&mut self, id: &sound::Id) -> Option<&mut Sound> {
-        self.sounds.get_mut(id).map(|active| &mut active.sound)
+    /// An iterator yielding mutable access to all sounds currently playing.
+    pub fn sounds_mut(&mut self) -> SoundsMut {
+        let iter = self.sounds.iter_mut();
+        SoundsMut { iter }
     }
 }
 
@@ -309,8 +336,16 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                             y: speaker.y.0,
                         };
                         let distance = point_f.distance(speaker_f);
-                        // TODO: Weight the speaker depending on its associated installation.
-                        let weight = 1.0;
+                        // Weight the speaker depending on its associated installations.
+                        let weight = match sound.installations {
+                            sound::Installations::All => 1.0,
+                            sound::Installations::Set(ref set) => {
+                                match set.intersection(&active.speaker.installations).next() {
+                                    Some(_) => 1.0,
+                                    None => 0.0,
+                                }
+                            },
+                        };
                         dbap_speakers.push(dbap::Speaker { distance, weight });
                     }
                 }

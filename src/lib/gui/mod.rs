@@ -11,7 +11,7 @@ use osc;
 use osc::input::Log as OscInputLog;
 use osc::output::Log as OscOutputLog;
 use serde_json;
-use soundscape::Soundscape;
+use soundscape::{self, Soundscape};
 use std;
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
@@ -445,13 +445,14 @@ impl State {
             }
         }
 
-        // Send the loaded sources to the composer thread.
+        // Send the loaded soundscape sources to the soundscape thread.
         for source in &sources {
-            let id = source.id;
-            let clone = source.audio.clone();
-            channels.soundscape.send(move |soundscape| {
-                soundscape.insert_source(id, clone);
-            }).expect("soundscape was closed");
+            if let Some(soundscape_source) = soundscape::Source::from_audio_source(&source.audio) {
+                let id = source.id;
+                channels.soundscape.send(move |soundscape| {
+                    soundscape.insert_source(id, soundscape_source);
+                }).expect("soundscape was closed");
+            }
         }
 
         let preview = SourcePreview {
@@ -879,6 +880,11 @@ widget_ids! {
         source_editor_selected_none,
         source_editor_selected_name,
         source_editor_selected_role_list,
+        source_editor_selected_installations_canvas,
+        source_editor_selected_installations_text,
+        source_editor_selected_installations_ddl,
+        source_editor_selected_installations_list,
+        source_editor_selected_installations_remove,
         source_editor_selected_wav_canvas,
         source_editor_selected_wav_text,
         source_editor_selected_wav_data,
@@ -1329,9 +1335,7 @@ fn set_widgets(gui: &mut Gui) {
                             channels
                                 .audio_output
                                 .send(move |audio| {
-                                    if let Some(sound) = audio.sound_mut(&sound_id) {
-                                        sound.point = new_p;
-                                    }
+                                    audio.update_sound(&sound_id, move |s| s.point = new_p);
                                 })
                                 .ok();
                         }
