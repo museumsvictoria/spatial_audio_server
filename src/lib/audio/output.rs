@@ -211,7 +211,7 @@ impl Model {
     pub fn insert_sound(&mut self, id: sound::Id, sound: ActiveSound) -> Option<ActiveSound> {
         let position = sound.sound.point;
         let channels = sound.sound.channels;
-        let source_id = sound.sound.source_id;
+        let source_id = sound.sound.source_id();
         let sound_msg = gui::ActiveSoundMessage::Start {
             source_id,
             position,
@@ -283,6 +283,11 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 ref mut sound,
                 ref mut channel_detectors,
             } = *active_sound;
+
+            // Don't play it if paused.
+            if !sound.shared.is_playing() {
+                continue;
+            }
 
             // The number of samples to request from the sound for this buffer.
             let num_samples = buffer.len_frames() * sound.channels;

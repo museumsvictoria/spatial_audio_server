@@ -15,7 +15,6 @@ use std::fs::File;
 use std::mem;
 use std::ops;
 use std::path::Path;
-use std::sync::mpsc;
 use time_calc::Ms;
 
 pub struct SourceEditor {
@@ -681,7 +680,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
                 // Update sounds
                 channels.audio_output.send(move |audio| {
-                    for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id == id) {
+                    for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
                         if let audio::sound::Installations::Set(ref mut set) = sound.installations {
                             set.insert(installation);
                         }
@@ -770,7 +769,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
                 // Remove the installation from sounds driven by this source on the output stream.
                 channels.audio_output.send(move |audio| {
-                    for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id == id) {
+                    for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
                         if let audio::sound::Installations::Set(ref mut set) = sound.installations {
                             set.remove(&inst);
                         }
@@ -812,84 +811,6 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     let preview_kid_area = ui.kid_area_of(ids.source_editor_preview_canvas).unwrap();
     let button_w = preview_kid_area.w() / 2.0 - PAD / 2.0;
 
-    fn sound_from_source(
-        channels: &super::Channels,
-        source_id: audio::source::Id,
-        source: &audio::Source,
-        point: Point2<Metres>,
-        should_cycle: bool,
-    ) -> audio::Sound {
-        let installations = source.role.clone().into();
-        match source.kind {
-            audio::source::Kind::Wav(ref wav) => {
-                // The wave signal iterator.
-                let signal = match should_cycle {
-                    false => audio::source::wav::stream_signal(&wav.path).unwrap(),
-                    true => audio::source::wav::stream_signal_cycled(&wav.path).unwrap(),
-                };
-                audio::Sound {
-                    source_id: source_id,
-                    channels: wav.channels,
-                    signal: signal,
-                    point: point,
-                    spread: source.spread,
-                    radians: source.radians,
-                    installations,
-                }
-            }
-            audio::source::Kind::Realtime(ref realtime) => {
-                // Add some latency in case input and output streams aren't synced.
-                const LATENCY: Ms = Ms(500.0);
-                let n_channels = realtime.channels.len();
-                let delay_frames = LATENCY.samples(audio::SAMPLE_RATE as _);
-                let delay_samples = delay_frames as usize * n_channels;
-                let sync_channel_len = delay_samples * 2;
-                let duration = if should_cycle {
-                    audio::input::Duration::Infinite
-                } else {
-                    audio::input::Duration::Frames(realtime
-                        .duration
-                        .samples(audio::SAMPLE_RATE as _)
-                        as _)
-                };
-                let (sample_tx, sample_rx) = mpsc::sync_channel(sync_channel_len);
-
-                // Insert the silence for the delay.
-                for _ in 0..delay_samples {
-                    sample_tx.send(0.0).ok();
-                }
-
-                // Create the `ActiveSound` for the input stream.
-                let active_sound = audio::input::ActiveSound {
-                    duration,
-                    sample_tx,
-                };
-                channels
-                    .audio_input
-                    .send(move |audio| {
-                        audio
-                            .active_sounds
-                            .entry(source_id)
-                            .or_insert_with(Vec::new)
-                            .push(active_sound);
-                    })
-                    .ok();
-
-                let signal = Box::new(audio::source::realtime::Signal { sample_rx }) as Box<_>;
-
-                audio::Sound {
-                    source_id,
-                    channels: n_channels,
-                    signal,
-                    point,
-                    spread: source.spread,
-                    radians: source.radians,
-                    installations,
-                }
-            }
-        }
-    }
-
     fn update_mode(
         new_mode: SourcePreviewMode,
         channels: &super::Channels,
@@ -928,19 +849,15 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         SourcePreviewMode::OneShot => false,
                         SourcePreviewMode::Continuous => true,
                     };
-                    let sound = sound_from_source(
-                        channels,
+                    let _handle = audio::sound::spawn_from_source(
+                        sound_id,
                         source.id,
                         &source.audio,
                         preview.point.unwrap(),
                         should_cycle,
+                        &channels.audio_input,
+                        &channels.audio_output,
                     );
-                    channels
-                        .audio_output
-                        .send(move |audio| {
-                            audio.insert_sound(sound_id, sound.into());
-                        })
-                        .ok();
                 }
             }
             break;
@@ -1223,7 +1140,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
         // Update the audio output copies.
         channels.audio_output.send(move |audio| {
-            for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id == id) {
+            for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
                 sound.spread = spread_m;
             }
         }).ok();
@@ -1253,7 +1170,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
         // Update the audio output copies.
         channels.audio_output.send(move |audio| {
-            for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id == id) {
+            for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
                 sound.radians = rotation;
             }
         }).ok();

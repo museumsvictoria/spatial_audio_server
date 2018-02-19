@@ -103,8 +103,8 @@
         "role": {
           "Soundscape": {
             "installations": [
-              "EnergeticVibrationsProjectionMapping",
-              "EnergeticVibrationsAudioVisualiser"
+              "EnergeticVibrationsAudioVisualiser",
+              "EnergeticVibrationsProjectionMapping"
             ]
           }
         },

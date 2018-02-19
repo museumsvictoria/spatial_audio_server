@@ -3,7 +3,8 @@ use installation::Installation;
 use metres::Metres;
 use nannou::math::Point2;
 use std::collections::{HashMap, HashSet};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{atomic, mpsc, Arc, Mutex};
+use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time;
 
@@ -15,6 +16,10 @@ enum Message {
     Update(UpdateFn),
     // Steps forward the soundscape.
     Tick(Tick),
+    // Play all active sounds.
+    Play,
+    // Pause all active sounds.
+    Pause,
     // Stop running the soundscape and exit.
     Exit,
 }
@@ -22,7 +27,11 @@ enum Message {
 #[derive(Copy, Clone, Debug)]
 struct Tick {
     instant: time::Instant,
-    delta: time::Duration,
+    since_last_tick: time::Duration,
+    /// The total duration over which the soundscape has played.
+    ///
+    /// This does not increase when the stream is paused.
+    playback_duration: time::Duration,
 }
 
 /// The update function applied to a source.
@@ -36,8 +45,10 @@ pub struct UpdateFn {
 #[derive(Clone)]
 pub struct Soundscape {
     tx: mpsc::Sender<Message>,
-    // Keep the thread handle in an `Option` so we can take it from the mutex upon exit.
+    /// Keep the thread handle in an `Option` so we can take it from the mutex upon exit.
     thread: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
+    /// Whether or not the soundscape is currently playing.
+    is_playing: Arc<AtomicBool>,
 }
 
 /// Data related to a single speaker that is relevant to the soundscape.
@@ -65,6 +76,8 @@ pub struct ActiveSound {
     point: Point2<Metres>,
     /// The direction the sound is facing in radians.
     direction_radians: f32,
+    /// The handle associated with this sound.
+    handle: audio::sound::Handle,
 }
 
 /// The model containing all state running on the soundscape thread.
@@ -74,7 +87,7 @@ pub struct Model {
     /// All speakers within the exhibition.
     speakers: HashMap<audio::speaker::Id, Speaker>,
     /// All sounds currently being played that were spawned by the soundscape thread.
-    active_sounds: HashMap<audio::source::Id, ActiveSound>,
+    active_sounds: HashMap<audio::sound::Id, ActiveSound>,
     /// This is used to determine the "area" for each installation.
     installation_speakers: HashMap<Installation, audio::speaker::Id>,
     /// A handle for submitting new sounds to the output stream.
@@ -129,6 +142,29 @@ impl Soundscape {
             return Err(mpsc::SendError(()));
         }
         Ok(())
+    }
+
+    /// Whether or not the soundscape is currently playing.
+    pub fn is_playing(&self) -> bool {
+        self.is_playing.load(atomic::Ordering::Relaxed)
+    }
+
+    /// Pauses the soundscape playback.
+    ///
+    /// Returns `false` if it was already paused.
+    pub fn pause(&self) -> Result<bool, mpsc::SendError<()>> {
+        let result = !self.is_playing() != false;
+        let msg = Message::Pause;
+        self.is_playing.store(false, atomic::Ordering::Relaxed);
+        self.tx.send(msg).map(|_| result).map_err(|_| mpsc::SendError(()))
+    }
+
+    /// Plays the soundscape.
+    pub fn play(&self) -> Result<bool, mpsc::SendError<()>> {
+        let result = self.is_playing() != true;
+        let msg = Message::Play;
+        self.is_playing.store(true, atomic::Ordering::Relaxed);
+        self.tx.send(msg).map(|_| result).map_err(|_| mpsc::SendError(()))
     }
 
     /// Stops the soundscape thread and returns the raw handle to its thread.
@@ -188,7 +224,7 @@ impl Model {
 
     /// Remove a source from the inner hashmap.
     pub fn remove_source(&mut self, id: &audio::source::Id) -> Option<Source> {
-        self.active_sounds.retain(|s_id, _| id != s_id);
+        self.active_sounds.retain(|_, s| *id != s.handle.source_id());
         self.sources.remove(id)
     }
 }
@@ -231,19 +267,26 @@ pub fn spawn(
     sound_id_gen: audio::sound::IdGenerator,
 ) -> Soundscape {
     let (tx, rx) = mpsc::channel();
+    let is_playing = Arc::new(AtomicBool::new(true));
 
     // Spawn a thread to generate and send ticks.
     let tick_tx = tx.clone();
+    let tick_is_playing = is_playing.clone();
     let tick_thread = thread::Builder::new()
         .name("soundscape_ticker".into())
         .stack_size(512) // 512 bytes - a tiny stack for a tiny job.
         .spawn(move || {
             let mut last = time::Instant::now();
+            let mut playback_duration = time::Duration::from_secs(0);
             loop {
                 thread::sleep(time::Duration::from_millis(TICK_RATE_MS));
                 let instant = time::Instant::now();
-                let delta = instant.duration_since(last);
-                let tick = Tick { instant, delta };
+                let since_last_tick = instant.duration_since(last);
+                if !tick_is_playing.load(atomic::Ordering::Relaxed) {
+                    continue;
+                }
+                playback_duration += since_last_tick;
+                let tick = Tick { instant, since_last_tick, playback_duration };
                 if tick_tx.send(Message::Tick(tick)).is_err() {
                     break;
                 }
@@ -273,7 +316,7 @@ pub fn spawn(
         .spawn(move || run(model, rx))
         .unwrap();
     let thread = Arc::new(Mutex::new(Some(thread)));
-    Soundscape { tx, thread }
+    Soundscape { tx, thread, is_playing }
 }
 
 // A blocking function that is run on the unique soundscape thread (called by spawn).
@@ -289,6 +332,20 @@ fn run(mut model: Model, msg_rx: mpsc::Receiver<Message>) {
 
             // Step forward the state of the soundscape.
             Message::Tick(t) => tick(&mut model, t),
+
+            // Play all active sounds.
+            Message::Play => {
+                for sound in model.active_sounds.values() {
+                    sound.handle.play();
+                }
+            },
+
+            // Pause all active sounds.
+            Message::Pause => {
+                for sound in model.active_sounds.values() {
+                    sound.handle.pause();
+                }
+            }
         }
     }
 }
