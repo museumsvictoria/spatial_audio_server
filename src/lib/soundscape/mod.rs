@@ -8,6 +8,10 @@ use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time;
 
+use self::movement::BoundingBox;
+
+mod movement;
+
 const TICK_RATE_MS: u64 = 16;
 
 // The kinds of messages received by the soundscape thread.
@@ -88,8 +92,8 @@ pub struct Model {
     speakers: HashMap<audio::speaker::Id, Speaker>,
     /// All sounds currently being played that were spawned by the soundscape thread.
     active_sounds: HashMap<audio::sound::Id, ActiveSound>,
-    /// This is used to determine the "area" for each installation.
-    installation_speakers: HashMap<Installation, audio::speaker::Id>,
+    /// This tracks the bounding area for each installation at the beginning of each tick.
+    installation_bounds: HashMap<Installation, BoundingBox>,
     /// A handle for submitting new sounds to the output stream.
     audio_output_stream: audio::output::Stream,
     /// For generating unique IDs for each new sound.
@@ -299,12 +303,12 @@ pub fn spawn(
     let sources = HashMap::new();
     let speakers = HashMap::new();
     let active_sounds = HashMap::new();
-    let installation_speakers = HashMap::new();
+    let installation_bounds = HashMap::new();
     let model = Model {
         sources,
         speakers,
         active_sounds,
-        installation_speakers,
+        installation_bounds,
         audio_output_stream,
         sound_id_gen,
         tick_thread,
@@ -351,5 +355,22 @@ fn run(mut model: Model, msg_rx: mpsc::Receiver<Message>) {
 }
 
 // Called each time the soundscape thread receives a tick.
-fn tick(_model: &mut Model, _tick: Tick) {
+fn tick(model: &mut Model, _tick: Tick) {
+    let Model {
+        ref speakers,
+        ref mut installation_bounds,
+        ref mut sound_id_gen,
+        ..
+    } = *model;
+
+    // Create the map from installations to their bounding areas.
+    installation_bounds.clear();
+    for (id, speaker) in speakers {
+        for &installation in &speaker.installations {
+            let bounding_box = installation_bounds
+                .entry(installation)
+                .or_insert_with(|| BoundingBox::from_point(speaker.point));
+            *bounding_box = bounding_box.with_point(speaker.point);
+        }
+    }
 }
