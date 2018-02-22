@@ -10,6 +10,7 @@ use std::time;
 
 use self::movement::BoundingBox;
 
+pub mod group;
 mod movement;
 
 const TICK_RATE_MS: u64 = 16;

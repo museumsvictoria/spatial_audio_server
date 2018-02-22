@@ -1,58 +1,4 @@
 {
-  "EnergeticVibrationsAudioVisualiser": {
-    "0": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "enav/0"
-    }
-  },
-  "EnergeticVibrationsProjectionMapping": {
-    "1": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "enpm/1"
-    },
-    "0": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "enpm/0"
-    },
-    "2": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "enpm/2"
-    }
-  },
-  "Cacophony": {
-    "0": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "caco/0"
-    }
-  },
-  "RipplesInSpacetime": {
-    "2": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "ripp/2"
-    },
-    "3": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "ripp/3"
-    },
-    "1": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "ripp/1"
-    },
-    "0": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "ripp/0"
-    }
-  },
-  "WrappedInSpectrum": {
-    "1": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "wrap/1"
-    },
-    "0": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "wrap/0"
-    }
-  },
   "TurbulentEncounters": {
     "0": {
       "socket": "127.0.0.1:9002",
@@ -63,6 +9,60 @@
     "0": {
       "socket": "127.0.0.1:9002",
       "osc_addr": "wave/0"
+    }
+  },
+  "EnergeticVibrationsAudioVisualiser": {
+    "0": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "enav/0"
+    }
+  },
+  "RipplesInSpacetime": {
+    "0": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "ripp/0"
+    },
+    "2": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "ripp/2"
+    },
+    "1": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "ripp/1"
+    },
+    "3": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "ripp/3"
+    }
+  },
+  "WrappedInSpectrum": {
+    "0": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "wrap/0"
+    },
+    "1": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "wrap/1"
+    }
+  },
+  "EnergeticVibrationsProjectionMapping": {
+    "1": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "enpm/1"
+    },
+    "2": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "enpm/2"
+    },
+    "0": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "enpm/0"
+    }
+  },
+  "Cacophony": {
+    "0": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "caco/0"
     }
   }
 }
