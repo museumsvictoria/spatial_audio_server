@@ -81,6 +81,8 @@ fn k_coefficient(a: f64, speakers: &[Speaker]) -> f64 {
 
 #[test]
 fn speaker_gains() {
+    use nannou::prelude::*;
+
     let src = vec2(5.0, 5.0);
     let speaker = |v: Vector2<f64>, w| Speaker {
         distance: v.distance(src),
