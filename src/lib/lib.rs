@@ -21,8 +21,8 @@ extern crate time_calc;
 extern crate toml;
 
 use nannou::prelude::*;
+use soundscape::Soundscape;
 use std::sync::mpsc;
-use std::thread;
 
 mod audio;
 mod config;
@@ -42,8 +42,7 @@ pub fn run() {
 /// This is the state stored and updated on the main thread.
 struct Model {
     gui: gui::Model,
-    soundscape_msg_tx: mpsc::Sender<soundscape::Message>,
-    composer_thread_handle: thread::JoinHandle<()>,
+    soundscape: Soundscape,
 }
 
 // Initialise the state of the application.
@@ -119,8 +118,7 @@ fn model(app: &App) -> Model {
     let sound_id_gen = audio::sound::IdGenerator::new();
 
     // Spawn the composer thread.
-    let (composer_thread_handle, soundscape_msg_tx) =
-        soundscape::spawn(audio_output_stream.clone(), sound_id_gen.clone());
+    let soundscape = soundscape::spawn(audio_output_stream.clone(), sound_id_gen.clone());
 
     // Initalise the GUI model.
     let gui_channels = gui::Channels::new(
@@ -128,7 +126,7 @@ fn model(app: &App) -> Model {
         osc_out_log_rx,
         osc_out_msg_tx,
         interaction_rx,
-        soundscape_msg_tx.clone(),
+        soundscape.clone(),
         audio_input_stream.clone(),
         audio_output_stream.clone(),
         audio_monitor_rx,
@@ -144,8 +142,7 @@ fn model(app: &App) -> Model {
     );
 
     Model {
-        composer_thread_handle,
-        soundscape_msg_tx,
+        soundscape,
         gui,
     }
 }
@@ -183,16 +180,15 @@ fn draw(app: &App, model: &Model, frame: Frame) -> Frame {
 fn exit(_app: &App, model: Model) {
     let Model {
         gui,
-        soundscape_msg_tx,
-        composer_thread_handle,
+        soundscape,
         ..
     } = model;
 
     gui.exit();
 
     // Send exit signals to the audio and composer threads.
-    soundscape_msg_tx.send(soundscape::Message::Exit).unwrap();
+    let soundscape_thread = soundscape.exit().expect("only the main thread should exit soundscape");
 
     // Wait for the composer thread to finish.
-    composer_thread_handle.join().unwrap();
+    soundscape_thread.join().unwrap();
 }

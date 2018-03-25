@@ -7,7 +7,8 @@ use audio::source;
 use nannou;
 use nannou::audio::Buffer;
 use std::collections::HashMap;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
+use std::sync::atomic::{self, AtomicBool};
 
 /// Simplified type alias for the nannou audio input stream used by the audio server.
 pub type Stream = nannou::audio::Stream<Model>;
@@ -39,6 +40,8 @@ pub struct ActiveSound {
     pub duration: Duration,
     /// Feeds samples from the input buffer to the associated `Sound`'s `Box<Iterator<Item=f32>>`.
     pub sample_tx: mpsc::SyncSender<f32>,
+    /// An indicator from the `Sound` on whether the sound is currently playing or not.
+    pub is_capturing: Arc<AtomicBool>,
 }
 
 impl Model {
@@ -94,7 +97,11 @@ pub fn capture(mut model: Model, buffer: &Buffer) -> Model {
             for (&ch, sources) in channel_targets.iter() {
                 for source in sources {
                     if let Some(sounds) = active_sounds.get(source) {
-                        active_sounds_per_channel[ch].push(sounds);
+                        for sound in sounds.iter() {
+                            if sound.is_capturing.load(atomic::Ordering::Relaxed) {
+                                active_sounds_per_channel[ch].push(sound);
+                            }
+                        }
                     }
                 }
             }
@@ -102,15 +109,13 @@ pub fn capture(mut model: Model, buffer: &Buffer) -> Model {
             // Send every sample in chronological order to the active sounds.
             for (i, frame) in buffer.frames().enumerate() {
                 for (ch, &sample) in frame.iter().enumerate() {
-                    for sounds in &active_sounds_per_channel[ch] {
-                        for sound in &sounds[..] {
-                            let send_sample = match sound.duration {
-                                Duration::Frames(frames) => i < frames,
-                                Duration::Infinite => true,
-                            };
-                            if send_sample {
-                                sound.sample_tx.try_send(sample).ok();
-                            }
+                    for sound in &active_sounds_per_channel[ch] {
+                        let send_sample = match sound.duration {
+                            Duration::Frames(frames) => i < frames,
+                            Duration::Infinite => true,
+                        };
+                        if send_sample {
+                            sound.sample_tx.try_send(sample).ok();
                         }
                     }
                 }

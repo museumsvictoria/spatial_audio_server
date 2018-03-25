@@ -11,7 +11,7 @@ use osc;
 use osc::input::Log as OscInputLog;
 use osc::output::Log as OscOutputLog;
 use serde_json;
-use soundscape;
+use soundscape::{self, Soundscape};
 use std;
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
@@ -21,6 +21,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::mpsc;
 
 use self::installation_editor::InstallationEditor;
+use self::soundscape_editor::SoundscapeEditor;
 use self::source_editor::{SourceEditor, SourcePreview, SourcePreviewMode, StoredSources};
 use self::speaker_editor::{Speaker, SpeakerEditor, StoredSpeakers};
 
@@ -30,6 +31,7 @@ pub mod interaction_log;
 pub mod osc_in_log;
 pub mod osc_out_log;
 pub mod source_editor;
+pub mod soundscape_editor;
 pub mod speaker_editor;
 mod theme;
 
@@ -41,6 +43,9 @@ const SPEAKERS_FILE_STEM: &'static str = "speakers";
 
 // The name of the file where the list of sources is stored.
 const SOURCES_FILE_STEM: &'static str = "sources";
+
+// The name of the file where the list of sources is stored.
+const SOUNDSCAPE_FILE_STEM: &'static str = "soundscape";
 
 // The name of the directory where the WAVs are stored.
 const AUDIO_DIRECTORY_NAME: &'static str = "audio";
@@ -86,6 +91,7 @@ pub struct State {
     installation_editor: InstallationEditor,
     speaker_editor: SpeakerEditor,
     source_editor: SourceEditor,
+    soundscape_editor: SoundscapeEditor,
     max_input_channels: usize,
     // Menu states.
     side_menu_is_open: bool,
@@ -103,6 +109,12 @@ fn installations_path(assets: &Path) -> PathBuf {
 fn speakers_path(assets: &Path) -> PathBuf {
     assets
         .join(Path::new(SPEAKERS_FILE_STEM))
+        .with_extension("json")
+}
+
+fn soundscape_path(assets: &Path) -> PathBuf {
+    assets
+        .join(Path::new(SOUNDSCAPE_FILE_STEM))
         .with_extension("json")
 }
 
@@ -324,6 +336,12 @@ impl Model {
                             next_id: next_speaker_id,
                             ..
                         },
+                    soundscape_editor:
+                        SoundscapeEditor {
+                            groups,
+                            next_group_id,
+                            ..
+                        },
                     source_editor:
                         SourceEditor {
                             sources,
@@ -351,6 +369,15 @@ impl Model {
         };
         safe_file_save(&speakers_path(&assets), &speakers_json_string)
             .expect("failed to save speakers file");
+
+        // Save the soundscape groups.
+        let soundscape_json_string = {
+            let stored = soundscape_editor::Stored { groups, next_group_id };
+            serde_json::to_string_pretty(&stored)
+                .expect("failed to serialize soundscape gui state")
+        };
+        safe_file_save(&soundscape_path(&assets), &soundscape_json_string)
+            .expect("failed to save soundscape file");
 
         // Save the list of audio sources.
         let sources_json_string = {
@@ -408,13 +435,25 @@ impl State {
         // Load the existing speaker layout configuration if there is one.
         let StoredSpeakers { speakers, next_id } = StoredSpeakers::load(&speakers_path(assets));
 
-        // Send the loaded speakers to the audio thread.
+        // Send the loaded speakers to the audio and soundscape threads.
         for speaker in &speakers {
-            let (speaker_id, speaker_clone) = (speaker.id, speaker.audio.clone());
+            let speaker_id = speaker.id;
+
+            // Audio output thread.
+            let speaker_clone = speaker.audio.clone();
             channels
                 .audio_output
                 .send(move |audio| {
                     audio.insert_speaker(speaker_id, speaker_clone);
+                })
+                .ok();
+
+            // Soundscape thread.
+            let soundscape_speaker = soundscape::Speaker::from_audio_speaker(&speaker.audio);
+            channels
+                .soundscape
+                .send(move |soundscape| {
+                    soundscape.insert_speaker(speaker_id, soundscape_speaker);
                 })
                 .ok();
         }
@@ -424,6 +463,16 @@ impl State {
             selected: None,
             speakers,
             next_id,
+        };
+
+        // Load the existing groups.
+        let stored = soundscape_editor::Stored::load(&soundscape_path(assets));
+        let soundscape_editor::Stored { groups, next_group_id } = stored;
+        let soundscape_editor = SoundscapeEditor {
+            is_open: false,
+            groups,
+            next_group_id,
+            selected: None,
         };
 
         // Load the existing sound sources if there are some.
@@ -445,13 +494,14 @@ impl State {
             }
         }
 
-        // Send the loaded sources to the composer thread.
+        // Send the loaded soundscape sources to the soundscape thread.
         for source in &sources {
-            let msg = soundscape::Message::InsertSource(source.id, source.audio.clone());
-            channels
-                .soundscape_msg_tx
-                .send(msg)
-                .expect("soundscape_msg_tx was closed");
+            if let Some(soundscape_source) = soundscape::Source::from_audio_source(&source.audio) {
+                let id = source.id;
+                channels.soundscape.send(move |soundscape| {
+                    soundscape.insert_source(id, soundscape_source);
+                }).expect("soundscape was closed");
+            }
         }
 
         let preview = SourcePreview {
@@ -487,6 +537,7 @@ impl State {
             camera,
             installation_editor,
             speaker_editor,
+            soundscape_editor,
             source_editor,
             osc_in_log,
             osc_out_log,
@@ -505,7 +556,7 @@ pub struct Channels {
     pub osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
     pub osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
     pub interaction_rx: mpsc::Receiver<Interaction>,
-    pub soundscape_msg_tx: mpsc::Sender<soundscape::Message>,
+    pub soundscape: Soundscape,
     /// A handle for communicating with the audio input stream.
     pub audio_input: audio::input::Stream,
     /// A handle for communicating with the audio output stream.
@@ -520,7 +571,7 @@ impl Channels {
         osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
         osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
         interaction_rx: mpsc::Receiver<Interaction>,
-        soundscape_msg_tx: mpsc::Sender<soundscape::Message>,
+        soundscape: Soundscape,
         audio_input: audio::input::Stream,
         audio_output: audio::output::Stream,
         audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
@@ -530,7 +581,7 @@ impl Channels {
             osc_out_log_rx,
             osc_out_msg_tx,
             interaction_rx,
-            soundscape_msg_tx,
+            soundscape,
             audio_input,
             audio_output,
             audio_monitor_msg_rx,
@@ -869,6 +920,18 @@ widget_ids! {
         speaker_editor_selected_installations_list,
         speaker_editor_selected_installations_remove,
         // Audio Sources.
+        soundscape_editor,
+        soundscape_editor_is_playing,
+        soundscape_editor_group_canvas,
+        soundscape_editor_group_text,
+        soundscape_editor_group_add,
+        soundscape_editor_group_none,
+        soundscape_editor_group_list,
+        soundscape_editor_group_remove,
+        soundscape_editor_selected_canvas,
+        soundscape_editor_selected_text,
+        soundscape_editor_selected_name,
+        // Audio Sources.
         source_editor,
         source_editor_no_sources,
         source_editor_list,
@@ -879,6 +942,11 @@ widget_ids! {
         source_editor_selected_none,
         source_editor_selected_name,
         source_editor_selected_role_list,
+        source_editor_selected_installations_canvas,
+        source_editor_selected_installations_text,
+        source_editor_selected_installations_ddl,
+        source_editor_selected_installations_list,
+        source_editor_selected_installations_remove,
         source_editor_selected_wav_canvas,
         source_editor_selected_wav_text,
         source_editor_selected_wav_data,
@@ -938,6 +1006,9 @@ fn set_side_menu_widgets(gui: &mut Gui) {
 
     // Speaker Editor - for adding, editing and removing speakers.
     let last_area_id = speaker_editor::set(last_area_id, gui);
+
+    // Soundscape Editor - for playing/pausing and adding, editing and removing groups.
+    let last_area_id = soundscape_editor::set(last_area_id, gui);
 
     // For adding, changing and removing audio sources.
     let last_area_id = source_editor::set(last_area_id, gui);
@@ -1218,12 +1289,24 @@ fn set_widgets(gui: &mut Gui) {
                 let y = p.y + dragged_y_m;
                 let new_p = Point2 { x, y };
                 if p != new_p {
+                    // Update the local copy.
                     speakers[i].audio.point = new_p;
-                    let (speaker_id, speaker_clone) = (speakers[i].id, speakers[i].audio.clone());
+
+                    // Update the audio copy.
+                    let speaker_id = speakers[i].id;
+                    let speaker_clone = speakers[i].audio.clone();
                     channels
                         .audio_output
                         .send(move |audio| {
                             audio.insert_speaker(speaker_id, speaker_clone);
+                        })
+                        .ok();
+
+                    // Update the soundscape copy.
+                    channels
+                        .soundscape
+                        .send(move |soundscape| {
+                            soundscape.update_speaker(&speaker_id, |s| s.point = new_p);
                         })
                         .ok();
                 }
@@ -1325,13 +1408,14 @@ fn set_widgets(gui: &mut Gui) {
                         let y = point.y + dragged_y_m;
                         let new_p = Point2 { x, y };
                         if point != new_p {
+                            // Update the local copy.
                             state.source_editor.preview.point = Some(new_p);
+
+                            // Update the output audio thread.
                             channels
                                 .audio_output
                                 .send(move |audio| {
-                                    if let Some(sound) = audio.sound_mut(&sound_id) {
-                                        sound.point = new_p;
-                                    }
+                                    audio.update_sound(&sound_id, move |s| s.point = new_p);
                                 })
                                 .ok();
                         }

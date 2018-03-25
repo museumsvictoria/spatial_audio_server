@@ -11,8 +11,8 @@
             "sample_hz": 44100.0
           }
         },
-        "role": "Soundscape",
-        "spread": 2.949677705764771,
+        "role": null,
+        "spread": 1.2594397068023682,
         "radians": 0.0
       },
       "id": 1
@@ -28,11 +28,11 @@
             "sample_hz": 44100.0
           }
         },
-        "role": "Soundscape",
-        "spread": 2.391113996505738,
+        "role": null,
+        "spread": 2.5,
         "radians": 0.0
       },
-      "id": 3
+      "id": 4
     },
     {
       "name": "Elemental - Chimes Big_3",
@@ -45,8 +45,8 @@
             "sample_hz": 44100.0
           }
         },
-        "role": "Soundscape",
-        "spread": 1.1344339847564698,
+        "role": null,
+        "spread": 2.5,
         "radians": 0.0
       },
       "id": 0
@@ -62,11 +62,11 @@
             "sample_hz": 44100.0
           }
         },
-        "role": "Soundscape",
-        "spread": 2.5013442039489748,
+        "role": null,
+        "spread": 2.5,
         "radians": 0.0
       },
-      "id": 5
+      "id": 6
     },
     {
       "name": "Elemental - Flame Cast_3",
@@ -79,8 +79,12 @@
             "sample_hz": 44100.0
           }
         },
-        "role": "Scribbles",
-        "spread": 2.062016010284424,
+        "role": {
+          "Soundscape": {
+            "installations": []
+          }
+        },
+        "spread": 2.5,
         "radians": 0.0
       },
       "id": 2
@@ -96,11 +100,18 @@
             "sample_hz": 44100.0
           }
         },
-        "role": null,
+        "role": {
+          "Soundscape": {
+            "installations": [
+              "EnergeticVibrationsAudioVisualiser",
+              "EnergeticVibrationsProjectionMapping"
+            ]
+          }
+        },
         "spread": 2.5,
         "radians": 0.0
       },
-      "id": 6
+      "id": 3
     },
     {
       "name": "Mechanism - Clicks_Clock_001",
@@ -113,18 +124,18 @@
             "sample_hz": 48000.0
           }
         },
-        "role": "Soundscape",
-        "spread": 2.0367722511291506,
+        "role": null,
+        "spread": 2.5,
         "radians": 0.0
       },
-      "id": 4
+      "id": 5
     },
     {
-      "name": "Test Mic Input",
+      "name": "Source 7",
       "audio": {
         "kind": {
           "Realtime": {
-            "duration": 1675.7939453125,
+            "duration": 2386.89892578125,
             "channels": {
               "start": 0,
               "end": 2
@@ -132,7 +143,7 @@
           }
         },
         "role": null,
-        "spread": 2.5,
+        "spread": 0.6015887260437012,
         "radians": 0.0
       },
       "id": 7

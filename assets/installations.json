@@ -1,14 +1,8 @@
 {
-  "EnergeticVibrationsAudioVisualiser": {
+  "TurbulentEncounters": {
     "0": {
       "socket": "127.0.0.1:9002",
-      "osc_addr": "enav/0"
-    }
-  },
-  "Cacophony": {
-    "0": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "caco/0"
+      "osc_addr": "turb/0"
     }
   },
   "WavesAtWork": {
@@ -17,10 +11,18 @@
       "osc_addr": "wave/0"
     }
   },
-  "TurbulentEncounters": {
+  "EnergeticVibrationsProjectionMapping": {
+    "1": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "enpm/1"
+    },
     "0": {
       "socket": "127.0.0.1:9002",
-      "osc_addr": "turb/0"
+      "osc_addr": "enpm/0"
+    },
+    "2": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "enpm/2"
     }
   },
   "WrappedInSpectrum": {
@@ -33,11 +35,13 @@
       "osc_addr": "wrap/1"
     }
   },
-  "RipplesInSpacetime": {
-    "1": {
+  "EnergeticVibrationsAudioVisualiser": {
+    "0": {
       "socket": "127.0.0.1:9002",
-      "osc_addr": "ripp/1"
-    },
+      "osc_addr": "enav/0"
+    }
+  },
+  "RipplesInSpacetime": {
     "3": {
       "socket": "127.0.0.1:9002",
       "osc_addr": "ripp/3"
@@ -46,23 +50,19 @@
       "socket": "127.0.0.1:9002",
       "osc_addr": "ripp/0"
     },
+    "1": {
+      "socket": "127.0.0.1:9002",
+      "osc_addr": "ripp/1"
+    },
     "2": {
       "socket": "127.0.0.1:9002",
       "osc_addr": "ripp/2"
     }
   },
-  "EnergeticVibrationsProjectionMapping": {
-    "1": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "enpm/1"
-    },
-    "2": {
-      "socket": "127.0.0.1:9002",
-      "osc_addr": "enpm/2"
-    },
+  "Cacophony": {
     "0": {
       "socket": "127.0.0.1:9002",
-      "osc_addr": "enpm/0"
+      "osc_addr": "caco/0"
     }
   }
 }

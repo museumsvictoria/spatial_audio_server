@@ -1,4 +1,6 @@
+use installation::Installation;
 use metres::Metres;
+use std::collections::HashSet;
 
 pub use self::realtime::Realtime;
 pub use self::wav::Wav;
@@ -45,11 +47,17 @@ impl Id {
     pub const INITIAL: Self = Id(0);
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum Role {
-    Soundscape,
-    Installation,
+    Soundscape(Soundscape),
+    Interactive,
     Scribbles,
+}
+
+/// Properties specific to sources that have been assigned the "soundscape" role.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub struct Soundscape {
+    pub installations: HashSet<Installation>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
