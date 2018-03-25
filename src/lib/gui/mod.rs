@@ -468,11 +468,11 @@ impl State {
         // Load the existing groups.
         let stored = soundscape_editor::Stored::load(&soundscape_path(assets));
         let soundscape_editor::Stored { groups, next_group_id } = stored;
-
         let soundscape_editor = SoundscapeEditor {
             is_open: false,
             groups,
             next_group_id,
+            selected: None,
         };
 
         // Load the existing sound sources if there are some.
@@ -922,6 +922,15 @@ widget_ids! {
         // Audio Sources.
         soundscape_editor,
         soundscape_editor_is_playing,
+        soundscape_editor_group_canvas,
+        soundscape_editor_group_text,
+        soundscape_editor_group_add,
+        soundscape_editor_group_none,
+        soundscape_editor_group_list,
+        soundscape_editor_group_remove,
+        soundscape_editor_selected_canvas,
+        soundscape_editor_selected_text,
+        soundscape_editor_selected_name,
         // Audio Sources.
         source_editor,
         source_editor_no_sources,

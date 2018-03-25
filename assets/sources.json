@@ -12,7 +12,7 @@
           }
         },
         "role": null,
-        "spread": 2.5,
+        "spread": 1.2594397068023682,
         "radians": 0.0
       },
       "id": 1
@@ -103,8 +103,8 @@
         "role": {
           "Soundscape": {
             "installations": [
-              "EnergeticVibrationsProjectionMapping",
-              "EnergeticVibrationsAudioVisualiser"
+              "EnergeticVibrationsAudioVisualiser",
+              "EnergeticVibrationsProjectionMapping"
             ]
           }
         },
