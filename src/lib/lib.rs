@@ -19,6 +19,7 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate time_calc;
 extern crate toml;
+extern crate walkdir;
 
 use nannou::prelude::*;
 use soundscape::Soundscape;
