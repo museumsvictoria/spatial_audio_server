@@ -14,8 +14,9 @@ use std::ffi::OsStr;
 use std::fs::File;
 use std::mem;
 use std::ops;
-use std::path::Path;
+use std::path::{Component, Path};
 use time_calc::Ms;
+use walkdir::WalkDir;
 
 pub struct SourceEditor {
     pub is_open: bool,
@@ -104,18 +105,44 @@ impl StoredSources {
                     continue;
                 }
 
-                // Otherwise check to see if the file is in the audio path.
-                let potential_path = match wav.path.file_name() {
-                    None => continue,
-                    Some(name) => audio_path.join(name),
+                // If the path doesn't exist, check to see if it contains the audio path stem.
+                //
+                // If so, check the path at the new location relative to the audio path.
+                //
+                // If we can find it, return the new absolute path.
+                let new_path: Option<std::path::PathBuf> = {
+                    let mut components = wav.path.components();
+                    let audio_path_stem = audio_path.file_stem().and_then(|os_str| os_str.to_str());
+                    components
+                        .find(|component| match *component {
+                            Component::Normal(os_str) if os_str.to_str() == audio_path_stem => true,
+                            _ => false,
+                        })
+                        .map(|_| {
+                            audio_path.components()
+                                .chain(components)
+                                .map(|c| c.as_os_str())
+                                .collect()
+                        })
                 };
-                if potential_path.exists() {
-                    wav.path = potential_path;
-                    continue;
+
+                // Update the wavs path, or remove the source if we couldn't find it.
+                if let Some(new_path) = new_path {
+                    if new_path.exists() {
+                        wav.path = new_path;
+                        continue;
+                    }
+                    eprintln!("Could not find WAV source at \"{}\" or at \"{}\". It will be ignored",
+                              wav.path.display(),
+                              new_path.display());
+                } else {
+                    eprintln!("Could not find WAV source at \"{}\". It will be ignored.",
+                              wav.path.display());
                 }
 
                 remove = true;
             }
+
             if remove {
                 // If no valid path was found, remove the source as we can't play it.
                 stored.sources.remove(i);
@@ -124,10 +151,11 @@ impl StoredSources {
 
         // If there are any WAVs in `assets/audio/` that we have not yet listed, load them.
         if audio_path.exists() && audio_path.is_dir() {
-            let wav_paths = std::fs::read_dir(&audio_path)
-                .expect("failed to read audio directory")
+            let wav_paths = WalkDir::new(&audio_path)
+                .follow_links(true)
+                .into_iter()
                 .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().ok().map(|e| e.is_file()).unwrap_or(false))
+                .filter(|e| e.file_type().is_file())
                 .filter_map(|e| {
                     let file_name = e.file_name();
                     let file_path = Path::new(&file_name);
@@ -136,7 +164,7 @@ impl StoredSources {
                         .and_then(OsStr::to_str)
                         .map(std::ascii::AsciiExt::to_ascii_lowercase);
                     match ext.as_ref().map(|e| &e[..]) {
-                        Some("wav") | Some("wave") => Some(audio_path.join(file_path)),
+                        Some("wav") | Some("wave") => Some(e.path().to_path_buf()),
                         _ => None,
                     }
                 });
