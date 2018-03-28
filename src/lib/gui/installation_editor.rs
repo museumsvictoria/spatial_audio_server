@@ -65,7 +65,7 @@ pub fn load_computer_map(path: &Path) -> ComputerMap {
         })
 }
 
-pub fn set(gui: &mut Gui) -> widget::Id {
+pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     let &mut Gui {
         ref mut ui,
         ref ids,
@@ -103,7 +103,8 @@ pub fn set(gui: &mut Gui) -> widget::Id {
     let installation_editor_h = LIST_HEIGHT + selected_canvas_h;
 
     let (area, event) = collapsible_area(*is_open, "Installation Editor", ids.side_menu)
-        .mid_top_of(ids.side_menu)
+        .align_middle_x_of(ids.side_menu)
+        .down_from(last_area_id, 0.0)
         .set(ids.installation_editor, ui);
     if let Some(event) = event {
         *is_open = event.is_open();

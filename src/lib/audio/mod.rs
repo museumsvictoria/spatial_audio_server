@@ -1,4 +1,5 @@
 use metres::Metres;
+use time_calc::Ms;
 
 pub use self::detector::{EnvDetector, Fft, FftDetector, FFT_BIN_STEP_HZ, FFT_WINDOW_LEN};
 pub use self::sound::Sound;
@@ -31,3 +32,10 @@ pub const FRAMES_PER_BUFFER: usize = 64;
 
 /// The rolloff decibel amount, used to attenuate speaker gains over distances.
 pub const ROLLOFF_DB: f64 = 6.0;
+
+/// The initial, default master volume.
+pub const DEFAULT_MASTER_VOLUME: f32 = 0.5;
+
+/// The initial, default latency applied to real-time input sources for synchronisation with the
+/// audio output thread.
+pub const DEFAULT_REALTIME_SOURCE_LATENCY: Ms = Ms(512.0);
