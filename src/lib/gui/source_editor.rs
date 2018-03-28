@@ -162,7 +162,7 @@ impl StoredSources {
                     let ext = file_path
                         .extension()
                         .and_then(OsStr::to_str)
-                        .map(std::ascii::AsciiExt::to_ascii_lowercase);
+                        .map(str::to_ascii_lowercase);
                     match ext.as_ref().map(|e| &e[..]) {
                         Some("wav") | Some("wave") => Some(e.path().to_path_buf()),
                         _ => None,
@@ -512,6 +512,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             &mut State {
                 ref camera,
                 max_input_channels,
+                ref master,
                 source_editor:
                     SourceEditor {
                         ref mut sources,
@@ -846,6 +847,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         camera: &super::Camera,
         source: &Source,
         preview: &mut SourcePreview,
+        realtime_source_latency: &Ms,
     ) {
         loop {
             match preview.current {
@@ -885,6 +887,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         should_cycle,
                         &channels.audio_input,
                         &channels.audio_output,
+                        *realtime_source_latency,
                     );
                 }
             }
@@ -911,6 +914,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             camera,
             &sources[i],
             preview,
+            &master.realtime_source_latency,
         );
     }
 
@@ -933,6 +937,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             camera,
             &sources[i],
             preview,
+            &master.realtime_source_latency,
         );
     }
 

@@ -119,6 +119,7 @@ pub fn spawn_from_source(
     should_cycle: bool,
     input_stream: &input::Stream,
     output_stream: &output::Stream,
+    latency: Ms,
 ) -> Handle
 {
     let installations = source.role.clone().into();
@@ -149,6 +150,7 @@ pub fn spawn_from_source(
                 should_cycle,
                 input_stream,
                 output_stream,
+                latency,
             )
         },
     }
@@ -227,6 +229,7 @@ pub fn spawn_from_realtime(
     should_cycle: bool,
     audio_input: &input::Stream,
     audio_output: &output::Stream,
+    latency: Ms,
 ) -> Handle {
     // The duration of the sound so that the realtime thread knows when to stop serving samples.
     let duration = if should_cycle {
@@ -237,9 +240,8 @@ pub fn spawn_from_realtime(
     };
 
     // Add some latency in case input and output streams aren't synced.
-    const LATENCY: Ms = Ms(500.0);
     let n_channels = realtime.channels.len();
-    let delay_frames = LATENCY.samples(SAMPLE_RATE as _);
+    let delay_frames = latency.samples(SAMPLE_RATE as _);
     let delay_samples = delay_frames as usize * n_channels;
     let sync_channel_len = delay_samples * 2;
 

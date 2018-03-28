@@ -63,6 +63,8 @@ struct SpeakerAnalysis {
 
 /// State that lives on the audio thread.
 pub struct Model {
+    /// The master volume, controlled via the GUI applied at the very end of processing.
+    pub master_volume: f32,
     /// A map from audio sound IDs to the audio sounds themselves.
     sounds: HashMap<sound::Id, ActiveSound>,
     /// A map from speaker IDs to the speakers themselves.
@@ -141,7 +143,11 @@ impl Model {
         // A buffer for retrieving the frequency amplitudes from the `fft`.
         let fft_frequency_amplitudes_2 = Box::new([0.0; FFT_WINDOW_LEN / 2]);
 
+        // Initialise the master volume to the default value.
+        let master_volume = super::DEFAULT_MASTER_VOLUME;
+
         Model {
+            master_volume,
             sounds,
             speakers,
             unmixed_samples,
@@ -258,6 +264,7 @@ impl Model {
 pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
     {
         let Model {
+            master_volume,
             ref mut sounds,
             ref mut unmixed_samples,
             ref mut exhausted_sounds,
@@ -371,6 +378,11 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                         }
                     }
                     sample_index += sound.channels;
+                }
+
+                // Apply the master volume.
+                for sample in buffer.iter_mut() {
+                    *sample *= master_volume;
                 }
             }
         }

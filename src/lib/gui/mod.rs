@@ -21,6 +21,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::mpsc;
 
 use self::installation_editor::InstallationEditor;
+use self::master::Master;
 use self::soundscape_editor::SoundscapeEditor;
 use self::source_editor::{SourceEditor, SourcePreview, SourcePreviewMode, StoredSources};
 use self::speaker_editor::{Speaker, SpeakerEditor, StoredSpeakers};
@@ -28,12 +29,16 @@ use self::speaker_editor::{Speaker, SpeakerEditor, StoredSpeakers};
 mod custom_widget;
 pub mod installation_editor;
 pub mod interaction_log;
+pub mod master;
 pub mod osc_in_log;
 pub mod osc_out_log;
 pub mod source_editor;
 pub mod soundscape_editor;
 pub mod speaker_editor;
 mod theme;
+
+// The name of the file where the master control values are saved.
+const MASTER_FILE_STEM: &'static str = "master";
 
 // The name of the file where the installation OSC mappings are saved.
 const INSTALLATIONS_FILE_STEM: &'static str = "installations";
@@ -82,6 +87,8 @@ pub struct State {
     config: Config,
     // The camera over the 2D floorplan.
     camera: Camera,
+    // Master control values for the exhibition.
+    master: Master,
     // A log of the most recently received OSC messages for testing/debugging/monitoring.
     osc_in_log: Log<OscInputLog>,
     // A log of the most recently sent OSC messages for testing/debugging/monitoring.
@@ -98,6 +105,12 @@ pub struct State {
     osc_in_log_is_open: bool,
     osc_out_log_is_open: bool,
     interaction_log_is_open: bool,
+}
+
+fn master_path(assets: &Path) -> PathBuf {
+    assets
+        .join(Path::new(MASTER_FILE_STEM))
+        .with_extension("json")
 }
 
 fn installations_path(assets: &Path) -> PathBuf {
@@ -329,6 +342,7 @@ impl Model {
         let Model {
             state:
                 State {
+                    master,
                     installation_editor: InstallationEditor { computer_map, .. },
                     speaker_editor:
                         SpeakerEditor {
@@ -353,6 +367,12 @@ impl Model {
             assets,
             ..
         } = self;
+
+        // Save the installation address map.
+        let master_json_string = serde_json::to_string_pretty(&master)
+            .expect("failed to serialize master parameters");
+        safe_file_save(&master_path(&assets), &master_json_string)
+            .expect("failed to save master file");
 
         // Save the installation address map.
         let installations_json_string = serde_json::to_string_pretty(&computer_map)
@@ -406,6 +426,9 @@ impl State {
         channels: &Channels,
         max_input_channels: usize,
     ) -> Self {
+        // Load the master parameters.
+        let master = Master::load(&master_path(assets));
+
         // Load the stored isntallation editor state.
         let computer_map = installation_editor::load_computer_map(&installations_path(assets));
 
@@ -535,6 +558,7 @@ impl State {
             config,
             // TODO: Possibly load camera from file.
             camera,
+            master,
             installation_editor,
             speaker_editor,
             soundscape_editor,
@@ -876,6 +900,10 @@ widget_ids! {
         side_menu_button_line_top,
         side_menu_button_line_middle,
         side_menu_button_line_bottom,
+        // Master control settings.
+        master,
+        master_volume,
+        master_realtime_source_latency,
         // OSC input log.
         osc_in_log,
         osc_in_log_text,
@@ -1002,7 +1030,10 @@ pub const DARK_A: ui::Color = ui::Color::Rgba(0.1, 0.13, 0.15, 1.0);
 // Set the widgets in the side menu.
 fn set_side_menu_widgets(gui: &mut Gui) {
     // Installation Editor - for editing installation-specific data.
-    let last_area_id = installation_editor::set(gui);
+    let last_area_id = master::set(gui);
+
+    // Installation Editor - for editing installation-specific data.
+    let last_area_id = installation_editor::set(last_area_id, gui);
 
     // Speaker Editor - for adding, editing and removing speakers.
     let last_area_id = speaker_editor::set(last_area_id, gui);
