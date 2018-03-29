@@ -7,11 +7,8 @@ use gui::{collapsible_area, Gui, State};
 use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
 use nannou::ui;
 use nannou::ui::prelude::*;
-use serde_json;
 use soundscape;
 use std::collections::HashMap;
-use std::fs::File;
-use std::path::Path;
 
 /// GUI state related to the soundscape editor area.
 pub struct SoundscapeEditor {
@@ -32,19 +29,6 @@ pub struct Stored {
 pub struct Selected {
     name: String,
     id: soundscape::group::Id,
-}
-
-impl Stored {
-    /// Load the stored soundscape groups from the given path.
-    ///
-    /// If the path is invalid or the JSON can't be read, `Stored::default` will be called.
-    pub fn load(soundscape_path: &Path) -> Self {
-        let stored = File::open(&soundscape_path)
-            .ok()
-            .and_then(|f| serde_json::from_reader(f).ok())
-            .unwrap_or_else(Stored::default);
-        stored
-    }
 }
 
 /// Sets all widgets in the soundscape area and returns the `Id` of the last area.

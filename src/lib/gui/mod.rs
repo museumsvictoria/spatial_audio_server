@@ -434,7 +434,7 @@ impl State {
         };
 
         // Load the existing groups.
-        let stored = soundscape_editor::Stored::load(&soundscape_path(assets));
+        let stored = utils::load_from_json_or_default(&soundscape_path(assets));
         let soundscape_editor::Stored { groups, next_group_id } = stored;
         let soundscape_editor = SoundscapeEditor {
             is_open: false,

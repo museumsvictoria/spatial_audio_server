@@ -7,15 +7,14 @@ use metres::Metres;
 use nannou::prelude::*;
 use nannou::ui;
 use nannou::ui::prelude::*;
-use serde_json;
 use soundscape;
 use std;
 use std::ffi::OsStr;
-use std::fs::File;
 use std::mem;
 use std::ops;
 use std::path::{Component, Path};
 use time_calc::Ms;
+use utils;
 use walkdir::WalkDir;
 
 pub struct SourceEditor {
@@ -73,14 +72,16 @@ impl SourceEditor {
     }
 }
 
-impl StoredSources {
-    fn new() -> Self {
+impl Default for StoredSources {
+    fn default() -> Self {
         StoredSources {
             sources: Vec::new(),
             next_id: audio::source::Id::INITIAL,
         }
     }
+}
 
+impl StoredSources {
     /// Load the audio sources from the given path.
     ///
     /// If there are any ".wav" files in `assets/audio` that have not yet been loaded into the
@@ -88,10 +89,7 @@ impl StoredSources {
     ///
     /// If the path is invalid or the JSON can't be read, `StoredSources::new` will be called.
     pub fn load(sources_path: &Path, audio_path: &Path) -> Self {
-        let mut stored = File::open(&sources_path)
-            .ok()
-            .and_then(|f| serde_json::from_reader(f).ok())
-            .unwrap_or_else(StoredSources::new);
+        let mut stored: StoredSources = utils::load_from_json_or_default(sources_path);
 
         // Check the validity of the WAV source paths.
         //
