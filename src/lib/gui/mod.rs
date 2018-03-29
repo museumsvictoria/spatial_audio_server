@@ -1434,6 +1434,13 @@ fn set_widgets(gui: &mut Gui) {
             let side_m = custom_widget::sound::dimension_metres(0.0);
             let side = state.camera.metres_to_scalar(side_m);
             let channel_amps = &channel_amplitudes[..channel_count];
+            let maybe_source = state.source_editor
+                .sources
+                .iter()
+                .find(|s| s.id == active_sound.source_id);
+            let installations = maybe_source.as_ref()
+                .map(|s| s.audio.role.clone().into())
+                .unwrap_or(audio::sound::Installations::All);
 
             // Determine the line colour by checking for interactions with the sound.
             let line_color = match ui.widget_input(sound_widget_id).mouse() {
@@ -1458,7 +1465,11 @@ fn set_widgets(gui: &mut Gui) {
 
                 // A function for finding all speakers within proximity of a sound channel.
                 fn find_speakers_in_proximity(
+                    // The location of the source channel.
                     point: &Point2<Metres>,
+                    // Installations that the current sound is applied to.
+                    installations: &audio::sound::Installations,
+                    // All speakers.
                     speakers: &[Speaker],
                     // Amp along with the index within the given `Vec`.
                     in_proximity: &mut Vec<(f32, usize)>,
@@ -1466,18 +1477,23 @@ fn set_widgets(gui: &mut Gui) {
                     let dbap_speakers: Vec<_> = speakers
                         .iter()
                         .map(|speaker| {
-                            let speaker = &speaker.audio.point;
                             let point_f = Point2 {
                                 x: point.x.0,
                                 y: point.y.0,
                             };
                             let speaker_f = Point2 {
-                                x: speaker.x.0,
-                                y: speaker.y.0,
+                                x: speaker.audio.point.x.0,
+                                y: speaker.audio.point.y.0,
                             };
-                            let distance = point_f.distance(speaker_f);
-                            // TODO: Weight the speaker depending on its associated installation.
-                            let weight = 1.0;
+                            let distance = audio::dbap::blurred_distance_2(
+                                point_f,
+                                speaker_f,
+                                audio::DISTANCE_BLUR,
+                            );
+                            let weight = audio::speaker::dbap_weight(
+                                installations,
+                                &speaker.audio.installations,
+                            );
                             audio::dbap::Speaker { distance, weight }
                         })
                         .collect();
@@ -1491,7 +1507,12 @@ fn set_widgets(gui: &mut Gui) {
                     }
                 }
 
-                find_speakers_in_proximity(&channel_point_m, speakers, &mut speakers_in_proximity);
+                find_speakers_in_proximity(
+                    &channel_point_m,
+                    &installations,
+                    speakers,
+                    &mut speakers_in_proximity,
+                );
                 for &(amp_scaler, speaker_index) in &speakers_in_proximity {
                     const MAX_THICKNESS: Scalar = 16.0;
                     let amp = channel_amp * amp_scaler;

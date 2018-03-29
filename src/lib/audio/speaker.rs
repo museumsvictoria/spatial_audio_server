@@ -1,3 +1,4 @@
+use audio;
 use installation::Installation;
 use metres::Metres;
 use nannou::math::Point2;
@@ -18,4 +19,21 @@ pub struct Speaker {
     // Installations assigned to this speaker.
     #[serde(default)]
     pub installations: HashSet<Installation>,
+}
+
+/// Calculate a speaker's DBAP weight taking into consideration its assigned installations.
+pub fn dbap_weight(
+    sound_installations: &audio::sound::Installations,
+    speaker_installations: &HashSet<Installation>,
+) -> f64
+{
+    match *sound_installations {
+        audio::sound::Installations::All => 1.0,
+        audio::sound::Installations::Set(ref set) => {
+            match set.intersection(&speaker_installations).next() {
+                Some(_) => 1.0,
+                None => 0.0,
+            }
+        },
+    }
 }
