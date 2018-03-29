@@ -914,7 +914,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             camera,
             &sources[i],
             preview,
-            &master.realtime_source_latency,
+            &master.params.realtime_source_latency,
         );
     }
 
@@ -937,7 +937,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             camera,
             &sources[i],
             preview,
-            &master.realtime_source_latency,
+            &master.params.realtime_source_latency,
         );
     }
 

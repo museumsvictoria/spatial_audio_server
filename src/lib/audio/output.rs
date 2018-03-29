@@ -379,13 +379,17 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     }
                     sample_index += sound.channels;
                 }
-
-                // Apply the master volume.
-                for sample in buffer.iter_mut() {
-                    *sample *= master_volume;
-                }
             }
         }
+
+        // Apply the master volume.
+        for sample in buffer.iter_mut() {
+            *sample *= master_volume;
+        }
+
+        // Find the peak amplitude and send it via the monitor channel.
+        let peak = buffer.iter().fold(0.0, |peak, &s| s.max(peak));
+        gui_audio_monitor_msg_tx.send(gui::AudioMonitorMessage::Master { peak }).ok();
 
         // For each speaker, feed its amplitude into its detectors.
         let n_channels = buffer.channels();

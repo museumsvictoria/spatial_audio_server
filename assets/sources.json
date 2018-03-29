@@ -81,7 +81,9 @@
         },
         "role": {
           "Soundscape": {
-            "installations": []
+            "installations": [
+              "Cacophony"
+            ]
           }
         },
         "spread": 2.5,
@@ -103,8 +105,9 @@
         "role": {
           "Soundscape": {
             "installations": [
-              "EnergeticVibrationsAudioVisualiser",
-              "EnergeticVibrationsProjectionMapping"
+              "Cacophony",
+              "EnergeticVibrationsProjectionMapping",
+              "EnergeticVibrationsAudioVisualiser"
             ]
           }
         },
