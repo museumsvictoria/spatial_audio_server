@@ -25,6 +25,9 @@ pub struct Parameters {
     /// The latency applied to real-time input sources.
     #[serde(default = "default_realtime_source_latency")]
     pub realtime_source_latency: Ms,
+    /// The rolloff decibel amount, used to attenuate speaker gains over distances.
+    #[serde(default = "default_dbap_rolloff_db")]
+    pub dbap_rolloff_db: f64,
 }
 
 impl Default for Master {
@@ -37,7 +40,8 @@ impl Default for Parameters {
     fn default() -> Self {
         let volume = default_master_volume();
         let realtime_source_latency = default_realtime_source_latency();
-        Parameters { volume, realtime_source_latency }
+        let dbap_rolloff_db = default_dbap_rolloff_db();
+        Parameters { volume, realtime_source_latency, dbap_rolloff_db }
     }
 }
 
@@ -58,6 +62,10 @@ fn default_realtime_source_latency() -> Ms {
     audio::DEFAULT_REALTIME_SOURCE_LATENCY
 }
 
+fn default_dbap_rolloff_db() -> f64 {
+    audio::DEFAULT_DBAP_ROLLOFF_DB
+}
+
 pub fn set(gui: &mut Gui) -> widget::Id {
     let &mut Gui {
         ref mut ui,
@@ -74,7 +82,8 @@ pub fn set(gui: &mut Gui) -> widget::Id {
     const PAD: Scalar = 6.0;
     const MASTER_VOLUME_H: Scalar = ITEM_HEIGHT;
     const LATENCY_H: Scalar = ITEM_HEIGHT;
-    const MASTER_H: Scalar = PAD + MASTER_VOLUME_H + PAD + LATENCY_H + PAD;
+    const DECIBEL_H: Scalar = ITEM_HEIGHT;
+    const MASTER_H: Scalar = PAD + MASTER_VOLUME_H + PAD + LATENCY_H + PAD + DECIBEL_H + PAD;
 
     // The collapsible area widget.
     let is_open = master.is_open;
@@ -145,7 +154,7 @@ pub fn set(gui: &mut Gui) -> widget::Id {
         }).ok();
     }
 
-    // The master volume slider.
+    // The realtime source latency slider.
     let label = format!("Realtime Source Latency: {:.2} ms", master.params.realtime_source_latency.ms());
     let max_latency_ms = 2_000.0;
     let ms = master.params.realtime_source_latency.ms();
@@ -158,8 +167,28 @@ pub fn set(gui: &mut Gui) -> widget::Id {
         .down(PAD)
         .set(ids.master_realtime_source_latency, ui)
     {
-        // Update the local master volume.
         master.params.realtime_source_latency = Ms(new_latency);
+    }
+
+    // The master volume slider.
+    let label = format!("DBAP Rolloff: {:.2} db", master.params.dbap_rolloff_db);
+    let max_rolloff = 6.0;
+    for new_rolloff in widget::Slider::new(master.params.dbap_rolloff_db, 1.0, max_rolloff)
+        .label(&label)
+        .label_font_size(SMALL_FONT_SIZE)
+        .h(DECIBEL_H)
+        .kid_area_w_of(area.id)
+        .align_middle_x_of(area.id)
+        .down(PAD)
+        .set(ids.master_dbap_rolloff, ui)
+    {
+        // Update the local rolloff.
+        master.params.dbap_rolloff_db = new_rolloff;
+
+        // Update the audio output thread's rolloff.
+        channels.audio_output.send(move |audio| {
+            audio.dbap_rolloff_db = new_rolloff;
+        }).ok();
     }
 
     area.id

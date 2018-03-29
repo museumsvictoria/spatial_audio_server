@@ -3,7 +3,7 @@
 //! The render function is passed to `nannou::App`'s build output stream method and describes how
 //! audio should be rendered to the output.
 
-use audio::{DISTANCE_BLUR, PROXIMITY_LIMIT_2, Sound, Speaker, MAX_CHANNELS, ROLLOFF_DB};
+use audio::{DISTANCE_BLUR, PROXIMITY_LIMIT_2, Sound, Speaker, MAX_CHANNELS};
 use audio::detector::{EnvDetector, Fft, FftDetector, FFT_WINDOW_LEN};
 use audio::{dbap, sound, speaker};
 use audio::fft;
@@ -65,6 +65,8 @@ struct SpeakerAnalysis {
 pub struct Model {
     /// The master volume, controlled via the GUI applied at the very end of processing.
     pub master_volume: f32,
+    /// The DBAP rolloff decibel amount, used to attenuate speaker gains over distances.
+    pub dbap_rolloff_db: f64,
     /// A map from audio sound IDs to the audio sounds themselves.
     sounds: HashMap<sound::Id, ActiveSound>,
     /// A map from speaker IDs to the speakers themselves.
@@ -146,8 +148,12 @@ impl Model {
         // Initialise the master volume to the default value.
         let master_volume = super::DEFAULT_MASTER_VOLUME;
 
+        // Initialise the rolloff to the default value.
+        let dbap_rolloff_db = super::DEFAULT_DBAP_ROLLOFF_DB;
+
         Model {
             master_volume,
+            dbap_rolloff_db,
             sounds,
             speakers,
             unmixed_samples,
@@ -265,6 +271,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
     {
         let Model {
             master_volume,
+            dbap_rolloff_db,
             ref mut sounds,
             ref mut unmixed_samples,
             ref mut exhausted_sounds,
@@ -355,7 +362,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
                 // Update the speaker gains.
                 dbap_speaker_gains.clear();
-                let gains = dbap::SpeakerGains::new(&dbap_speakers, ROLLOFF_DB);
+                let gains = dbap::SpeakerGains::new(&dbap_speakers, dbap_rolloff_db);
                 dbap_speaker_gains.extend(gains.map(|f| f as f32));
 
                 // For every frame in the buffer, mix the unmixed sample.

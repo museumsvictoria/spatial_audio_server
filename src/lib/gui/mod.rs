@@ -367,10 +367,12 @@ impl State {
         let params = utils::load_from_json_or_default(&master_path(assets));
         let master = Master::from_params(params);
         let master_volume = master.params.volume;
+        let dbap_rolloff_db = master.params.dbap_rolloff_db;
         channels
             .audio_output
             .send(move |audio| {
                 audio.master_volume = master_volume;
+                audio.dbap_rolloff_db = dbap_rolloff_db;
             })
             .expect("failed to send loaded master volume");
 
@@ -851,6 +853,7 @@ widget_ids! {
         master_peak_meter,
         master_volume,
         master_realtime_source_latency,
+        master_dbap_rolloff,
         // OSC input log.
         osc_in_log,
         osc_in_log_text,
@@ -1471,6 +1474,8 @@ fn set_widgets(gui: &mut Gui) {
                     installations: &audio::sound::Installations,
                     // All speakers.
                     speakers: &[Speaker],
+                    // The rolloff attenuation.
+                    rolloff_db: f64,
                     // Amp along with the index within the given `Vec`.
                     in_proximity: &mut Vec<(f32, usize)>,
                 ) {
@@ -1498,7 +1503,7 @@ fn set_widgets(gui: &mut Gui) {
                         })
                         .collect();
 
-                    let gains = audio::dbap::SpeakerGains::new(&dbap_speakers, audio::ROLLOFF_DB);
+                    let gains = audio::dbap::SpeakerGains::new(&dbap_speakers, rolloff_db);
                     in_proximity.clear();
                     for (i, gain) in gains.enumerate() {
                         if audio::output::speaker_is_in_proximity(point, &speakers[i].audio.point) {
@@ -1511,6 +1516,7 @@ fn set_widgets(gui: &mut Gui) {
                     &channel_point_m,
                     &installations,
                     speakers,
+                    state.master.params.dbap_rolloff_db,
                     &mut speakers_in_proximity,
                 );
                 for &(amp_scaler, speaker_index) in &speakers_in_proximity {

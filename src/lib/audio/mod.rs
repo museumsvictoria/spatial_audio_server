@@ -30,15 +30,15 @@ pub const SAMPLE_RATE: f64 = 44_100.0;
 /// The desired number of frames requested at a time.
 pub const FRAMES_PER_BUFFER: usize = 64;
 
-/// The rolloff decibel amount, used to attenuate speaker gains over distances.
-pub const ROLLOFF_DB: f64 = 6.0;
-
 /// The initial, default master volume.
 pub const DEFAULT_MASTER_VOLUME: f32 = 0.5;
 
 /// The initial, default latency applied to real-time input sources for synchronisation with the
 /// audio output thread.
 pub const DEFAULT_REALTIME_SOURCE_LATENCY: Ms = Ms(512.0);
+
+/// The default rolloff decibel amount, used to attenuate speaker gains over distances.
+pub const DEFAULT_DBAP_ROLLOFF_DB: f64 = 4.0;
 
 /// The "blurring" amount applied to the distance function used for calculating DBAP.
 pub const DISTANCE_BLUR: f64 = 0.01;
