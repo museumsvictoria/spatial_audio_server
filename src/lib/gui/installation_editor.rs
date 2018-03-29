@@ -6,11 +6,10 @@ use nannou::osc::Connected;
 use nannou::ui;
 use nannou::ui::prelude::*;
 use osc;
-use serde_json;
 use std::collections::HashMap;
-use std::fs::File;
 use std::net;
 use std::path::Path;
+use utils;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Address {
@@ -40,29 +39,29 @@ pub struct SelectedComputer {
     osc_addr: String,
 }
 
-// Load the computer map from file.
-pub fn load_computer_map(path: &Path) -> ComputerMap {
-    File::open(path)
-        .ok()
-        .and_then(|f| serde_json::from_reader(f).ok())
-        .unwrap_or_else(|| {
-            installation::ALL
-                .iter()
-                .map(|&inst| {
-                    let map = (0..inst.default_num_computers())
-                        .map(|i| {
-                            let computer = ComputerId(i);
-                            let socket = "127.0.0.1:9002".parse().unwrap();
-                            let osc_addr_base = inst.default_osc_addr_str().to_string();
-                            let osc_addr = format!("{}/{}", osc_addr_base, i);
-                            let addr = Address { socket, osc_addr };
-                            (computer, addr)
-                        })
-                        .collect();
-                    (inst, map)
+/// Create the default computer map.
+pub fn default_computer_map() -> ComputerMap {
+    installation::ALL
+        .iter()
+        .map(|&inst| {
+            let map = (0..inst.default_num_computers())
+                .map(|i| {
+                    let computer = ComputerId(i);
+                    let socket = "127.0.0.1:9002".parse().unwrap();
+                    let osc_addr_base = inst.default_osc_addr_str().to_string();
+                    let osc_addr = format!("{}/{}", osc_addr_base, i);
+                    let addr = Address { socket, osc_addr };
+                    (computer, addr)
                 })
-                .collect()
+                .collect();
+            (inst, map)
         })
+        .collect()
+}
+
+/// Load the computer map from file or fall back to the default.
+pub fn load_computer_map(path: &Path) -> ComputerMap {
+    utils::load_from_json(path).ok().unwrap_or_else(default_computer_map)
 }
 
 pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {

@@ -33,6 +33,7 @@ mod interaction;
 mod metres;
 mod osc;
 mod soundscape;
+mod utils;
 
 pub fn run() {
     nannou::app(model, update, draw).exit(exit).run();

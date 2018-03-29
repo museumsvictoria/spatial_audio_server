@@ -10,15 +10,12 @@ use nannou::ui::prelude::*;
 use osc;
 use osc::input::Log as OscInputLog;
 use osc::output::Log as OscOutputLog;
-use serde_json;
 use soundscape::{self, Soundscape};
-use std;
 use std::collections::{HashMap, VecDeque};
-use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::ops::{Deref, DerefMut};
 use std::sync::mpsc;
+use utils;
 
 use self::installation_editor::InstallationEditor;
 use self::master::Master;
@@ -229,6 +226,9 @@ impl Model {
         // Update the map of active sounds.
         for msg in channels.audio_monitor_msg_rx.try_iter() {
             match msg {
+                AudioMonitorMessage::Master { peak } => {
+                    state.master.peak = peak;
+                },
                 AudioMonitorMessage::ActiveSound(id, msg) => match msg {
                     ActiveSoundMessage::Start {
                         source_id,
@@ -306,38 +306,6 @@ impl Model {
 
     /// Save the speaker configuration and audio sources on exit.
     pub fn exit(self) {
-        // Saves the file to a temporary file before removing the original to reduce the chance
-        // of losing data in the case that something goes wrong during saving.
-        fn safe_file_save(path: &Path, content: &str) -> Result<(), std::io::Error> {
-            let temp_path = path.with_extension("tmp");
-
-            // If the temp file exists, remove it.
-            if temp_path.exists() {
-                std::fs::remove_file(&temp_path)?;
-            }
-
-            // Create the directory if it doesn't exist.
-            if let Some(directory) = path.parent() {
-                if !directory.exists() {
-                    std::fs::create_dir_all(&temp_path)?;
-                }
-            }
-
-            // Write the temp file.
-            let mut file = File::create(&temp_path)?;
-            file.write(content.as_bytes())?;
-
-            // If there's already a file at `path`, remove it.
-            if path.exists() {
-                std::fs::remove_file(&path)?;
-            }
-
-            // Rename the temp file to the original path name.
-            std::fs::rename(temp_path, path)?;
-
-            Ok(())
-        }
-
         // Destructure the GUI state for serializing.
         let Model {
             state:
@@ -368,45 +336,14 @@ impl Model {
             ..
         } = self;
 
-        // Save the installation address map.
-        let master_json_string = serde_json::to_string_pretty(&master)
-            .expect("failed to serialize master parameters");
-        safe_file_save(&master_path(&assets), &master_json_string)
-            .expect("failed to save master file");
-
-        // Save the installation address map.
-        let installations_json_string = serde_json::to_string_pretty(&computer_map)
-            .expect("failed to serialize installation address map");
-        safe_file_save(&installations_path(&assets), &installations_json_string)
-            .expect("failed to save installations file");
-
-        // Save the speaker configuration.
-        let speakers_json_string = {
-            let next_id = next_speaker_id;
-            let stored_speakers = StoredSpeakers { speakers, next_id };
-            serde_json::to_string_pretty(&stored_speakers)
-                .expect("failed to serialize speaker layout")
-        };
-        safe_file_save(&speakers_path(&assets), &speakers_json_string)
-            .expect("failed to save speakers file");
-
-        // Save the soundscape groups.
-        let soundscape_json_string = {
-            let stored = soundscape_editor::Stored { groups, next_group_id };
-            serde_json::to_string_pretty(&stored)
-                .expect("failed to serialize soundscape gui state")
-        };
-        safe_file_save(&soundscape_path(&assets), &soundscape_json_string)
-            .expect("failed to save soundscape file");
-
-        // Save the list of audio sources.
-        let sources_json_string = {
-            let next_id = next_source_id;
-            let stored_sources = StoredSources { sources, next_id };
-            serde_json::to_string_pretty(&stored_sources).expect("failed to serialize sources")
-        };
-        safe_file_save(&sources_path(&assets), &sources_json_string)
-            .expect("failed to save sources file");
+        utils::save_to_json_or_panic(&master_path(&assets), &master.params);
+        utils::save_to_json_or_panic(&installations_path(&assets), &computer_map);
+        let stored_speakers = StoredSpeakers { speakers, next_id: next_speaker_id };
+        utils::save_to_json_or_panic(&speakers_path(&assets), &stored_speakers);
+        let stored_soundscape = soundscape_editor::Stored { groups, next_group_id };
+        utils::save_to_json_or_panic(&soundscape_path(&assets), &stored_soundscape);
+        let stored_sources = StoredSources { sources, next_id: next_source_id };
+        utils::save_to_json_or_panic(&sources_path(&assets), &stored_sources);
     }
 
     /// Whether or not the GUI currently contains representations of active sounds.
@@ -427,7 +364,15 @@ impl State {
         max_input_channels: usize,
     ) -> Self {
         // Load the master parameters.
-        let master = Master::load(&master_path(assets));
+        let params = utils::load_from_json_or_default(&master_path(assets));
+        let master = Master::from_params(params);
+        let master_volume = master.params.volume;
+        channels
+            .audio_output
+            .send(move |audio| {
+                audio.master_volume = master_volume;
+            })
+            .expect("failed to send loaded master volume");
 
         // Load the stored isntallation editor state.
         let computer_map = installation_editor::load_computer_map(&installations_path(assets));
@@ -489,7 +434,7 @@ impl State {
         };
 
         // Load the existing groups.
-        let stored = soundscape_editor::Stored::load(&soundscape_path(assets));
+        let stored = utils::load_from_json_or_default(&soundscape_path(assets));
         let soundscape_editor::Stored { groups, next_group_id } = stored;
         let soundscape_editor = SoundscapeEditor {
             is_open: false,
@@ -822,6 +767,7 @@ struct ChannelLevels {
 
 /// A message sent from the audio thread with some audio levels.
 pub enum AudioMonitorMessage {
+    Master { peak: f32 },
     ActiveSound(audio::sound::Id, ActiveSoundMessage),
     Speaker(audio::speaker::Id, SpeakerMessage),
 }
@@ -902,6 +848,7 @@ widget_ids! {
         side_menu_button_line_bottom,
         // Master control settings.
         master,
+        master_peak_meter,
         master_volume,
         master_realtime_source_latency,
         // OSC input log.
