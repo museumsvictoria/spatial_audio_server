@@ -39,3 +39,6 @@ pub const DEFAULT_MASTER_VOLUME: f32 = 0.5;
 /// The initial, default latency applied to real-time input sources for synchronisation with the
 /// audio output thread.
 pub const DEFAULT_REALTIME_SOURCE_LATENCY: Ms = Ms(512.0);
+
+/// The "blurring" amount applied to the distance function used for calculating DBAP.
+pub const DISTANCE_BLUR: f64 = 0.01;

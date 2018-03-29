@@ -3,7 +3,7 @@
 //! The render function is passed to `nannou::App`'s build output stream method and describes how
 //! audio should be rendered to the output.
 
-use audio::{PROXIMITY_LIMIT_2, Sound, Speaker, MAX_CHANNELS, ROLLOFF_DB};
+use audio::{DISTANCE_BLUR, PROXIMITY_LIMIT_2, Sound, Speaker, MAX_CHANNELS, ROLLOFF_DB};
 use audio::detector::{EnvDetector, Fft, FftDetector, FFT_WINDOW_LEN};
 use audio::{dbap, sound, speaker};
 use audio::fft;
@@ -338,7 +338,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     // Find the speaker for this channel.
                     // TODO: Could speed this up by maintaining a map from channels to speaker IDs.
                     if let Some(active) = speakers.values().find(|s| s.speaker.channel == channel) {
-                        let point_f = Point2 {
+                        let channel_point_f = Point2 {
                             x: channel_point.x.0,
                             y: channel_point.y.0,
                         };
@@ -347,17 +347,8 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                             x: speaker.x.0,
                             y: speaker.y.0,
                         };
-                        let distance = point_f.distance(speaker_f);
-                        // Weight the speaker depending on its associated installations.
-                        let weight = match sound.installations {
-                            sound::Installations::All => 1.0,
-                            sound::Installations::Set(ref set) => {
-                                match set.intersection(&active.speaker.installations).next() {
-                                    Some(_) => 1.0,
-                                    None => 0.0,
-                                }
-                            },
-                        };
+                        let distance = dbap::blurred_distance_2(channel_point_f, speaker_f, DISTANCE_BLUR);
+                        let weight = speaker::dbap_weight(&sound.installations, &active.speaker.installations);
                         dbap_speakers.push(dbap::Speaker { distance, weight });
                     }
                 }
