@@ -257,6 +257,21 @@ impl Model {
         }
     }
 
+    /// Update all sounds that are produced by the source type with the given `Id`.
+    ///
+    /// Returns the number of sounds that were updated.
+    pub fn update_sounds_with_source<F>(&mut self, id: &source::Id, mut update: F) -> usize
+    where
+        F: FnMut(&sound::Id, &mut Sound),
+    {
+        let mut count = 0;
+        for (id, sound) in self.sounds_mut().filter(|&(_, ref s)| s.source_id() == *id) {
+            update(id, sound);
+            count += 1;
+        }
+        count
+    }
+
     /// Removes the sound and sends an `End` active sound message to the GUI.
     pub fn remove_sound(&mut self, id: sound::Id) -> Option<ActiveSound> {
         let removed = self.sounds.remove(&id);

@@ -1,5 +1,6 @@
 use audio;
 use audio::source::Role;
+use audio::source::wav::Playback;
 use gui::{collapsible_area, Gui, State};
 use gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
 use installation::{self, Installation};
@@ -229,8 +230,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     const LIST_HEIGHT: Scalar = 140.0;
     const PREVIEW_CANVAS_H: Scalar = 66.0;
     const INSTALLATION_LIST_H: Scalar = ITEM_HEIGHT * 3.0;
-    const INSTALLATIONS_CANVAS_H: Scalar = PAD + ITEM_HEIGHT * 2.0 + PAD + INSTALLATION_LIST_H + PAD;
-    const WAV_CANVAS_H: Scalar = 100.0;
+    const INSTALLATIONS_CANVAS_H: Scalar =
+        PAD + ITEM_HEIGHT * 2.0 + PAD + INSTALLATION_LIST_H + PAD;
+    const LOOP_TOGGLE_H: Scalar = ITEM_HEIGHT;
+    const PLAYBACK_MODE_H: Scalar = ITEM_HEIGHT;
+    const WAV_CANVAS_H: Scalar =
+        100.0 + PAD + LOOP_TOGGLE_H + PAD * 4.0 + PLAYBACK_MODE_H + PAD;
     const REALTIME_CANVAS_H: Scalar = 94.0;
     const CHANNEL_LAYOUT_CANVAS_H: Scalar = 200.0;
         PAD + ITEM_HEIGHT * 2.0 + PAD + INSTALLATION_LIST_H + PAD;
@@ -942,7 +947,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     // Kind-specific data.
     let source_id = sources[i].id;
     let (kind_canvas_id, num_channels) = match sources[i].audio.kind {
-        audio::source::Kind::Wav(ref wav) => {
+        audio::source::Kind::Wav(ref mut wav) => {
             // Instantiate a small canvas for displaying wav-specific stuff.
             widget::Canvas::new()
                 .down_from(ids.source_editor_preview_canvas, PAD)
@@ -975,6 +980,128 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .down(PAD)
                 .line_spacing(PAD)
                 .set(ids.source_editor_selected_wav_data, ui);
+
+            // A `Toggle` for whether or not the WAV should loop.
+            let label = if wav.should_loop { "Looping: ON" } else { "Looping: OFF" };
+            let canvas_kid_area = ui.kid_area_of(ids.source_editor_selected_wav_canvas).unwrap();
+            for new_loop in widget::Toggle::new(wav.should_loop)
+                .color(color::LIGHT_CHARCOAL)
+                .label(label)
+                .label_font_size(SMALL_FONT_SIZE)
+                .down(PAD * 2.0)
+                .h(LOOP_TOGGLE_H)
+                .w(canvas_kid_area.w())
+                .align_middle_x_of(ids.source_editor_selected_wav_canvas)
+                .set(ids.source_editor_selected_wav_loop_toggle, ui)
+            {
+                // Update the local copy.
+                wav.should_loop = new_loop;
+
+                // Update the soundscape thread copy.
+                channels.soundscape.send(move |soundscape| {
+                    soundscape.update_source(&source_id, |source| {
+                        if let audio::source::Kind::Wav(ref mut wav) = source.kind {
+                            wav.should_loop = new_loop;
+                        }
+                    });
+                }).ok();
+
+                // TODO: On the audio output thread, swap out any sounds that use this WAV source
+                // with a looping version.
+            }
+
+            // The playback mode selection.
+            widget::Text::new("Playback Mode")
+                .font_size(SMALL_FONT_SIZE)
+                .down(PAD)
+                .align_left_of(ids.source_editor_selected_wav_text)
+                .set(ids.source_editor_selected_wav_playback_text, ui);
+            let item_w = canvas_kid_area.w() * 0.5;
+            let n_items = audio::source::wav::NUM_PLAYBACK_OPTIONS;
+            let (mut events, _scrollbar) = widget::ListSelect::single(n_items)
+                .flow_right()
+                .item_size(item_w)
+                .down(PAD * 2.0)
+                .h(PLAYBACK_MODE_H)
+                .w(canvas_kid_area.w())
+                .mid_bottom_of(ids.source_editor_selected_wav_canvas)
+                .set(ids.source_editor_selected_wav_playback_list, ui);
+
+            fn playback_from_index(i: usize) -> Option<Playback> {
+                match i {
+                    0 => Some(Playback::Retrigger),
+                    1 => Some(Playback::Continuous),
+                    _ => None,
+                }
+            }
+
+            fn index_from_playback(playback: &Playback) -> usize {
+                match *playback {
+                    Playback::Retrigger => 0,
+                    Playback::Continuous => 1,
+                }
+            }
+
+            fn playback_label(playback: &Playback) -> &str {
+                match *playback {
+                    Playback::Retrigger => "Retrigger",
+                    Playback::Continuous => "Continuous",
+                }
+            }
+
+            let selected_index = index_from_playback(&wav.playback);
+            while let Some(event) = events.next(ui, |i| i == selected_index) {
+                use self::ui::widget::list_select::Event;
+                match event {
+                    // Instantiate a button for each source.
+                    Event::Item(item) => {
+                        let selected = item.i == selected_index;
+                        let playback = playback_from_index(item.i)
+                            .expect("no playback mode for index");
+                        let label = playback_label(&playback);
+
+                        // Blue if selected, gray otherwise.
+                        let color = if selected {
+                            color::LIGHT_CHARCOAL
+                        } else {
+                            DARK_A
+                        };
+
+                        let button = widget::Button::new()
+                            .label(label)
+                            .label_font_size(SMALL_FONT_SIZE)
+                            .color(color);
+                        item.set(button, ui);
+                    },
+                    // If a selection has occurred.
+                    Event::Selection(new_index) => {
+                        let new_playback = playback_from_index(new_index)
+                            .expect("no playback mode for index");
+
+                        // Update the local copy.
+                        wav.playback = new_playback;
+
+                        // Update the soundscape copy.
+                        channels.soundscape.send(move |soundscape| {
+                            soundscape.update_source(&source_id, |source| {
+                                if let audio::source::Kind::Wav(ref mut wav) = source.kind {
+                                    wav.playback = new_playback;
+                                }
+                            });
+                        }).ok();
+
+                        // Update all audio thread copies.
+                        channels.audio_output.send(move |audio| {
+                            audio.update_sounds_with_source(&source_id, move |_, sound| {
+                                if let audio::source::Signal::Wav { ref mut playback, .. } = sound.signal {
+                                    *playback = new_playback;
+                                }
+                            });
+                        }).ok();
+                    },
+                    _ => (),
+                }
+            }
 
             (ids.source_editor_selected_wav_canvas, wav.channels)
         }
@@ -1171,9 +1298,9 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
         // Update the audio output copies.
         channels.audio_output.send(move |audio| {
-            for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
+            audio.update_sounds_with_source(&id, move |_, sound| {
                 sound.spread = spread_m;
-            }
+            });
         }).ok();
     }
 

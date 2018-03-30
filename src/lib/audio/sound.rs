@@ -116,7 +116,7 @@ pub fn spawn_from_source(
     source_id: source::Id,
     source: &Source,
     initial_position: Point2<Metres>,
-    should_cycle: bool,
+    continuous_preview: bool,
     input_stream: &input::Stream,
     output_stream: &output::Stream,
     latency: Ms,
@@ -133,7 +133,7 @@ pub fn spawn_from_source(
                 source.radians,
                 installations,
                 initial_position,
-                should_cycle,
+                continuous_preview,
                 output_stream,
             )
 
@@ -147,7 +147,7 @@ pub fn spawn_from_source(
                 source.radians,
                 installations,
                 initial_position,
-                should_cycle,
+                continuous_preview,
                 input_stream,
                 output_stream,
                 latency,
@@ -165,12 +165,12 @@ pub fn spawn_from_wav(
     radians: f32,
     installations: Installations,
     initial_position: Point2<Metres>,
-    should_cycle: bool,
+    continuous_preview: bool,
     audio_output: &output::Stream,
 ) -> Handle
 {
     // The wave samples iterator.
-    let samples = match should_cycle {
+    let samples = match wav.should_loop || continuous_preview {
         false => source::wav::SampleStream::from_path(&wav.path).unwrap().into(),
         true => source::wav::SampleStream::from_path(&wav.path).unwrap().cycle().into(),
     };
@@ -230,13 +230,13 @@ pub fn spawn_from_realtime(
     radians: f32,
     installations: Installations,
     initial_position: Point2<Metres>,
-    should_cycle: bool,
+    continuous_preview: bool,
     audio_input: &input::Stream,
     audio_output: &output::Stream,
     latency: Ms,
 ) -> Handle {
     // The duration of the sound so that the realtime thread knows when to stop serving samples.
-    let duration = if should_cycle {
+    let duration = if continuous_preview {
         input::Duration::Infinite
     } else {
         let frames = realtime.duration.samples(SAMPLE_RATE as _);
