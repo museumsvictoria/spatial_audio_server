@@ -310,7 +310,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             unmixed_samples.clear();
             {
                 let mut samples_written = 0;
-                for sample in sound.signal.by_ref().take(num_samples) {
+                for sample in sound.signal.samples().take(num_samples) {
                     unmixed_samples.push(sample);
                     channel_detectors[samples_written % sound.channels].next(sample);
                     samples_written += 1;

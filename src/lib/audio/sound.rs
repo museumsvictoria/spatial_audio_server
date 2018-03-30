@@ -27,7 +27,7 @@ pub struct Sound {
     //
     // TODO: This could potentially just be an actual type? `sound::Signal` that matched on
     // the source kind, stored its own stack of effects, etc?
-    pub signal: Box<Iterator<Item = f32> + Send>,
+    pub signal: source::Signal,
     // The location of the sound within the space.
     pub point: Point2<Metres>,
     pub spread: Metres,
@@ -169,11 +169,14 @@ pub fn spawn_from_wav(
     audio_output: &output::Stream,
 ) -> Handle
 {
-    // The wave signal iterator.
-    let signal = match should_cycle {
-        false => source::wav::stream_signal(&wav.path).unwrap(),
-        true => source::wav::stream_signal_cycled(&wav.path).unwrap(),
+    // The wave samples iterator.
+    let samples = match should_cycle {
+        false => source::wav::SampleStream::from_path(&wav.path).unwrap().into(),
+        true => source::wav::SampleStream::from_path(&wav.path).unwrap().cycle().into(),
     };
+
+    // The source signal.
+    let signal = source::Signal::Wav { samples };
 
     // Initialise the sound playing.
     let is_playing = AtomicBool::new(true);
@@ -254,7 +257,8 @@ pub fn spawn_from_realtime(
     }
 
     // The signal from which the sound will draw samples.
-    let signal = Box::new(source::realtime::Signal { sample_rx }) as Box<_>;
+    let samples = source::realtime::Signal { sample_rx };
+    let signal = source::Signal::Realtime { samples };
 
     // Initialise the sound playing.
     let is_playing = AtomicBool::new(true);
