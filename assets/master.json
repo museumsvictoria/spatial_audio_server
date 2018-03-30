@@ -1,4 +1,5 @@
 {
   "volume": 1.0,
-  "realtime_source_latency": 459.1053466796875
+  "realtime_source_latency": 459.1053466796875,
+  "dbap_rolloff_db": 4.0
 }

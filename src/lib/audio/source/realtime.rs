@@ -8,7 +8,7 @@ use time_calc::Ms;
 pub struct Realtime {
     // Duration for which the realtime input is played.
     pub duration: Ms,
-    // The number of channels blah (should be rannge).
+    // The range of channels occuppied by the source.
     pub channels: ops::Range<usize>,
 }
 

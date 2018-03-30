@@ -235,12 +235,7 @@ impl Model {
                         position,
                         channels,
                     } => {
-                        let channels = (0..channels)
-                            .map(|_| ChannelLevels {
-                                rms: 0.0,
-                                peak: 0.0,
-                            })
-                            .collect();
+                        let channels = (0..channels).map(|_| ChannelLevels::default()).collect();
                         let mut active_sound = ActiveSound {
                             source_id,
                             position,
@@ -273,10 +268,7 @@ impl Model {
                 },
                 AudioMonitorMessage::Speaker(id, msg) => match msg {
                     SpeakerMessage::Add => {
-                        let speaker = ChannelLevels {
-                            rms: 0.0,
-                            peak: 0.0,
-                        };
+                        let speaker = ChannelLevels::default();
                         audio_monitor.speakers.insert(id, speaker);
                     }
                     SpeakerMessage::Update { rms, peak } => {
@@ -762,6 +754,7 @@ struct ActiveSound {
 }
 
 // The detected levels for a single channel.
+#[derive(Default)]
 struct ChannelLevels {
     rms: f32,
     peak: f32,
@@ -928,6 +921,9 @@ widget_ids! {
         source_editor_selected_wav_canvas,
         source_editor_selected_wav_text,
         source_editor_selected_wav_data,
+        source_editor_selected_wav_loop_toggle,
+        source_editor_selected_wav_playback_text,
+        source_editor_selected_wav_playback_list,
         source_editor_selected_realtime_canvas,
         source_editor_selected_realtime_text,
         source_editor_selected_realtime_duration,

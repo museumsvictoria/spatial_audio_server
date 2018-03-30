@@ -5,7 +5,7 @@
 
 use audio::{DISTANCE_BLUR, PROXIMITY_LIMIT_2, Sound, Speaker, MAX_CHANNELS};
 use audio::detector::{EnvDetector, Fft, FftDetector, FFT_WINDOW_LEN};
-use audio::{dbap, sound, speaker};
+use audio::{dbap, source, sound, speaker};
 use audio::fft;
 use gui;
 use installation::{self, Installation};
@@ -63,6 +63,11 @@ struct SpeakerAnalysis {
 
 /// State that lives on the audio thread.
 pub struct Model {
+    /// The total number of frames written since the model was created.
+    ///
+    /// This is used for synchronising `Continuous` WAVs to the audio timeline with sample-perfect
+    /// accuracy.
+    pub frame_count: u64,
     /// The master volume, controlled via the GUI applied at the very end of processing.
     pub master_volume: f32,
     /// The DBAP rolloff decibel amount, used to attenuate speaker gains over distances.
@@ -151,7 +156,11 @@ impl Model {
         // Initialise the rolloff to the default value.
         let dbap_rolloff_db = super::DEFAULT_DBAP_ROLLOFF_DB;
 
+        // Initialise the frame count.
+        let frame_count = 0;
+
         Model {
+            frame_count,
             master_volume,
             dbap_rolloff_db,
             sounds,
@@ -248,6 +257,21 @@ impl Model {
         }
     }
 
+    /// Update all sounds that are produced by the source type with the given `Id`.
+    ///
+    /// Returns the number of sounds that were updated.
+    pub fn update_sounds_with_source<F>(&mut self, id: &source::Id, mut update: F) -> usize
+    where
+        F: FnMut(&sound::Id, &mut Sound),
+    {
+        let mut count = 0;
+        for (id, sound) in self.sounds_mut().filter(|&(_, ref s)| s.source_id() == *id) {
+            update(id, sound);
+            count += 1;
+        }
+        count
+    }
+
     /// Removes the sound and sends an `End` active sound message to the GUI.
     pub fn remove_sound(&mut self, id: sound::Id) -> Option<ActiveSound> {
         let removed = self.sounds.remove(&id);
@@ -272,6 +296,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
         let Model {
             master_volume,
             dbap_rolloff_db,
+            ref mut frame_count,
             ref mut sounds,
             ref mut unmixed_samples,
             ref mut exhausted_sounds,
@@ -303,6 +328,16 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 continue;
             }
 
+            // If the source is a `Continuous` WAV, ensure it is seeked to the correct position.
+            if let source::Signal::Wav { ref playback, ref mut samples } = sound.signal {
+                if let source::wav::Playback::Continuous = *playback {
+                    if let Err(err) = samples.seek(*frame_count) {
+                        eprintln!("failed to seek file for continuous WAV source: {}", err);
+                        continue;
+                    }
+                }
+            }
+
             // The number of samples to request from the sound for this buffer.
             let num_samples = buffer.len_frames() * sound.channels;
 
@@ -310,7 +345,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             unmixed_samples.clear();
             {
                 let mut samples_written = 0;
-                for sample in sound.signal.by_ref().take(num_samples) {
+                for sample in sound.signal.samples().take(num_samples) {
                     unmixed_samples.push(sample);
                     channel_detectors[samples_written % sound.channels].next(sample);
                     samples_written += 1;
@@ -491,6 +526,9 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
             gui_audio_monitor_msg_tx.try_send(msg).ok();
         }
+
+        // Step the frame count.
+        *frame_count += buffer.len_frames() as u64;
     }
 
     (model, buffer)

@@ -31,11 +31,34 @@ pub struct Source {
     pub radians: f32,
 }
 
+/// A **Signal** yielding interleaved samples.
+///
+/// **Signal**s are produced by **Source**s and played back on the output thread via **Sound**s.
+pub enum Signal {
+    Wav {
+        samples: wav::Signal,
+        playback: wav::Playback,
+    },
+    Realtime {
+        samples: realtime::Signal,
+    },
+}
+
 impl Source {
     pub fn channel_count(&self) -> usize {
         match self.kind {
             Kind::Wav(ref wav) => wav.channels,
             Kind::Realtime(ref rt) => rt.channels.len(),
+        }
+    }
+}
+
+impl Signal {
+    /// Borrow the inner iterator yielding samples.
+    pub fn samples(&mut self) -> &mut Iterator<Item = f32> {
+        match *self {
+            Signal::Wav { ref mut samples, .. } => samples.samples(),
+            Signal::Realtime { ref mut samples } => samples as _,
         }
     }
 }

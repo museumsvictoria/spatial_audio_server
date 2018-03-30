@@ -27,7 +27,7 @@ pub struct Sound {
     //
     // TODO: This could potentially just be an actual type? `sound::Signal` that matched on
     // the source kind, stored its own stack of effects, etc?
-    pub signal: Box<Iterator<Item = f32> + Send>,
+    pub signal: source::Signal,
     // The location of the sound within the space.
     pub point: Point2<Metres>,
     pub spread: Metres,
@@ -116,7 +116,7 @@ pub fn spawn_from_source(
     source_id: source::Id,
     source: &Source,
     initial_position: Point2<Metres>,
-    should_cycle: bool,
+    continuous_preview: bool,
     input_stream: &input::Stream,
     output_stream: &output::Stream,
     latency: Ms,
@@ -133,7 +133,7 @@ pub fn spawn_from_source(
                 source.radians,
                 installations,
                 initial_position,
-                should_cycle,
+                continuous_preview,
                 output_stream,
             )
 
@@ -147,7 +147,7 @@ pub fn spawn_from_source(
                 source.radians,
                 installations,
                 initial_position,
-                should_cycle,
+                continuous_preview,
                 input_stream,
                 output_stream,
                 latency,
@@ -165,15 +165,19 @@ pub fn spawn_from_wav(
     radians: f32,
     installations: Installations,
     initial_position: Point2<Metres>,
-    should_cycle: bool,
+    continuous_preview: bool,
     audio_output: &output::Stream,
 ) -> Handle
 {
-    // The wave signal iterator.
-    let signal = match should_cycle {
-        false => source::wav::stream_signal(&wav.path).unwrap(),
-        true => source::wav::stream_signal_cycled(&wav.path).unwrap(),
+    // The wave samples iterator.
+    let samples = match wav.should_loop || continuous_preview {
+        false => source::wav::SampleStream::from_path(&wav.path).unwrap().into(),
+        true => source::wav::SampleStream::from_path(&wav.path).unwrap().cycle().into(),
     };
+
+    // The source signal.
+    let playback = wav.playback.clone();
+    let signal = source::Signal::Wav { samples, playback };
 
     // Initialise the sound playing.
     let is_playing = AtomicBool::new(true);
@@ -226,13 +230,13 @@ pub fn spawn_from_realtime(
     radians: f32,
     installations: Installations,
     initial_position: Point2<Metres>,
-    should_cycle: bool,
+    continuous_preview: bool,
     audio_input: &input::Stream,
     audio_output: &output::Stream,
     latency: Ms,
 ) -> Handle {
     // The duration of the sound so that the realtime thread knows when to stop serving samples.
-    let duration = if should_cycle {
+    let duration = if continuous_preview {
         input::Duration::Infinite
     } else {
         let frames = realtime.duration.samples(SAMPLE_RATE as _);
@@ -254,7 +258,8 @@ pub fn spawn_from_realtime(
     }
 
     // The signal from which the sound will draw samples.
-    let signal = Box::new(source::realtime::Signal { sample_rx }) as Box<_>;
+    let samples = source::realtime::Signal { sample_rx };
+    let signal = source::Signal::Realtime { samples };
 
     // Initialise the sound playing.
     let is_playing = AtomicBool::new(true);
