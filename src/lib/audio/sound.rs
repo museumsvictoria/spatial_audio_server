@@ -176,7 +176,8 @@ pub fn spawn_from_wav(
     };
 
     // The source signal.
-    let signal = source::Signal::Wav { samples };
+    let playback = wav.playback.clone();
+    let signal = source::Signal::Wav { samples, playback };
 
     // Initialise the sound playing.
     let is_playing = AtomicBool::new(true);

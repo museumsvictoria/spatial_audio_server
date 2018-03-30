@@ -12,6 +12,26 @@ pub struct Wav {
     pub channels: usize,
     pub duration: Samples,
     pub sample_hz: SampleHz,
+    #[serde(default = "default_playback")]
+    pub playback: Playback,
+}
+
+/// The playback mode of the WAV file.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub enum Playback {
+    /// When the WAV is introduced, play it out from the beginning of the file.
+    Retrigger,
+    /// When the WAV is introduced start playing from its position within the global continuous
+    /// timeline.
+    ///
+    /// This acts as though the WAV is constantly being played but is just "muted" or "unmuted" as
+    /// we remove it and re-introduce it respectively.
+    Continuous,
+}
+
+/// Default to `Retrigger` mode.
+fn default_playback() -> Playback {
+    Playback::Retrigger
 }
 
 impl Wav {
@@ -24,11 +44,13 @@ impl Wav {
         assert_eq!(sample_hz, audio::SAMPLE_RATE,
                    "WAV files must have a sample rate of {}", audio::SAMPLE_RATE);
         let duration = Samples(reader.duration() as _);
+        let playback = default_playback();
         Ok(Wav {
             path,
             channels,
             duration,
             sample_hz,
+            playback,
         })
     }
 

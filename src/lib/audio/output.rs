@@ -5,7 +5,7 @@
 
 use audio::{DISTANCE_BLUR, PROXIMITY_LIMIT_2, Sound, Speaker, MAX_CHANNELS};
 use audio::detector::{EnvDetector, Fft, FftDetector, FFT_WINDOW_LEN};
-use audio::{dbap, sound, speaker};
+use audio::{dbap, source, sound, speaker};
 use audio::fft;
 use gui;
 use installation::{self, Installation};
@@ -63,6 +63,11 @@ struct SpeakerAnalysis {
 
 /// State that lives on the audio thread.
 pub struct Model {
+    /// The total number of frames written since the model was created.
+    ///
+    /// This is used for synchronising `Continuous` WAVs to the audio timeline with sample-perfect
+    /// accuracy.
+    pub frame_count: u64,
     /// The master volume, controlled via the GUI applied at the very end of processing.
     pub master_volume: f32,
     /// The DBAP rolloff decibel amount, used to attenuate speaker gains over distances.
@@ -151,7 +156,11 @@ impl Model {
         // Initialise the rolloff to the default value.
         let dbap_rolloff_db = super::DEFAULT_DBAP_ROLLOFF_DB;
 
+        // Initialise the frame count.
+        let frame_count = 0;
+
         Model {
+            frame_count,
             master_volume,
             dbap_rolloff_db,
             sounds,
@@ -272,6 +281,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
         let Model {
             master_volume,
             dbap_rolloff_db,
+            ref mut frame_count,
             ref mut sounds,
             ref mut unmixed_samples,
             ref mut exhausted_sounds,
@@ -301,6 +311,16 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             // Don't play it if paused.
             if !sound.shared.is_playing() {
                 continue;
+            }
+
+            // If the source is a `Continuous` WAV, ensure it is seeked to the correct position.
+            if let source::Signal::Wav { ref playback, ref mut samples } = sound.signal {
+                if let source::wav::Playback::Continuous = *playback {
+                    if let Err(err) = samples.seek(*frame_count) {
+                        eprintln!("failed to seek file for continuous WAV source: {}", err);
+                        continue;
+                    }
+                }
             }
 
             // The number of samples to request from the sound for this buffer.
@@ -491,6 +511,9 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
             gui_audio_monitor_msg_tx.try_send(msg).ok();
         }
+
+        // Step the frame count.
+        *frame_count += buffer.len_frames() as u64;
     }
 
     (model, buffer)

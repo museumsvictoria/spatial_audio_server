@@ -1,7 +1,6 @@
 use installation::Installation;
 use metres::Metres;
 use std::collections::HashSet;
-use std::io;
 
 pub use self::realtime::Realtime;
 pub use self::wav::Wav;
@@ -38,6 +37,7 @@ pub struct Source {
 pub enum Signal {
     Wav {
         samples: wav::Signal,
+        playback: wav::Playback,
     },
     Realtime {
         samples: realtime::Signal,
@@ -57,21 +57,8 @@ impl Signal {
     /// Borrow the inner iterator yielding samples.
     pub fn samples(&mut self) -> &mut Iterator<Item = f32> {
         match *self {
-            Signal::Wav { ref mut samples } => samples.samples(),
+            Signal::Wav { ref mut samples, .. } => samples.samples(),
             Signal::Realtime { ref mut samples } => samples as _,
-        }
-    }
-
-    /// Seek to the given `frame` within the source.
-    ///
-    /// The given `frame` is the time measured as the number of samples (independent of the number
-    /// of channels) since the beginning of the audio data.
-    ///
-    /// Calling this method has no effect for realtime sources.
-    pub fn seek(&mut self, frame: u64) -> io::Result<()> {
-        match *self {
-            Signal::Wav { ref mut samples } => samples.seek(frame),
-            Signal::Realtime { .. } => Ok(()),
         }
     }
 }
