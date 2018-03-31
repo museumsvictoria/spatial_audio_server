@@ -15,7 +15,9 @@ use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::ops::{Deref, DerefMut};
 use std::sync::mpsc;
-use utils;
+use time_calc::Ms;
+use utils::{self, HumanReadableTime, SEC_MS, MIN_MS, HR_MS};
+
 
 use self::installation_editor::InstallationEditor;
 use self::master::Master;
@@ -430,6 +432,18 @@ impl State {
         // Load the existing groups.
         let stored = utils::load_from_json_or_default(&soundscape_path(assets));
         let soundscape_editor::Stored { groups, next_group_id } = stored;
+
+        // Send the loaded groups to the soundscape thread.
+        for (&id, group) in &groups {
+            let group = group.group.clone();
+            channels
+                .soundscape
+                .send(move |soundscape| {
+                    soundscape.insert_group(id, group);
+                })
+                .ok();
+        }
+
         let soundscape_editor = SoundscapeEditor {
             is_open: false,
             groups,
@@ -902,6 +916,10 @@ widget_ids! {
         soundscape_editor_selected_canvas,
         soundscape_editor_selected_text,
         soundscape_editor_selected_name,
+        soundscape_editor_occurrence_rate_text,
+        soundscape_editor_occurrence_rate_slider,
+        soundscape_editor_simultaneous_sounds_text,
+        soundscape_editor_simultaneous_sounds_slider,
         // Audio Sources.
         source_editor,
         source_editor_no_sources,
@@ -967,6 +985,55 @@ pub fn info_text(text: &str) -> widget::Text {
     widget::Text::new(&text)
         .font_size(SMALL_FONT_SIZE)
         .line_spacing(6.0)
+}
+
+// A function to simplify the crateion of a label for a hz slider.
+pub fn hz_label(hz: f64) -> String {
+    match utils::human_readable_hz(hz) {
+        (HumanReadableTime::Ms, times_per_ms) => {
+            format!("{:.2} per millisecond", times_per_ms)
+        },
+        (HumanReadableTime::Secs, hz) => {
+            format!("{:.2} per second", hz)
+        },
+        (HumanReadableTime::Mins, times_per_min) => {
+            format!("{:.2} per minute", times_per_min)
+        },
+        (HumanReadableTime::Hrs, times_per_hr) => {
+            format!("{:.2} per hour", times_per_hr)
+        },
+        (HumanReadableTime::Days, times_per_day) => {
+            format!("{:.2} per day", times_per_day)
+        },
+    }
+}
+
+// A function to simplify the creation of a label for a duration slider.
+pub fn duration_label(ms: &Ms) -> String {
+    // Playback duration.
+    match utils::human_readable_ms(ms) {
+        (HumanReadableTime::Ms, ms) => {
+            format!("{:.2} ms", ms)
+        },
+        (HumanReadableTime::Secs, secs) => {
+            let secs = secs.floor();
+            let ms = ms.ms() - (secs * SEC_MS);
+            format!("{} secs {:.2} ms", secs, ms)
+        },
+        (HumanReadableTime::Mins, mins) => {
+            let mins = mins.floor();
+            let secs = (ms.ms() - (mins * MIN_MS)) / SEC_MS;
+            format!("{} mins {:.2} secs", mins, secs)
+        },
+        (HumanReadableTime::Hrs, hrs) => {
+            let hrs = hrs.floor();
+            let mins = (ms.ms() - (hrs * HR_MS)) / MIN_MS;
+            format!("{} hrs {:.2} mins", hrs, mins)
+        },
+        (HumanReadableTime::Days, days) => {
+            format!("{:.2} days", days)
+        },
+    }
 }
 
 pub const ITEM_HEIGHT: Scalar = 30.0;
