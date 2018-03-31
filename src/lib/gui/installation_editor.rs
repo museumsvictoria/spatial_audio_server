@@ -7,7 +7,7 @@ use nannou::ui;
 use nannou::ui::prelude::*;
 use osc;
 use std::collections::HashMap;
-use std::net;
+use std::{io, net};
 use std::path::Path;
 use utils;
 
@@ -49,7 +49,7 @@ pub fn default_computer_map() -> ComputerMap {
                     let computer = ComputerId(i);
                     let socket = "127.0.0.1:9002".parse().unwrap();
                     let osc_addr_base = inst.default_osc_addr_str().to_string();
-                    let osc_addr = format!("{}/{}", osc_addr_base, i);
+                    let osc_addr = format!("/{}/{}", osc_addr_base, i);
                     let addr = Address { socket, osc_addr };
                     (computer, addr)
                 })
@@ -233,11 +233,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         .top_left_of(ids.installation_editor_computer_canvas)
         .set(ids.installation_editor_computer_text, ui);
 
-    fn osc_sender(socket: &net::SocketAddrV4) -> nannou::osc::Sender<Connected> {
+    fn osc_sender(socket: &net::SocketAddrV4) -> io::Result<nannou::osc::Sender<Connected>> {
         nannou::osc::sender()
             .expect("failed to create OSC sender")
             .connect(socket)
-            .expect("failed to connect OSC sender")
     }
 
     // A number dialer to control the number of computers in the installation.
@@ -261,8 +260,14 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 let computer = ComputerId(i);
                 let socket = "127.0.0.1:9002".parse().unwrap();
                 let osc_addr_base = installation.default_osc_addr_str();
-                let osc_addr = format!("{}/{}", osc_addr_base, i);
-                let osc_tx = osc_sender(&socket);
+                let osc_addr = format!("/{}/{}", osc_addr_base, i);
+                let osc_tx = match osc_sender(&socket) {
+                    Err(err) => {
+                        eprintln!("failed to connect localhost OSC sender: {}", err);
+                        break;
+                    },
+                    Ok(tx) => tx,
+                };
                 let add =
                     osc::output::OscTarget::Add(installation, computer, osc_tx, osc_addr.clone());
                 let msg = osc::output::Message::Osc(add);
@@ -381,9 +386,18 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     ) {
         let socket = match selected.socket_string.parse() {
             Ok(s) => s,
-            Err(_) => return,
+            Err(_) => {
+                eprintln!("could not parse socket string");
+                return
+            },
         };
-        let osc_tx = osc_sender(&socket);
+        let osc_tx = match osc_sender(&socket) {
+            Ok(tx) => tx,
+            Err(err) => {
+                eprintln!("coulc not connect osc_sender: {}", err);
+                return;
+            }
+        };
         let osc_addr = selected.osc_addr.clone();
         let add =
             osc::output::OscTarget::Add(installation, selected.computer, osc_tx, osc_addr.clone());
