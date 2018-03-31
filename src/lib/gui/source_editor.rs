@@ -1,7 +1,7 @@
 use audio;
 use audio::source::Role;
 use audio::source::wav::Playback;
-use gui::{collapsible_area, Gui, State};
+use gui::{collapsible_area, duration_label, Gui, State};
 use gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
 use installation::{self, Installation};
 use metres::Metres;
@@ -1151,32 +1151,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             }
 
             // Playback duration.
-            const SEC_MS: f32 = 1_000.0;
-            const MIN_MS: f32 = SEC_MS * 60.0;
-            const HR_MS: f32 = MIN_MS * 60.0;
-            const DAY_MS: f32 = HR_MS * 24.0;
+            let label = duration_label(&realtime.duration);
             let min = 0.0;
-            let max = HR_MS;
-            let ms = realtime.duration.ms() as f32;
-            let label = if ms < SEC_MS {
-                format!("{:.2} ms", ms)
-            } else if ms < MIN_MS {
-                let secs = (ms / SEC_MS) as u32;
-                let ms = ms - (secs as f32 * SEC_MS);
-                format!("{} secs {:.2} ms", secs, ms)
-            } else if ms < HR_MS {
-                let mins = (ms / MIN_MS) as u32;
-                let secs = (ms - (mins as f32 * MIN_MS)) / SEC_MS;
-                format!("{} mins {:.2} secs", mins, secs)
-            } else if ms < DAY_MS {
-                let hrs = (ms / HR_MS) as u32;
-                let mins = (ms - (hrs as f32 * HR_MS)) / MIN_MS;
-                format!("{} hrs {:.2} mins", hrs, mins)
-            } else {
-                let days = ms / DAY_MS;
-                format!("{:.2} days", days)
-            };
-            for new_ms in widget::Slider::new(ms, min, max)
+            let max = utils::HR_MS;
+            for new_ms in widget::Slider::new(realtime.duration.ms(), min, max)
                 .label(&format!("Duration: {}", label))
                 .label_font_size(SMALL_FONT_SIZE)
                 .kid_area_w_of(ids.source_editor_selected_realtime_canvas)

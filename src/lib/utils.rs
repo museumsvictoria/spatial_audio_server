@@ -4,6 +4,82 @@ use std::{fmt, fs, io};
 use std::error::Error;
 use std::io::Write;
 use std::path::Path;
+use time_calc::Ms;
+
+pub const SEC_MS: f64 = 1_000.0;
+pub const MIN_MS: f64 = SEC_MS * 60.0;
+pub const HR_MS: f64 = MIN_MS * 60.0;
+pub const DAY_MS: f64 = HR_MS * 24.0;
+
+pub const MS_IN_HZ: f64 = 1_000.0;
+pub const SEC_IN_HZ: f64 = 1.0;
+pub const MIN_IN_HZ: f64 = SEC_IN_HZ / 60.0;
+pub const HR_IN_HZ: f64 = MIN_IN_HZ / 60.0;
+pub const DAY_IN_HZ: f64 = HR_IN_HZ / 24.0;
+
+/// Min and max values along a range.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct Range<T> {
+    pub min: T,
+    pub max: T,
+}
+
+pub enum HumanReadableTime {
+    Ms,
+    Secs,
+    Mins,
+    Hrs,
+    Days,
+}
+
+/// Convert the given interval in milliseconds to a rate in hz.
+pub fn ms_interval_to_hz(ms: Ms) -> f64 {
+    let secs_interval = ms.ms() / SEC_MS;
+    1.0 / secs_interval
+}
+
+/// Convert the given rate in hz to an interval in milliseconds.
+pub fn hz_to_ms_interval(hz: f64) -> Ms {
+    let secs_interval = 1.0 / hz;
+    Ms(secs_interval * SEC_MS)
+}
+
+/// Given a value in hz, produce a more readable "times per second".
+///
+/// E.g. a returned value of (Hrs, 3.5) can be thought of as "3.5 times per hour".
+pub fn human_readable_hz(hz: f64) -> (HumanReadableTime, f64) {
+    if hz < DAY_IN_HZ || hz < HR_IN_HZ {
+        let times_per_day = hz / DAY_IN_HZ;
+        (HumanReadableTime::Days, times_per_day)
+    } else if hz < MIN_IN_HZ {
+        let times_per_hr = hz / HR_IN_HZ;
+        (HumanReadableTime::Hrs, times_per_hr)
+    } else if hz < SEC_IN_HZ {
+        let times_per_min = hz / MIN_IN_HZ;
+        (HumanReadableTime::Mins, times_per_min)
+    } else if hz < MS_IN_HZ {
+        (HumanReadableTime::Secs, hz)
+    } else {
+        let times_per_ms = hz / MS_IN_HZ;
+        (HumanReadableTime::Ms, times_per_ms)
+    }
+}
+
+/// Given a number of milliseconds, produce the human readable time values.
+pub fn human_readable_ms(ms: &Ms) -> (HumanReadableTime, f64) {
+    let ms = ms.ms();
+    if ms < SEC_MS {
+        (HumanReadableTime::Ms, ms)
+    } else if ms < MIN_MS {
+        (HumanReadableTime::Secs, ms / SEC_MS)
+    } else if ms < HR_MS {
+        (HumanReadableTime::Mins, ms / MIN_MS)
+    } else if ms < DAY_MS {
+        (HumanReadableTime::Hrs, ms / HR_MS)
+    } else {
+        (HumanReadableTime::Days, ms / DAY_MS)
+    }
+}
 
 /// Errors that might occur when saving a file.
 #[derive(Debug)]

@@ -3,25 +3,36 @@
 //! - Play/Pause toggle for the soundscape.
 //! - Groups panel for creating/removing soundscape source groups.
 
-use gui::{collapsible_area, Gui, State};
+use gui::{collapsible_area, hz_label, Gui, State};
 use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
+use nannou;
 use nannou::ui;
 use nannou::ui::prelude::*;
 use soundscape;
 use std::collections::HashMap;
+use std::ops;
+use time_calc::Ms;
+use utils;
 
 /// GUI state related to the soundscape editor area.
 pub struct SoundscapeEditor {
     pub is_open: bool,
-    pub groups: HashMap<soundscape::group::Id, soundscape::group::Name>,
+    pub groups: HashMap<soundscape::group::Id, Group>,
     pub next_group_id: soundscape::group::Id,
     pub selected: Option<Selected>,
+}
+
+/// State related to a single soundscape group required by the GUI.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Group {
+    pub group: soundscape::Group,
+    pub name: soundscape::group::Name,
 }
 
 /// JSON friendly representation of the soundscape editor GUI state.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Stored {
-    pub groups: HashMap<soundscape::group::Id, soundscape::group::Name>,
+    pub groups: HashMap<soundscape::group::Id, Group>,
     pub next_group_id: soundscape::group::Id,
 }
 
@@ -29,6 +40,19 @@ pub struct Stored {
 pub struct Selected {
     name: String,
     id: soundscape::group::Id,
+}
+
+impl ops::Deref for Group {
+    type Target = soundscape::Group;
+    fn deref(&self) -> &Self::Target {
+        &self.group
+    }
+}
+
+impl ops::DerefMut for Group {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.group
+    }
 }
 
 /// Sets all widgets in the soundscape area and returns the `Id` of the last area.
@@ -53,7 +77,11 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     const TEXT_BOX_H: Scalar = ITEM_HEIGHT;
     const TITLE_H: Scalar = SMALL_FONT_SIZE as Scalar * 1.333;
     const GROUP_CANVAS_H: Scalar = PAD + TITLE_H + PAD + PLUS_GROUP_H + GROUP_LIST_MAX_H + PAD;
-    const SELECTED_CANVAS_H: Scalar = PAD + TITLE_H + PAD * 2.0 + TEXT_BOX_H + PAD;
+    const SLIDER_H: Scalar = ITEM_HEIGHT;
+    const SELECTED_CANVAS_H: Scalar = PAD
+        + TITLE_H + PAD * 2.0 + TEXT_BOX_H + PAD
+        + TITLE_H + PAD * 2.0 + SLIDER_H + PAD
+        + TITLE_H + PAD + SLIDER_H + PAD;
     let soundscape_editor_canvas_h = PAD + IS_PLAYING_H + PAD + GROUP_CANVAS_H + PAD + SELECTED_CANVAS_H + PAD;
 
     // The collapsible area.
@@ -136,7 +164,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let next_id = id.0.checked_add(1).expect("the next group `Id` would overflow");
         soundscape_editor.next_group_id = soundscape::group::Id(next_id);
         let name = "<unnamed>".to_string();
-        soundscape_editor.groups.insert(id, soundscape::group::Name(name.clone()));
+        let group = soundscape::Group::default();
+        let group = Group {
+            name: soundscape::group::Name(name.clone()),
+            group,
+        };
+        soundscape_editor.groups.insert(id, group);
         soundscape_editor.selected = Some(Selected { id, name });
     }
 
@@ -156,7 +189,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     let mut groups_vec: Vec<_> = soundscape_editor
         .groups
         .iter()
-        .map(|(&id, name)| (id, name.0.clone()))
+        .map(|(&id, group)| (id, group.name.0.clone()))
         .collect();
     groups_vec.sort_by(|a, b| a.1.cmp(&b.1));
 
@@ -318,11 +351,149 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             },
             // Only when enter is pressed do we update the actual name.
             Event::Enter => {
-                if let Some(name) = groups.get_mut(&selected.id) {
-                    name.0 = selected.name.clone();
+                if let Some(group) = groups.get_mut(&selected.id) {
+                    group.name.0 = selected.name.clone();
                 }
             },
         }
+    }
+
+    /////////////////////
+    // OCCURRENCE RATE //
+    /////////////////////
+
+    widget::Text::new("Occurrence Rate")
+        .align_left()
+        .down(PAD)
+        .font_size(SMALL_FONT_SIZE)
+        .set(ids.soundscape_editor_occurrence_rate_text, ui);
+
+    // A range slider for constraining the occurrence rate.
+    let occurrence_rate = groups[&selected.id].occurrence_rate;
+    let max_hz = utils::ms_interval_to_hz(occurrence_rate.min);
+    let min_hz = utils::ms_interval_to_hz(occurrence_rate.max);
+    let min_hz_label = hz_label(min_hz);
+    let max_hz_label = hz_label(max_hz);
+    let label = format!("{} to {}", min_hz_label, max_hz_label);
+    let total_min_hz = utils::ms_interval_to_hz(Ms(utils::DAY_MS));
+    let total_max_hz = utils::ms_interval_to_hz(Ms(1.0));
+    let skew = 1.0 / 10.0;
+
+    // Map a value from the total hz range to [0.0, 1.0] with the given skew.
+    let map_and_skew = |hz: f64| -> f64 {
+        let mapped = nannou::math::map_range(hz, total_min_hz, total_max_hz, 0.0f64, 1.0);
+        let skewed = mapped.powf(skew);
+        skewed
+    };
+
+    // Unskew the given skewed, normalised value and map it back to the hz range.
+    let map_unskewed = |normalised: f64| -> f64 {
+        let unskewed = normalised.powf(1.0 / skew);
+        let unmapped = nannou::math::map_range(unskewed, 0.0, 1.0, total_min_hz, total_max_hz);
+        unmapped
+    };
+
+    let range_slider = |start, end, min, max| {
+        widget::RangeSlider::new(start, end, min, max)
+            .kid_area_w_of(ids.soundscape_editor_selected_canvas)
+            .h(SLIDER_H)
+            .label_font_size(SMALL_FONT_SIZE)
+            .color(ui::color::LIGHT_CHARCOAL)
+    };
+
+    for (edge, value) in range_slider(map_and_skew(min_hz), map_and_skew(max_hz), 0.0, 1.0)
+        .align_left()
+        .label(&label)
+        .down(PAD * 2.0)
+        .set(ids.soundscape_editor_occurrence_rate_slider, ui)
+    {
+        let hz = map_unskewed(value);
+        let id = selected.id;
+
+        // Update the local copy.
+        let new_rate = {
+            let group = groups.get_mut(&id).unwrap();
+            match edge {
+                widget::range_slider::Edge::Start => {
+                    let ms = utils::hz_to_ms_interval(hz);
+                    group.occurrence_rate.max = ms;
+                },
+                widget::range_slider::Edge::End => {
+                    let ms = utils::hz_to_ms_interval(hz);
+                    group.occurrence_rate.min = ms;
+                }
+            }
+            group.occurrence_rate
+        };
+
+        // Update the soundscape copy.
+        channels.soundscape.send(move |soundscape| {
+            soundscape.update_group(&id, |group| {
+                group.occurrence_rate = new_rate;
+            });
+        }).ok();
+    }
+
+    /////////////////////////
+    // SIMULTANEOUS SOUNDS //
+    /////////////////////////
+
+    widget::Text::new("Simultaneous Sounds")
+        .align_left()
+        .down(PAD)
+        .font_size(SMALL_FONT_SIZE)
+        .set(ids.soundscape_editor_simultaneous_sounds_text, ui);
+
+    let range = groups[&selected.id].simultaneous_sounds;
+    let label = format!("{} to {} sounds at once", range.min, range.max);
+    let total_min_num = 0.0;
+    let total_max_num = 100.0;
+    let skew = 0.5;
+
+    // Map a value from the total hz range to [0.0, 1.0] with the given skew.
+    let map_and_skew = |num: usize| -> f64 {
+        let num_f = num as f64;
+        let mapped = nannou::math::map_range(num_f, total_min_num, total_max_num, 0.0f64, 1.0);
+        let skewed = mapped.powf(skew);
+        skewed
+    };
+
+    // Unskew the given skewed, normalised value and map it back to the hz range.
+    let map_unskewed = |normalised: f64| -> usize {
+        let unskewed = normalised.powf(1.0 / skew);
+        let unmapped = nannou::math::map_range(unskewed, 0.0, 1.0, total_min_num, total_max_num);
+        unmapped.round() as _
+    };
+
+    for (edge, value) in range_slider(map_and_skew(range.min), map_and_skew(range.max), 0.0, 1.0)
+        .align_left()
+        .label(&label)
+        .down(PAD * 2.0)
+        .set(ids.soundscape_editor_simultaneous_sounds_slider, ui)
+    {
+        let num = map_unskewed(value);
+        let id = selected.id;
+
+        // Update the local copy.
+        let new_rate = {
+            let group = groups.get_mut(&id).unwrap();
+            match edge {
+                widget::range_slider::Edge::Start => {
+                    group.simultaneous_sounds.min = num;
+                },
+                widget::range_slider::Edge::End => {
+                    group.simultaneous_sounds.max = num;
+                }
+            }
+            group.simultaneous_sounds
+        };
+
+        // Update the soundscape copy.
+        channels.soundscape.send(move |soundscape| {
+            soundscape.update_group(&id, |group| {
+                group.simultaneous_sounds = new_rate;
+            });
+        }).ok();
     }
 
     area.id

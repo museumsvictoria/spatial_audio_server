@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time;
 
+pub use self::group::Group;
 use self::movement::BoundingBox;
 
 pub mod group;
@@ -87,6 +88,8 @@ pub struct ActiveSound {
 
 /// The model containing all state running on the soundscape thread.
 pub struct Model {
+    /// Constraints for collections of sources.
+    groups: HashMap<group::Id, Group>,
     /// All sources available to the soundscape for producing audio.
     sources: HashMap<audio::source::Id, Source>,
     /// All speakers within the exhibition.
@@ -180,6 +183,27 @@ impl Soundscape {
 }
 
 impl Model {
+    /// Insert a new soundscape group.
+    pub fn insert_group(&mut self, id: group::Id, group: Group) -> Option<Group> {
+        self.groups.insert(id, group)
+    }
+
+    /// Updates the group with the given function.
+    ///
+    /// Returns `false` if the group wasn't there.
+    pub fn update_group<F>(&mut self, id: &group::Id, update: F) -> bool
+    where
+        F: FnOnce(&mut Group),
+    {
+        match self.groups.get_mut(id) {
+            None => false,
+            Some(s) => {
+                update(s);
+                true
+            },
+        }
+    }
+
     /// Insert a speaker into the inner map.
     pub fn insert_speaker(&mut self, id: audio::speaker::Id, speaker: Speaker) -> Option<Speaker> {
         self.speakers.insert(id, speaker)
@@ -301,11 +325,13 @@ pub fn spawn(
         .unwrap();
 
     // The model maintaining state between messages.
-    let sources = HashMap::new();
-    let speakers = HashMap::new();
-    let active_sounds = HashMap::new();
-    let installation_bounds = HashMap::new();
+    let groups = Default::default();
+    let sources = Default::default();
+    let speakers = Default::default();
+    let active_sounds = Default::default();
+    let installation_bounds = Default::default();
     let model = Model {
+        groups,
         sources,
         speakers,
         active_sounds,
