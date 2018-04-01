@@ -1,10 +1,11 @@
 use audio;
 use audio::source::Role;
 use audio::source::wav::Playback;
-use gui::{collapsible_area, duration_label, Gui, State};
+use gui::{collapsible_area, duration_label, hz_label, Gui, State};
 use gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
 use installation::{self, Installation};
 use metres::Metres;
+use nannou;
 use nannou::prelude::*;
 use nannou::ui;
 use nannou::ui::prelude::*;
@@ -58,6 +59,19 @@ pub struct StoredSources {
 
 pub fn first_source_id() -> audio::source::Id {
     audio::source::Id::INITIAL
+}
+
+impl ops::Deref for Source {
+    type Target = audio::Source;
+    fn deref(&self) -> &Self::Target {
+        &self.audio
+    }
+}
+
+impl ops::DerefMut for Source {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.audio
+    }
 }
 
 const SOUNDSCAPE_COLOR: ui::Color = ui::color::DARK_RED;
@@ -232,6 +246,13 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     const INSTALLATION_LIST_H: Scalar = ITEM_HEIGHT * 3.0;
     const INSTALLATIONS_CANVAS_H: Scalar =
         PAD + ITEM_HEIGHT * 2.0 + PAD + INSTALLATION_LIST_H + PAD;
+    const SLIDER_H: Scalar = ITEM_HEIGHT;
+    const SOUNDSCAPE_GROUP_LIST_H: Scalar = ITEM_HEIGHT * 3.0;
+    const SOUNDSCAPE_CANVAS_H: Scalar = PAD + TEXT_PAD + PAD
+        + TEXT_PAD + PAD + SLIDER_H + PAD
+        + TEXT_PAD + PAD + SLIDER_H + PAD
+        + TEXT_PAD + PAD + SLIDER_H + PAD
+        + TEXT_PAD + PAD * 2.5 + SOUNDSCAPE_GROUP_LIST_H + PAD;
     const LOOP_TOGGLE_H: Scalar = ITEM_HEIGHT;
     const PLAYBACK_MODE_H: Scalar = ITEM_HEIGHT;
     const WAV_CANVAS_H: Scalar =
@@ -241,7 +262,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         PAD + ITEM_HEIGHT * 2.0 + PAD + INSTALLATION_LIST_H + PAD;
     let kind_specific_h = WAV_CANVAS_H.max(REALTIME_CANVAS_H);
     let selected_canvas_h = ITEM_HEIGHT * 2.0 + PAD * 7.0 + PREVIEW_CANVAS_H + kind_specific_h
-        + CHANNEL_LAYOUT_CANVAS_H + INSTALLATIONS_CANVAS_H;
+        + CHANNEL_LAYOUT_CANVAS_H + INSTALLATIONS_CANVAS_H + PAD + SOUNDSCAPE_CANVAS_H;
     let source_editor_canvas_h = LIST_HEIGHT + ITEM_HEIGHT + selected_canvas_h;
 
     let (area, event) = collapsible_area(is_open, "Source Editor", gui.ids.side_menu)
@@ -454,7 +475,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let name = format!("Source {}", id.0);
         let kind = audio::source::Kind::Realtime(realtime.clone());
         let role = Default::default();
-        let spread = audio::source::default_spread();
+        let spread = audio::source::default::SPREAD;
         let radians = Default::default();
         let audio = audio::Source {
             kind,
@@ -522,6 +543,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         ref mut preview,
                         ..
                     },
+                ref soundscape_editor,
                 ..
             },
         ..
@@ -649,184 +671,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         }
     }
 
-    // TODO: Show a role-specific canvas of options. E.g. `SCAPE` should show an installation set.
-    let mut last_canvas_id = ids.source_editor_selected_role_list;
-    match sources[i].audio.role.clone() {
-        // For soundscape sounds, allow the user to select installations.
-        Some(Role::Soundscape(audio::source::Soundscape { mut installations })) => {
-            // A canvas on which installation selection widgets are instantiated.
-            widget::Canvas::new()
-                .kid_area_w_of(ids.source_editor_selected_canvas)
-                .h(INSTALLATIONS_CANVAS_H)
-                .align_middle_x_of(ids.source_editor_selected_canvas)
-                .parent(ids.source_editor_selected_canvas)
-                .down(PAD)
-                .pad(PAD)
-                .color(color::CHARCOAL)
-                .set(ids.source_editor_selected_installations_canvas, ui);
-            last_canvas_id = ids.source_editor_selected_installations_canvas;
-
-            // A header for the installations editing area.
-            widget::Text::new("Installations")
-                .top_left_of(ids.source_editor_selected_installations_canvas)
-                .font_size(SMALL_FONT_SIZE)
-                .set(ids.source_editor_selected_installations_text, ui);
-
-            // A dropdownlist for assigning installations to the source.
-            //
-            // Only show installations that aren't yet assigned.
-            let installations_vec = installation::ALL
-                .iter()
-                .filter(|inst| !installations.contains(inst))
-                .cloned()
-                .collect::<Vec<_>>();
-            let installation_strs = installations_vec
-                .iter()
-                .map(Installation::display_str)
-                .collect::<Vec<_>>();
-            for index in widget::DropDownList::new(&installation_strs, None)
-                .align_middle_x_of(ids.source_editor_selected_installations_canvas)
-                .down_from(ids.source_editor_selected_installations_text, PAD * 2.0)
-                .h(ITEM_HEIGHT)
-                .kid_area_w_of(ids.source_editor_selected_installations_canvas)
-                .label("ADD INSTALLATION")
-                .label_font_size(SMALL_FONT_SIZE)
-                .set(ids.source_editor_selected_installations_ddl, ui)
-            {
-                let installation = installations_vec[index];
-                installations.insert(installation);
-
-                // Update the local copy.
-                let source = &mut sources[i];
-                if let Some(Role::Soundscape(ref mut soundscape)) = source.audio.role {
-                    soundscape.installations.insert(installation);
-                }
-
-                // Update the soundscape copy.
-                let id = source.id;
-                channels.soundscape.send(move |soundscape| {
-                    soundscape.update_source(&id, |source| {
-                        source.installations.insert(installation);
-                    });
-                }).expect("soundscape channel closed");
-
-                // Update sounds
-                channels.audio_output.send(move |audio| {
-                    for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
-                        if let audio::sound::Installations::Set(ref mut set) = sound.installations {
-                            set.insert(installation);
-                        }
-                    }
-                }).ok();
-            }
-
-            // A scrollable list showing each of the assigned installations.
-            let mut selected_installations = installations.iter().cloned().collect::<Vec<_>>();
-            selected_installations.sort_by(|a, b| a.display_str().cmp(b.display_str()));
-            let (mut items, scrollbar) = widget::List::flow_down(selected_installations.len())
-                .item_size(ITEM_HEIGHT)
-                .h(INSTALLATION_LIST_H)
-                .kid_area_w_of(ids.source_editor_selected_installations_canvas)
-                .align_middle_x_of(ids.source_editor_selected_installations_canvas)
-                .down_from(ids.source_editor_selected_installations_ddl, PAD)
-                .scrollbar_next_to()
-                .scrollbar_color(color::LIGHT_CHARCOAL)
-                .set(ids.source_editor_selected_installations_list, ui);
-            let mut maybe_remove_index = None;
-            while let Some(item) = items.next(ui) {
-                let inst = selected_installations[item.i];
-                let label = inst.display_str();
-
-                // Use `Button`s for the selectable items.
-                let button = widget::Button::new()
-                    .label(&label)
-                    .label_font_size(SMALL_FONT_SIZE)
-                    .label_x(position::Relative::Place(position::Place::Start(Some(
-                        10.0,
-                    ))));
-                item.set(button, ui);
-
-                // If the button or any of its children are capturing the mouse, display
-                // the `remove` button.
-                let show_remove_button = ui.global_input()
-                    .current
-                    .widget_capturing_mouse
-                    .map(|id| {
-                        id == item.widget_id
-                            || ui.widget_graph()
-                                .does_recursive_depth_edge_exist(item.widget_id, id)
-                    })
-                    .unwrap_or(false);
-
-                if !show_remove_button {
-                    continue;
-                }
-
-                if widget::Button::new()
-                    .label("X")
-                    .label_font_size(SMALL_FONT_SIZE)
-                    .color(color::DARK_RED.alpha(0.5))
-                    .w_h(ITEM_HEIGHT, ITEM_HEIGHT)
-                    .align_right_of(item.widget_id)
-                    .align_middle_y_of(item.widget_id)
-                    .parent(item.widget_id)
-                    .set(ids.source_editor_selected_installations_remove, ui)
-                    .was_clicked()
-                {
-                    maybe_remove_index = Some(item.i);
-                }
-            }
-
-            // The scrollbar for the list.
-            if let Some(scrollbar) = scrollbar {
-                scrollbar.set(ui);
-            }
-
-            // If some installation was clicked for removal, remove it.
-            if let Some(inst) = maybe_remove_index.map(|i| selected_installations[i]) {
-                let source = &mut sources[i];
-                let id = source.id;
-
-                // Remove the local copy.
-                if let Some(Role::Soundscape(ref mut soundscape)) = source.audio.role {
-                    soundscape.installations.remove(&inst);
-                }
-
-                // Remove the soundscape copy.
-                channels.soundscape.send(move |soundscape| {
-                    soundscape.update_source(&id, move |source| {
-                        source.installations.remove(&inst);
-                    });
-                }).expect("soundscape channel closed");
-
-                // Remove the installation from sounds driven by this source on the output stream.
-                channels.audio_output.send(move |audio| {
-                    for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
-                        if let audio::sound::Installations::Set(ref mut set) = sound.installations {
-                            set.remove(&inst);
-                        }
-                    }
-                }).ok();
-            }
-        },
-
-        // For interactive sounds, allow the user specify the location.NOTE: Option - just work
-        // this sound out from the location of the speakers?
-        Some(Role::Interactive) => {
-        },
-
-        // For scribbles, allow a specific location from which the speaking appears.
-        Some(Role::Scribbles) => {
-        },
-
-        // If it has no role, no specific stuff to be done.
-        None => (),
-    }
-
     // Preview options.
     widget::Canvas::new()
         .mid_left_of(ids.source_editor_selected_canvas)
-        .down_from(last_canvas_id, PAD)
+        .down_from(ids.source_editor_selected_role_list, PAD)
         .parent(ids.source_editor_selected_canvas)
         .color(color::CHARCOAL)
         .w(selected_canvas_kid_area.w())
@@ -1388,6 +1236,494 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             .y_relative_to(id, SMALL_FONT_SIZE as Scalar * 0.13)
             .font_size(SMALL_FONT_SIZE)
             .set(label_id, ui);
+    }
+
+    ///////////////////
+    // Role-specific //
+    ///////////////////
+
+    match sources[i].audio.role.clone() {
+        // For soundscape sounds, allow the user to select installations.
+        Some(Role::Soundscape(soundscape)) => {
+            // Destructure the soundscape roll to its fields.
+            let audio::source::Soundscape {
+                mut installations,
+                occurrence_rate,
+                simultaneous_sounds,
+                playback_duration,
+                groups,
+            } = soundscape;
+
+            // A canvas on which installation selection widgets are instantiated.
+            widget::Canvas::new()
+                .kid_area_w_of(ids.source_editor_selected_canvas)
+                .h(INSTALLATIONS_CANVAS_H)
+                .align_middle_x_of(ids.source_editor_selected_canvas)
+                .parent(ids.source_editor_selected_canvas)
+                .down_from(ids.source_editor_selected_channel_layout_canvas, PAD)
+                .pad(PAD)
+                .color(color::CHARCOAL)
+                .set(ids.source_editor_selected_installations_canvas, ui);
+
+            // A header for the installations editing area.
+            widget::Text::new("Installations")
+                .top_left_of(ids.source_editor_selected_installations_canvas)
+                .font_size(SMALL_FONT_SIZE)
+                .set(ids.source_editor_selected_installations_text, ui);
+
+            // A dropdownlist for assigning installations to the source.
+            //
+            // Only show installations that aren't yet assigned.
+            let installations_vec = installation::ALL
+                .iter()
+                .filter(|inst| !installations.contains(inst))
+                .cloned()
+                .collect::<Vec<_>>();
+            let installation_strs = installations_vec
+                .iter()
+                .map(Installation::display_str)
+                .collect::<Vec<_>>();
+            for index in widget::DropDownList::new(&installation_strs, None)
+                .align_middle_x_of(ids.source_editor_selected_installations_canvas)
+                .down_from(ids.source_editor_selected_installations_text, PAD * 2.0)
+                .h(ITEM_HEIGHT)
+                .kid_area_w_of(ids.source_editor_selected_installations_canvas)
+                .label("ADD INSTALLATION")
+                .label_font_size(SMALL_FONT_SIZE)
+                .set(ids.source_editor_selected_installations_ddl, ui)
+            {
+                let installation = installations_vec[index];
+                installations.insert(installation);
+
+                // Update the local copy.
+                let source = &mut sources[i];
+                if let Some(Role::Soundscape(ref mut soundscape)) = source.audio.role {
+                    soundscape.installations.insert(installation);
+                }
+
+                // Update the soundscape copy.
+                let id = source.id;
+                channels.soundscape.send(move |soundscape| {
+                    soundscape.update_source(&id, |source| {
+                        source.installations.insert(installation);
+                    });
+                }).expect("soundscape channel closed");
+
+                // Update sounds
+                channels.audio_output.send(move |audio| {
+                    for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
+                        if let audio::sound::Installations::Set(ref mut set) = sound.installations {
+                            set.insert(installation);
+                        }
+                    }
+                }).ok();
+            }
+
+            // A scrollable list showing each of the assigned installations.
+            let mut selected_installations = installations.iter().cloned().collect::<Vec<_>>();
+            selected_installations.sort_by(|a, b| a.display_str().cmp(b.display_str()));
+            let (mut items, scrollbar) = widget::List::flow_down(selected_installations.len())
+                .item_size(ITEM_HEIGHT)
+                .h(INSTALLATION_LIST_H)
+                .kid_area_w_of(ids.source_editor_selected_installations_canvas)
+                .align_middle_x_of(ids.source_editor_selected_installations_canvas)
+                .down_from(ids.source_editor_selected_installations_ddl, PAD)
+                .scrollbar_next_to()
+                .scrollbar_color(color::LIGHT_CHARCOAL)
+                .set(ids.source_editor_selected_installations_list, ui);
+            let mut maybe_remove_index = None;
+            while let Some(item) = items.next(ui) {
+                let inst = selected_installations[item.i];
+                let label = inst.display_str();
+
+                // Use `Button`s for the selectable items.
+                let button = widget::Button::new()
+                    .label(&label)
+                    .label_font_size(SMALL_FONT_SIZE)
+                    .label_x(position::Relative::Place(position::Place::Start(Some(
+                        10.0,
+                    ))));
+                item.set(button, ui);
+
+                // If the button or any of its children are capturing the mouse, display
+                // the `remove` button.
+                let show_remove_button = ui.global_input()
+                    .current
+                    .widget_capturing_mouse
+                    .map(|id| {
+                        id == item.widget_id
+                            || ui.widget_graph()
+                                .does_recursive_depth_edge_exist(item.widget_id, id)
+                    })
+                    .unwrap_or(false);
+
+                if !show_remove_button {
+                    continue;
+                }
+
+                if widget::Button::new()
+                    .label("X")
+                    .label_font_size(SMALL_FONT_SIZE)
+                    .color(color::DARK_RED.alpha(0.5))
+                    .w_h(ITEM_HEIGHT, ITEM_HEIGHT)
+                    .align_right_of(item.widget_id)
+                    .align_middle_y_of(item.widget_id)
+                    .parent(item.widget_id)
+                    .set(ids.source_editor_selected_installations_remove, ui)
+                    .was_clicked()
+                {
+                    maybe_remove_index = Some(item.i);
+                }
+            }
+
+            // The scrollbar for the list.
+            if let Some(scrollbar) = scrollbar {
+                scrollbar.set(ui);
+            }
+
+            // If some installation was clicked for removal, remove it.
+            if let Some(inst) = maybe_remove_index.map(|i| selected_installations[i]) {
+                let source = &mut sources[i];
+                let id = source.id;
+
+                // Remove the local copy.
+                if let Some(Role::Soundscape(ref mut soundscape)) = source.audio.role {
+                    soundscape.installations.remove(&inst);
+                }
+
+                // Remove the soundscape copy.
+                channels.soundscape.send(move |soundscape| {
+                    soundscape.update_source(&id, move |source| {
+                        source.installations.remove(&inst);
+                    });
+                }).expect("soundscape channel closed");
+
+                // Remove the installation from sounds driven by this source on the output stream.
+                channels.audio_output.send(move |audio| {
+                    for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
+                        if let audio::sound::Installations::Set(ref mut set) = sound.installations {
+                            set.remove(&inst);
+                        }
+                    }
+                }).ok();
+            }
+
+            ////////////////////////////
+            // SOUNDSCAPE CONSTRAINTS //
+            ////////////////////////////
+            //
+            // TODO:
+            // 1. Occurrence Rate
+            // 2. Simultaneous Playback
+            // 3. Duration of playback
+            // 4. Assigned Groups
+
+            // A canvas on which installation selection widgets are instantiated.
+            widget::Canvas::new()
+                .h(SOUNDSCAPE_CANVAS_H)
+                .kid_area_w_of(ids.source_editor_selected_canvas)
+                .align_middle_x_of(ids.source_editor_selected_canvas)
+                .down_from(ids.source_editor_selected_installations_canvas, PAD)
+                .parent(ids.source_editor_selected_canvas)
+                .pad(PAD)
+                .color(color::CHARCOAL)
+                .set(ids.source_editor_selected_soundscape_canvas, ui);
+
+            // A header for the installations editing area.
+            widget::Text::new("SOUNDSCAPE CONSTRAINTS")
+                .top_left_of(ids.source_editor_selected_soundscape_canvas)
+                .font_size(SMALL_FONT_SIZE)
+                .set(ids.source_editor_selected_soundscape_title, ui);
+
+            /////////////////////
+            // Occurrence Rate //
+            /////////////////////
+
+            widget::Text::new("Occurrence Rate")
+                .align_left()
+                .down(PAD * 2.0)
+                .font_size(SMALL_FONT_SIZE)
+                .set(ids.source_editor_selected_soundscape_occurrence_rate_text, ui);
+
+            // A range slider for constraining the occurrence rate.
+            let max_hz = utils::ms_interval_to_hz(occurrence_rate.min);
+            let min_hz = utils::ms_interval_to_hz(occurrence_rate.max);
+            let min_hz_label = hz_label(min_hz);
+            let max_hz_label = hz_label(max_hz);
+            let label = format!("{} to {}", min_hz_label, max_hz_label);
+            let total_min_hz = utils::ms_interval_to_hz(Ms(utils::DAY_MS));
+            let total_max_hz = utils::ms_interval_to_hz(Ms(1.0));
+            let skew = 1.0 / 10.0;
+
+            // Map a value from the total hz range to [0.0, 1.0] with the given skew.
+            let map_and_skew = |hz: f64| -> f64 {
+                utils::normalise_and_skew(hz, total_min_hz, total_max_hz, skew)
+            };
+
+            // Unskew the given skewed, normalised value and map it back to the hz range.
+            let map_unskewed = |skewed: f64| -> f64 {
+                utils::unskew_and_unnormalise(skewed, total_min_hz, total_max_hz, skew)
+            };
+
+            let range_slider = |start, end| {
+                widget::RangeSlider::new(start, end, 0.0, 1.0)
+                    .kid_area_w_of(ids.source_editor_selected_soundscape_canvas)
+                    .h(SLIDER_H)
+                    .label_font_size(SMALL_FONT_SIZE)
+                    .color(ui::color::LIGHT_CHARCOAL)
+            };
+
+            for (edge, value) in range_slider(map_and_skew(min_hz), map_and_skew(max_hz))
+                .align_left()
+                .label(&label)
+                .down(PAD * 2.0)
+                .set(ids.source_editor_selected_soundscape_occurrence_rate_slider, ui)
+            {
+                let hz = map_unskewed(value);
+                let id = sources[i].id;
+
+                // Update the local copy.
+                let new_rate = {
+                    let soundscape = sources[i].audio.role
+                        .as_mut()
+                        .expect("no role was assigned")
+                        .soundscape_mut()
+                        .expect("role was not Soundscape");
+                    match edge {
+                        widget::range_slider::Edge::Start => {
+                            let ms = utils::hz_to_ms_interval(hz);
+                            soundscape.occurrence_rate.max = ms;
+                        },
+                        widget::range_slider::Edge::End => {
+                            let ms = utils::hz_to_ms_interval(hz);
+                            soundscape.occurrence_rate.min = ms;
+                        }
+                    }
+                    soundscape.occurrence_rate
+                };
+
+                // Update the soundscape copy.
+                channels.soundscape.send(move |soundscape| {
+                    soundscape.update_source(&id, |source| {
+                        source.occurrence_rate = new_rate;
+                    });
+                }).ok();
+            }
+
+            /////////////////////////
+            // Simultaneous Sounds //
+            /////////////////////////
+
+            widget::Text::new("Simultaneous Sounds")
+                .align_left()
+                .down(PAD * 2.0)
+                .font_size(SMALL_FONT_SIZE)
+                .set(ids.source_editor_selected_soundscape_simultaneous_sounds_text, ui);
+
+            let range = simultaneous_sounds;
+            let label = format!("{} to {} sounds at once", range.min, range.max);
+            let total_min_num = 0.0;
+            let total_max_num = 10.0;
+            let skew = 0.5;
+
+            // Map a value from the total hz range to [0.0, 1.0] with the given skew.
+            let map_and_skew = |num: usize| -> f64 {
+                let num_f = num as f64;
+                let mapped = nannou::math::map_range(num_f, total_min_num, total_max_num, 0.0f64, 1.0);
+                let skewed = mapped.powf(skew);
+                skewed
+            };
+
+            // Unskew the given skewed, normalised value and map it back to the hz range.
+            let map_unskewed = |normalised: f64| -> usize {
+                let unskewed = normalised.powf(1.0 / skew);
+                let unmapped = nannou::math::map_range(unskewed, 0.0, 1.0, total_min_num, total_max_num);
+                unmapped.round() as _
+            };
+
+            for (edge, value) in range_slider(map_and_skew(range.min), map_and_skew(range.max))
+                .align_left()
+                .label(&label)
+                .down(PAD * 2.0)
+                .set(ids.source_editor_selected_soundscape_simultaneous_sounds_slider, ui)
+            {
+                let num = map_unskewed(value);
+                let id = sources[i].id;
+
+                // Update the local copy.
+                let new_num = {
+                    let soundscape = sources[i].audio.role
+                        .as_mut()
+                        .expect("no role was assigned")
+                        .soundscape_mut()
+                        .expect("role was not Soundscape");
+                    match edge {
+                        widget::range_slider::Edge::Start => {
+                            soundscape.simultaneous_sounds.min = num;
+                        },
+                        widget::range_slider::Edge::End => {
+                            soundscape.simultaneous_sounds.max = num;
+                        }
+                    }
+                    soundscape.simultaneous_sounds
+                };
+
+                // Update the soundscape copy.
+                channels.soundscape.send(move |soundscape| {
+                    soundscape.update_source(&id, |source| {
+                        source.simultaneous_sounds = new_num;
+                    });
+                }).ok();
+            }
+
+            ///////////////////////
+            // Playback Duration //
+            ///////////////////////
+
+            widget::Text::new("Playback Duration")
+                .align_left()
+                .down(PAD * 2.0)
+                .font_size(SMALL_FONT_SIZE)
+                .set(ids.source_editor_selected_soundscape_playback_duration_text, ui);
+
+            // The max duration depends on the kind of source:
+            //
+            // - If it is a non-looping WAV, then the max duration is the length of the WAV.
+            // - If it is a looping WAV or a realtime source the max is some arbitrary limit.
+            const MAX_DURATION: Ms = Ms(utils::DAY_MS);
+            const MAX_DURATION_SKEW: f64 = 0.1;
+            let (max_duration, skew) = match sources[i].kind {
+                audio::source::Kind::Realtime(_) => (MAX_DURATION, MAX_DURATION_SKEW),
+                audio::source::Kind::Wav(ref wav) => match wav.should_loop {
+                    true => (MAX_DURATION, MAX_DURATION_SKEW),
+                    false => (wav.duration.to_ms(audio::SAMPLE_RATE), 0.5),
+                }
+            };
+            let min_duration = Ms(0.0);
+            let min_duration_ms = min_duration.ms();
+            let max_duration_ms = max_duration.ms();
+            let range = playback_duration;
+            let label = format!("{} to {}", duration_label(&range.min), duration_label(&range.max));
+
+            let normalise_and_skew = |ms: Ms| -> f64 {
+                let ms = ms.ms();
+                utils::normalise_and_skew(ms, min_duration_ms, max_duration_ms, skew)
+            };
+
+            let unskew_and_unnormalise = |skewed: f64| -> Ms {
+                Ms(utils::unskew_and_unnormalise(skewed, min_duration_ms, max_duration_ms, skew))
+            };
+
+            // Hack to work around range_slider bug where it tries to change the max instead of
+            // min.
+            let min = if range.min >= range.max {
+                Ms(range.max.ms() - ::std::f64::EPSILON)
+            } else {
+                range.min
+            };
+
+            for (edge, value) in range_slider(normalise_and_skew(min), normalise_and_skew(range.max))
+                .align_left()
+                .label(&label)
+                .down(PAD * 2.0)
+                .set(ids.source_editor_selected_soundscape_playback_duration_slider, ui)
+            {
+                let duration = unskew_and_unnormalise(value);
+                let id = sources[i].id;
+
+                // Update the local copy.
+                let new_duration = {
+                    let soundscape = sources[i].audio.role
+                        .as_mut()
+                        .expect("no role was assigned")
+                        .soundscape_mut()
+                        .expect("role was not Soundscape");
+                    match edge {
+                        widget::range_slider::Edge::Start => {
+                            soundscape.playback_duration.min = duration;
+                        },
+                        widget::range_slider::Edge::End => {
+                            soundscape.playback_duration.max = duration;
+                        }
+                    }
+                    soundscape.playback_duration
+                };
+
+                // Update the soundscape copy.
+                channels.soundscape.send(move |soundscape| {
+                    soundscape.update_source(&id, |source| {
+                        source.playback_duration = new_duration;
+                    });
+                }).ok();
+            }
+
+            //////////////////////////////////
+            // Soundscape Group Assignments //
+            //////////////////////////////////
+
+            widget::Text::new("Soundscape Groups")
+                .align_left()
+                .down(PAD * 2.0)
+                .font_size(SMALL_FONT_SIZE)
+                .set(ids.source_editor_selected_soundscape_groups_text, ui);
+
+            let mut groups_vec: Vec<_> = soundscape_editor.groups.iter().collect();
+            groups_vec.sort_by(|a, b| a.1.name.cmp(&b.1.name));
+            let (mut events, scrollbar) = widget::ListSelect::multiple(groups_vec.len())
+                .item_size(ITEM_HEIGHT)
+                .h(SOUNDSCAPE_GROUP_LIST_H)
+                .down(PAD * 2.0)
+                .kid_area_w_of(ids.source_editor_selected_soundscape_canvas)
+                .scrollbar_next_to()
+                .scrollbar_color(color::LIGHT_CHARCOAL)
+                .set(ids.source_editor_selected_soundscape_groups_list, ui);
+
+            let is_selected = |idx: usize| groups.contains(&groups_vec[idx].0);
+            while let Some(event) = events.next(ui, &is_selected) {
+                use self::ui::widget::list_select::Event;
+                match event {
+                    // Instantiate a button for each group.
+                    Event::Item(item) => {
+                        let selected = is_selected(item.i);
+                        let (id, group) = groups_vec[item.i];
+                        let soundscape = sources[i].audio.role
+                            .as_mut()
+                            .expect("no role was assigned")
+                            .soundscape_mut()
+                            .expect("role was not soundscape");
+                        let color = if selected { ui::color::BLUE } else { ui::color::BLACK };
+                        let button = widget::Button::new()
+                            .label(&groups_vec[item.i].1.name.0)
+                            .label_font_size(SMALL_FONT_SIZE)
+                            .color(color);
+                        for _click in item.set(button, ui) {
+                            if selected {
+                                soundscape.groups.remove(&id);
+                            } else {
+                                soundscape.groups.insert(*id);
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+
+            if let Some(scrollbar) = scrollbar {
+                scrollbar.set(ui);
+            }
+        },
+
+        // For interactive sounds, allow the user specify the location.NOTE: Option - just work
+        // this sound out from the location of the speakers?
+        Some(Role::Interactive) => {
+        },
+
+        // For scribbles, allow a specific location from which the speaking appears.
+        Some(Role::Scribbles) => {
+        },
+
+        // If it has no role, no specific stuff to be done.
+        None => (),
     }
 
     area.id

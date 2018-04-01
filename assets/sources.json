@@ -10,11 +10,11 @@
             "duration": 131432,
             "sample_hz": 44100.0,
             "should_loop": false,
-            "playback": "Continuous"
+            "playback": "Retrigger"
           }
         },
         "role": null,
-        "spread": 1.2594397068023682,
+        "spread": 2.5,
         "radians": 0.0
       },
       "id": 1
@@ -29,7 +29,7 @@
             "duration": 153942,
             "sample_hz": 44100.0,
             "should_loop": false,
-            "playback": "Continuous"
+            "playback": "Retrigger"
           }
         },
         "role": null,
@@ -48,7 +48,7 @@
             "duration": 220500,
             "sample_hz": 44100.0,
             "should_loop": false,
-            "playback": "Continuous"
+            "playback": "Retrigger"
           }
         },
         "role": null,
@@ -67,14 +67,14 @@
             "duration": 183117,
             "sample_hz": 44100.0,
             "should_loop": false,
-            "playback": "Continuous"
+            "playback": "Retrigger"
           }
         },
         "role": null,
         "spread": 2.5,
         "radians": 0.0
       },
-      "id": 6
+      "id": 5
     },
     {
       "name": "Elemental - Flame Cast_3",
@@ -85,15 +85,31 @@
             "channels": 2,
             "duration": 136581,
             "sample_hz": 44100.0,
-            "should_loop": false,
-            "playback": "Continuous"
+            "should_loop": true,
+            "playback": "Retrigger"
           }
         },
         "role": {
           "Soundscape": {
             "installations": [
               "Cacophony"
-            ]
+            ],
+            "groups": [
+              4,
+              5
+            ],
+            "occurrence_rate": {
+              "min": 500.0,
+              "max": 3600000.0
+            },
+            "simultaneous_sounds": {
+              "min": 1,
+              "max": 3
+            },
+            "playback_duration": {
+              "min": 7569.673586041536,
+              "max": 11081.43085270399
+            }
           }
         },
         "spread": 2.5,
@@ -111,60 +127,50 @@
             "duration": 1016234,
             "sample_hz": 44100.0,
             "should_loop": false,
-            "playback": "Continuous"
+            "playback": "Retrigger"
           }
         },
-        "role": {
-          "Soundscape": {
-            "installations": [
-              "Cacophony",
-              "EnergeticVibrationsAudioVisualiser",
-              "EnergeticVibrationsProjectionMapping"
-            ]
-          }
-        },
+        "role": null,
         "spread": 2.5,
         "radians": 0.0
       },
       "id": 3
     },
     {
-      "name": "Mechanism - Clicks_Clock_001",
-      "audio": {
-        "kind": {
-          "Wav": {
-            "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Mechanism - Clicks_Clock_001.wav",
-            "channels": 2,
-            "duration": 144784,
-            "sample_hz": 48000.0,
-            "should_loop": false,
-            "playback": "Continuous"
-          }
-        },
-        "role": null,
-        "spread": 2.5,
-        "radians": 0.0
-      },
-      "id": 5
-    },
-    {
-      "name": "Source 7",
+      "name": "Source 6",
       "audio": {
         "kind": {
           "Realtime": {
-            "duration": 2436.40673828125,
+            "duration": 3000.0,
             "channels": {
               "start": 0,
-              "end": 2
+              "end": 1
             }
           }
         },
-        "role": null,
-        "spread": 0.6015887260437012,
+        "role": {
+          "Soundscape": {
+            "installations": [],
+            "groups": [],
+            "occurrence_rate": {
+              "min": 500.0,
+              "max": 3600000.0
+            },
+            "simultaneous_sounds": {
+              "min": 1,
+              "max": 3
+            },
+            "playback_duration": {
+              "min": 23936.77806266592,
+              "max": 76424019.10083243
+            }
+          }
+        },
+        "spread": 2.5,
         "radians": 0.0
       },
-      "id": 7
+      "id": 6
     }
   ],
-  "next_id": 8
+  "next_id": 7
 }

@@ -841,7 +841,7 @@ fn insert_image(path: &Path, display: &glium::Display, image_map: &mut ui::Textu
     image
 }
 
-// A unique ID foor each widget in the GUI.
+// A unique ID for each widget in the GUI.
 widget_ids! {
     pub struct Ids {
         // The backdrop for all widgets.
@@ -936,6 +936,16 @@ widget_ids! {
         source_editor_selected_installations_ddl,
         source_editor_selected_installations_list,
         source_editor_selected_installations_remove,
+        source_editor_selected_soundscape_canvas,
+        source_editor_selected_soundscape_title,
+        source_editor_selected_soundscape_occurrence_rate_text,
+        source_editor_selected_soundscape_occurrence_rate_slider,
+        source_editor_selected_soundscape_simultaneous_sounds_text,
+        source_editor_selected_soundscape_simultaneous_sounds_slider,
+        source_editor_selected_soundscape_playback_duration_text,
+        source_editor_selected_soundscape_playback_duration_slider,
+        source_editor_selected_soundscape_groups_text,
+        source_editor_selected_soundscape_groups_list,
         source_editor_selected_wav_canvas,
         source_editor_selected_wav_text,
         source_editor_selected_wav_data,

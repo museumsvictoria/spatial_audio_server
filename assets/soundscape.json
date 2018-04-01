@@ -1,7 +1,83 @@
 {
   "groups": {
-    "29": "<unnamed>",
-    "27": "High Frequency Stuff"
+    "1": {
+      "group": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group B"
+    },
+    "4": {
+      "group": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group E"
+    },
+    "2": {
+      "group": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group C"
+    },
+    "0": {
+      "group": {
+        "occurrence_rate": {
+          "min": 63.35345410449991,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group A"
+    },
+    "3": {
+      "group": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group D"
+    },
+    "5": {
+      "group": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group F"
+    }
   },
-  "next_group_id": 37
+  "next_group_id": 6
 }

@@ -1,6 +1,9 @@
 use installation::Installation;
 use metres::Metres;
+use soundscape;
 use std::collections::HashSet;
+use time_calc::Ms;
+use utils::{self, Range};
 
 pub use self::realtime::Realtime;
 pub use self::wav::Wav;
@@ -22,7 +25,7 @@ pub struct Source {
     /// The distance with which the channels should be spread from the source position.
     ///
     /// If the source only has one channel, `spread` is ignored.
-    #[serde(default = "default_spread")]
+    #[serde(default = "default::spread")]
     pub spread: Metres,
     /// The rotation of the channels around the source position in radians.
     ///
@@ -44,6 +47,37 @@ pub enum Signal {
     },
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
+pub struct Id(pub u64);
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub enum Role {
+    Soundscape(Soundscape),
+    Interactive,
+    Scribbles,
+}
+
+/// Properties specific to sources that have been assigned the "soundscape" role.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct Soundscape {
+    #[serde(default)]
+    pub installations: HashSet<Installation>,
+    #[serde(default)]
+    pub groups: HashSet<soundscape::group::Id>,
+    #[serde(default = "default::occurrence_rate")]
+    pub occurrence_rate: Range<Ms>,
+    #[serde(default = "default::simultaneous_sounds")]
+    pub simultaneous_sounds: Range<usize>,
+    #[serde(default = "default::playback_duration")]
+    pub playback_duration: Range<Ms>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub enum Kind {
+    Wav(Wav),
+    Realtime(Realtime),
+}
+
 impl Source {
     pub fn channel_count(&self) -> usize {
         match self.kind {
@@ -63,32 +97,67 @@ impl Signal {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
-pub struct Id(pub u64);
+impl Role {
+    /// Returns `Some(Soundscape)` if the `Role` variant is `Soundscape`.
+    ///
+    /// Returns `None` otherwise.
+    pub fn soundscape_mut(&mut self) -> Option<&mut Soundscape> {
+        match *self {
+            Role::Soundscape(ref mut soundscape) => Some(soundscape),
+            _ => None,
+        }
+    }
+}
 
 impl Id {
     pub const INITIAL: Self = Id(0);
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub enum Role {
-    Soundscape(Soundscape),
-    Interactive,
-    Scribbles,
+pub const MAX_PLAYBACK_DURATION: Ms = Ms(utils::DAY_MS);
+
+pub mod default {
+    use metres::Metres;
+    use time_calc::Ms;
+    use utils::{HR_MS, Range};
+    pub const SPREAD: Metres = Metres(2.5);
+    pub const OCCURRENCE_RATE: Range<Ms> = Range { min: Ms(500.0), max: Ms(HR_MS as _) };
+    pub const SIMULTANEOUS_SOUNDS: Range<usize> = Range { min: 1, max: 3 };
+    // Assume that the user wants to play back the sound endlessly at first.
+    pub const PLAYBACK_DURATION: Range<Ms> = Range {
+        min: super::MAX_PLAYBACK_DURATION,
+        max: super::MAX_PLAYBACK_DURATION,
+    };
+
+    pub fn spread() -> Metres {
+        SPREAD
+    }
+
+    pub fn occurrence_rate() -> Range<Ms> {
+        OCCURRENCE_RATE
+    }
+
+    pub fn simultaneous_sounds() -> Range<usize> {
+        SIMULTANEOUS_SOUNDS
+    }
+
+    pub fn playback_duration() -> Range<Ms> {
+        PLAYBACK_DURATION
+    }
 }
 
-/// Properties specific to sources that have been assigned the "soundscape" role.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
-pub struct Soundscape {
-    pub installations: HashSet<Installation>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub enum Kind {
-    Wav(Wav),
-    Realtime(Realtime),
-}
-
-pub fn default_spread() -> Metres {
-    Metres(2.5)
+impl Default for Soundscape {
+    fn default() -> Self {
+        let installations = Default::default();
+        let groups = Default::default();
+        let occurrence_rate = default::OCCURRENCE_RATE;
+        let simultaneous_sounds = default::SIMULTANEOUS_SOUNDS;
+        let playback_duration = default::PLAYBACK_DURATION;
+        Soundscape {
+            installations,
+            groups,
+            occurrence_rate,
+            simultaneous_sounds,
+            playback_duration,
+        }
+    }
 }
