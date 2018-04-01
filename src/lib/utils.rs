@@ -1,3 +1,5 @@
+use nannou::math::map_range;
+use nannou::math::num_traits::NumCast;
 use serde;
 use serde_json;
 use std::{fmt, fs, io};
@@ -186,4 +188,38 @@ where
     T: for<'de> serde::Deserialize<'de> + Default,
 {
     load_from_json(json_path).unwrap_or_else(|_| Default::default())
+}
+
+/// Normalise the given value.
+pub fn normalise<T>(value: T, min: T, max: T) -> f64
+where
+    T: NumCast,
+{
+    map_range(value, min, max, 0.0, 1.0)
+}
+
+/// Unnormalise the given value.
+pub fn unnormalise<T>(normalised_value: f64, min: T, max: T) -> T
+where
+    T: NumCast,
+{
+    map_range(normalised_value, 0.0, 1.0, min, max)
+}
+
+/// Normalise the given value and skew 
+pub fn normalise_and_skew<T>(value: T, min: T, max: T, skew: f64) -> f64
+where
+    T: NumCast,
+{
+    let n = normalise(value, min, max);
+    n.powf(skew)
+}
+
+/// Unskew and unnormalise the given value.
+pub fn unskew_and_unnormalise<T>(skewed_normalised_value: f64, min: T, max: T, skew: f64) -> T
+where
+    T: NumCast,
+{
+    let unskewed = skewed_normalised_value.powf(1.0 / skew);
+    unnormalise(unskewed, min, max)
 }

@@ -3,6 +3,7 @@ use installation::Installation;
 use metres::Metres;
 use nannou::math::Point2;
 use std::collections::{HashMap, HashSet};
+use std::ops;
 use std::sync::{atomic, mpsc, Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::thread;
@@ -68,8 +69,8 @@ pub struct Speaker {
 
 /// Properties of an audio source that are relevant to the soundscape thread.
 pub struct Source {
+    pub source: audio::source::Soundscape,
     pub kind: audio::source::Kind,
-    pub installations: HashSet<Installation>,
     pub spread: Metres,
     pub radians: f32,
 }
@@ -120,17 +121,15 @@ impl Source {
     ///
     /// Returns `None` if the given audio source does not have the `Soundscape` role.
     pub fn from_audio_source(source: &audio::Source) -> Option<Self> {
-        let installations = match source.role {
-            Some(audio::source::Role::Soundscape(ref soundscape)) => {
-                soundscape.installations.clone()
-            },
+        let soundscape_source = match source.role {
+            Some(audio::source::Role::Soundscape(ref source)) => source.clone(),
             _ => return None,
         };
         let kind = source.kind.clone();
         let spread = source.spread;
         let radians = source.radians;
         Some(Source {
-            installations,
+            source: soundscape_source,
             kind,
             spread,
             radians,
@@ -279,6 +278,19 @@ where
         UpdateFn {
             function: Box::new(fn_mut) as _,
         }
+    }
+}
+
+impl ops::Deref for Source {
+    type Target = audio::source::Soundscape;
+    fn deref(&self) -> &Self::Target {
+        &self.source
+    }
+}
+
+impl ops::DerefMut for Source {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.source
     }
 }
 

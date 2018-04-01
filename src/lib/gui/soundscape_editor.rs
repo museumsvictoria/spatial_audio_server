@@ -5,7 +5,6 @@
 
 use gui::{collapsible_area, hz_label, Gui, State};
 use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
-use nannou;
 use nannou::ui;
 use nannou::ui::prelude::*;
 use soundscape;
@@ -381,16 +380,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
     // Map a value from the total hz range to [0.0, 1.0] with the given skew.
     let map_and_skew = |hz: f64| -> f64 {
-        let mapped = nannou::math::map_range(hz, total_min_hz, total_max_hz, 0.0f64, 1.0);
-        let skewed = mapped.powf(skew);
-        skewed
+        utils::normalise_and_skew(hz, total_min_hz, total_max_hz, skew)
     };
 
     // Unskew the given skewed, normalised value and map it back to the hz range.
-    let map_unskewed = |normalised: f64| -> f64 {
-        let unskewed = normalised.powf(1.0 / skew);
-        let unmapped = nannou::math::map_range(unskewed, 0.0, 1.0, total_min_hz, total_max_hz);
-        unmapped
+    let map_unskewed = |skewed: f64| -> f64 {
+        utils::unskew_and_unnormalise(skewed, total_min_hz, total_max_hz, skew)
     };
 
     let range_slider = |start, end, min, max| {
@@ -451,18 +446,13 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     let skew = 0.5;
 
     // Map a value from the total hz range to [0.0, 1.0] with the given skew.
-    let map_and_skew = |num: usize| -> f64 {
-        let num_f = num as f64;
-        let mapped = nannou::math::map_range(num_f, total_min_num, total_max_num, 0.0f64, 1.0);
-        let skewed = mapped.powf(skew);
-        skewed
+    let map_and_skew = |num: usize| {
+        utils::normalise_and_skew(num as f64, total_min_num, total_max_num, skew)
     };
 
     // Unskew the given skewed, normalised value and map it back to the hz range.
-    let map_unskewed = |normalised: f64| -> usize {
-        let unskewed = normalised.powf(1.0 / skew);
-        let unmapped = nannou::math::map_range(unskewed, 0.0, 1.0, total_min_num, total_max_num);
-        unmapped.round() as _
+    let map_unskewed = |skewed: f64| -> usize {
+        utils::unskew_and_unnormalise(skewed, total_min_num, total_max_num, skew).round() as _
     };
 
     for (edge, value) in range_slider(map_and_skew(range.min), map_and_skew(range.max), 0.0, 1.0)
