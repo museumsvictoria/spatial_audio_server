@@ -1685,7 +1685,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     // Instantiate a button for each group.
                     Event::Item(item) => {
                         let selected = is_selected(item.i);
-                        let (id, group) = groups_vec[item.i];
+                        let (&group_id, group) = groups_vec[item.i];
+                        let source_id = sources[i].id;
                         let soundscape = sources[i].audio.role
                             .as_mut()
                             .expect("no role was assigned")
@@ -1696,13 +1697,27 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             .label(&groups_vec[item.i].1.name.0)
                             .label_font_size(SMALL_FONT_SIZE)
                             .color(color);
+
                         for _click in item.set(button, ui) {
+                            // Update the local copies.
                             if selected {
-                                soundscape.groups.remove(&id);
+                                soundscape.groups.remove(&group_id);
                             } else {
-                                soundscape.groups.insert(*id);
+                                soundscape.groups.insert(group_id);
                             }
+
+                            // Update the soundscape copy.
+                            channels.soundscape.send(move |soundscape| {
+                                soundscape.update_source(&source_id, move |source| {
+                                    if selected {
+                                        source.groups.remove(&group_id);
+                                    } else {
+                                        source.groups.insert(group_id);
+                                    }
+                                });
+                            }).ok();
                         }
+
                     }
                     _ => (),
                 }
