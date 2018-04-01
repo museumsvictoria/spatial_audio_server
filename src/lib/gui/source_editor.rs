@@ -247,10 +247,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     const INSTALLATIONS_CANVAS_H: Scalar =
         PAD + ITEM_HEIGHT * 2.0 + PAD + INSTALLATION_LIST_H + PAD;
     const SLIDER_H: Scalar = ITEM_HEIGHT;
+    const SOUNDSCAPE_GROUP_LIST_H: Scalar = ITEM_HEIGHT * 3.0;
     const SOUNDSCAPE_CANVAS_H: Scalar = PAD + TEXT_PAD + PAD
         + TEXT_PAD + PAD + SLIDER_H + PAD
         + TEXT_PAD + PAD + SLIDER_H + PAD
-        + TEXT_PAD + PAD + SLIDER_H + PAD;
+        + TEXT_PAD + PAD + SLIDER_H + PAD
+        + TEXT_PAD + PAD * 2.5 + SOUNDSCAPE_GROUP_LIST_H + PAD;
     const LOOP_TOGGLE_H: Scalar = ITEM_HEIGHT;
     const PLAYBACK_MODE_H: Scalar = ITEM_HEIGHT;
     const WAV_CANVAS_H: Scalar =
@@ -541,6 +543,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         ref mut preview,
                         ..
                     },
+                ref soundscape_editor,
                 ..
             },
         ..
@@ -1248,6 +1251,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 occurrence_rate,
                 simultaneous_sounds,
                 playback_duration,
+                groups,
             } = soundscape;
 
             // A canvas on which installation selection widgets are instantiated.
@@ -1651,6 +1655,61 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         source.playback_duration = new_duration;
                     });
                 }).ok();
+            }
+
+            //////////////////////////////////
+            // Soundscape Group Assignments //
+            //////////////////////////////////
+
+            widget::Text::new("Soundscape Groups")
+                .align_left()
+                .down(PAD * 2.0)
+                .font_size(SMALL_FONT_SIZE)
+                .set(ids.source_editor_selected_soundscape_groups_text, ui);
+
+            let mut groups_vec: Vec<_> = soundscape_editor.groups.iter().collect();
+            groups_vec.sort_by(|a, b| a.1.name.cmp(&b.1.name));
+            let (mut events, scrollbar) = widget::ListSelect::multiple(groups_vec.len())
+                .item_size(ITEM_HEIGHT)
+                .h(SOUNDSCAPE_GROUP_LIST_H)
+                .down(PAD * 2.0)
+                .kid_area_w_of(ids.source_editor_selected_soundscape_canvas)
+                .scrollbar_next_to()
+                .scrollbar_color(color::LIGHT_CHARCOAL)
+                .set(ids.source_editor_selected_soundscape_groups_list, ui);
+
+            let is_selected = |idx: usize| groups.contains(&groups_vec[idx].0);
+            while let Some(event) = events.next(ui, &is_selected) {
+                use self::ui::widget::list_select::Event;
+                match event {
+                    // Instantiate a button for each group.
+                    Event::Item(item) => {
+                        let selected = is_selected(item.i);
+                        let (id, group) = groups_vec[item.i];
+                        let soundscape = sources[i].audio.role
+                            .as_mut()
+                            .expect("no role was assigned")
+                            .soundscape_mut()
+                            .expect("role was not soundscape");
+                        let color = if selected { ui::color::BLUE } else { ui::color::BLACK };
+                        let button = widget::Button::new()
+                            .label(&groups_vec[item.i].1.name.0)
+                            .label_font_size(SMALL_FONT_SIZE)
+                            .color(color);
+                        for _click in item.set(button, ui) {
+                            if selected {
+                                soundscape.groups.remove(&id);
+                            } else {
+                                soundscape.groups.insert(*id);
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+
+            if let Some(scrollbar) = scrollbar {
+                scrollbar.set(ui);
             }
         },
 

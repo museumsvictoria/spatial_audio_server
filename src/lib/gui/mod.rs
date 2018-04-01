@@ -944,6 +944,8 @@ widget_ids! {
         source_editor_selected_soundscape_simultaneous_sounds_slider,
         source_editor_selected_soundscape_playback_duration_text,
         source_editor_selected_soundscape_playback_duration_slider,
+        source_editor_selected_soundscape_groups_text,
+        source_editor_selected_soundscape_groups_list,
         source_editor_selected_wav_canvas,
         source_editor_selected_wav_text,
         source_editor_selected_wav_data,

@@ -1,5 +1,6 @@
 use installation::Installation;
 use metres::Metres;
+use soundscape;
 use std::collections::HashSet;
 use time_calc::Ms;
 use utils::{self, Range};
@@ -59,7 +60,10 @@ pub enum Role {
 /// Properties specific to sources that have been assigned the "soundscape" role.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Soundscape {
+    #[serde(default)]
     pub installations: HashSet<Installation>,
+    #[serde(default)]
+    pub groups: HashSet<soundscape::group::Id>,
     #[serde(default = "default::occurrence_rate")]
     pub occurrence_rate: Range<Ms>,
     #[serde(default = "default::simultaneous_sounds")]
@@ -144,11 +148,13 @@ pub mod default {
 impl Default for Soundscape {
     fn default() -> Self {
         let installations = Default::default();
+        let groups = Default::default();
         let occurrence_rate = default::OCCURRENCE_RATE;
         let simultaneous_sounds = default::SIMULTANEOUS_SOUNDS;
         let playback_duration = default::PLAYBACK_DURATION;
         Soundscape {
             installations,
+            groups,
             occurrence_rate,
             simultaneous_sounds,
             playback_duration,
