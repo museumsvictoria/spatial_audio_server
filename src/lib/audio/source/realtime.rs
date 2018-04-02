@@ -22,6 +22,14 @@ pub struct Realtime {
 /// or if the channel is disconneceted as the sound has played out its duration.
 pub struct Signal {
     pub sample_rx: mpsc::Receiver<f32>,
+    pub channels: usize,
+}
+
+impl Signal {
+    /// The number of channels in the source.
+    pub fn channels(&self) -> usize {
+        self.channels
+    }
 }
 
 impl Iterator for Signal {
