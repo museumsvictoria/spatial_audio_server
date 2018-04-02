@@ -76,6 +76,7 @@ impl Wav {
 pub struct SampleStream {
     reader: hound::WavReader<BufReader<File>>,
     spec: hound::WavSpec,
+    sample_index: usize,
 }
 
 /// An iterator yielding samples from a `SampleStream`. When the `SampleStream` is exhausted,
@@ -101,7 +102,8 @@ impl SampleStream {
     {
         let reader = hound::WavReader::open(path)?;
         let spec = reader.spec();
-        Ok(SampleStream { reader, spec })
+        let sample_index = 0;
+        Ok(SampleStream { sample_index, reader, spec })
     }
 
     /// Seek to the given `frame` within the file.
@@ -114,6 +116,7 @@ impl SampleStream {
     pub fn seek(&mut self, frames: u64) -> io::Result<()> {
         let duration_frames = self.reader.duration() as u64;
         let frames = frames % duration_frames;
+        self.sample_index = self.channels() * frames as usize;
         self.reader.seek(frames as u32)
     }
 
@@ -121,6 +124,24 @@ impl SampleStream {
     pub fn cycle(self) -> CycledSampleStream {
         let stream = self;
         CycledSampleStream { stream }
+    }
+
+    /// The number of channels in the samples.
+    pub fn channels(&self) -> usize {
+        self.spec.channels as _
+    }
+
+    /// The number of remaining samples.
+    pub fn remaining_samples(&self) -> usize {
+        assert!(self.reader.len() >= self.sample_index as u32);
+        self.reader.len() as usize - self.sample_index
+    }
+
+    /// The number of remaining frames.
+    pub fn remaining_frames(&self) -> usize {
+        let remaining_samples = self.remaining_samples();
+        let channels = self.channels();
+        remaining_samples / channels
     }
 }
 
@@ -144,6 +165,22 @@ impl Signal {
         match *self {
             Signal::Once(ref mut s) => s.seek(frame),
             Signal::Cycled(ref mut s) => s.stream.seek(frame),
+        }
+    }
+
+    /// The number of channels in the signal.
+    pub fn channels(&self) -> usize {
+        match *self {
+            Signal::Once(ref s) => s.channels(),
+            Signal::Cycled(ref s) => s.stream.channels(),
+        }
+    }
+
+    /// The remaining number of frames in the `Signal`.
+    pub fn remaining_frames(&self) -> Option<Samples> {
+        match *self {
+            Signal::Once(ref s) => Some(Samples(s.remaining_frames() as _)),
+            Signal::Cycled(_) => None,
         }
     }
 }
@@ -175,6 +212,7 @@ impl Iterator for SampleStream {
         macro_rules! next_sample {
             ($T:ty) => {{
                 if let Some(sample) = self.reader.samples::<$T>().next() {
+                    self.sample_index += 1;
                     return Some(sample.expect(FAILED_READ).to_sample::<f32>());
                 }
             }};

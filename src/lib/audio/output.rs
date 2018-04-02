@@ -329,7 +329,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             }
 
             // If the source is a `Continuous` WAV, ensure it is seeked to the correct position.
-            if let source::Signal::Wav { ref playback, ref mut samples } = sound.signal {
+            if let source::SignalKind::Wav { ref playback, ref mut samples } = sound.signal.kind {
                 if let source::wav::Playback::Continuous = *playback {
                     if let Err(err) = samples.seek(*frame_count) {
                         eprintln!("failed to seek file for continuous WAV source: {}", err);

@@ -5,7 +5,7 @@ use nannou::math::Point2;
 use std::collections::HashSet;
 use std::sync::{mpsc, Arc, Mutex};
 use std::sync::atomic::{self, AtomicBool};
-use time_calc::Ms;
+use time_calc::{Ms, Samples};
 
 /// `Sound`s can be thought of as a stack of three primary components:
 ///
@@ -116,7 +116,10 @@ pub fn spawn_from_source(
     source_id: source::Id,
     source: &Source,
     initial_position: Point2<Metres>,
+    attack_duration_frames: Samples,
+    release_duration_frames: Samples,
     continuous_preview: bool,
+    max_duration_frames: Option<Samples>,
     input_stream: &input::Stream,
     output_stream: &output::Stream,
     latency: Ms,
@@ -133,7 +136,10 @@ pub fn spawn_from_source(
                 source.radians,
                 installations,
                 initial_position,
+                attack_duration_frames,
+                release_duration_frames,
                 continuous_preview,
+                max_duration_frames,
                 output_stream,
             )
 
@@ -147,7 +153,10 @@ pub fn spawn_from_source(
                 source.radians,
                 installations,
                 initial_position,
+                attack_duration_frames,
+                release_duration_frames,
                 continuous_preview,
+                max_duration_frames,
                 input_stream,
                 output_stream,
                 latency,
@@ -165,7 +174,10 @@ pub fn spawn_from_wav(
     radians: f32,
     installations: Installations,
     initial_position: Point2<Metres>,
+    attack_duration_frames: Samples,
+    release_duration_frames: Samples,
     continuous_preview: bool,
+    max_duration_frames: Option<Samples>,
     audio_output: &output::Stream,
 ) -> Handle
 {
@@ -177,7 +189,11 @@ pub fn spawn_from_wav(
 
     // The source signal.
     let playback = wav.playback.clone();
-    let signal = source::Signal::Wav { samples, playback };
+    let kind = source::SignalKind::Wav { samples, playback };
+    let mut signal = source::Signal::new(kind, attack_duration_frames, release_duration_frames);
+    if let Some(duration) = max_duration_frames {
+        signal = signal.with_duration_frames(duration);
+    }
 
     // Initialise the sound playing.
     let is_playing = AtomicBool::new(true);
@@ -230,7 +246,10 @@ pub fn spawn_from_realtime(
     radians: f32,
     installations: Installations,
     initial_position: Point2<Metres>,
+    attack_duration_frames: Samples,
+    release_duration_frames: Samples,
     continuous_preview: bool,
+    max_duration_frames: Option<Samples>,
     audio_input: &input::Stream,
     audio_output: &output::Stream,
     latency: Ms,
@@ -258,8 +277,15 @@ pub fn spawn_from_realtime(
     }
 
     // The signal from which the sound will draw samples.
-    let samples = source::realtime::Signal { sample_rx };
-    let signal = source::Signal::Realtime { samples };
+    let samples = source::realtime::Signal {
+        channels: n_channels,
+        sample_rx,
+    };
+    let kind = source::SignalKind::Realtime { samples };
+    let mut signal = source::Signal::new(kind, attack_duration_frames, release_duration_frames);
+    if let Some(duration) = max_duration_frames {
+        signal = signal.with_duration_frames(duration);
+    }
 
     // Initialise the sound playing.
     let is_playing = AtomicBool::new(true);

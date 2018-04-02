@@ -15,7 +15,7 @@ use std::ffi::OsStr;
 use std::mem;
 use std::ops;
 use std::path::{Component, Path};
-use time_calc::Ms;
+use time_calc::{Ms, Samples};
 use utils;
 use walkdir::WalkDir;
 
@@ -249,6 +249,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     const SLIDER_H: Scalar = ITEM_HEIGHT;
     const SOUNDSCAPE_GROUP_LIST_H: Scalar = ITEM_HEIGHT * 3.0;
     const SOUNDSCAPE_CANVAS_H: Scalar = PAD + TEXT_PAD + PAD
+        + TEXT_PAD + PAD + SLIDER_H + PAD
+        + TEXT_PAD + PAD + SLIDER_H + PAD
         + TEXT_PAD + PAD + SLIDER_H + PAD
         + TEXT_PAD + PAD + SLIDER_H + PAD
         + TEXT_PAD + PAD + SLIDER_H + PAD
@@ -730,12 +732,19 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         SourcePreviewMode::OneShot => false,
                         SourcePreviewMode::Continuous => true,
                     };
+                    // No attack or release for previews.
+                    let attack_duration = Samples(0);
+                    let release_duration = Samples(0);
+                    let max_duration = None;
                     let _handle = audio::sound::spawn_from_source(
                         sound_id,
                         source.id,
                         &source.audio,
                         preview.point.unwrap(),
+                        attack_duration,
+                        release_duration,
                         should_cycle,
+                        max_duration,
                         &channels.audio_input,
                         &channels.audio_output,
                         *realtime_source_latency,
@@ -941,7 +950,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         // Update all audio thread copies.
                         channels.audio_output.send(move |audio| {
                             audio.update_sounds_with_source(&source_id, move |_, sound| {
-                                if let audio::source::Signal::Wav { ref mut playback, .. } = sound.signal {
+                                if let audio::source::SignalKind::Wav { ref mut playback, .. } = sound.signal.kind {
                                     *playback = new_playback;
                                 }
                             });
@@ -1248,10 +1257,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             // Destructure the soundscape roll to its fields.
             let audio::source::Soundscape {
                 mut installations,
+                groups,
                 occurrence_rate,
                 simultaneous_sounds,
                 playback_duration,
-                groups,
+                attack_duration,
+                release_duration,
             } = soundscape;
 
             // A canvas on which installation selection widgets are instantiated.
@@ -1614,15 +1625,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 Ms(utils::unskew_and_unnormalise(skewed, min_duration_ms, max_duration_ms, skew))
             };
 
-            // Hack to work around range_slider bug where it tries to change the max instead of
-            // min.
-            let min = if range.min >= range.max {
-                Ms(range.max.ms() - ::std::f64::EPSILON)
-            } else {
-                range.min
-            };
-
-            for (edge, value) in range_slider(normalise_and_skew(min), normalise_and_skew(range.max))
+            for (edge, value) in range_slider(normalise_and_skew(range.min), normalise_and_skew(range.max))
                 .align_left()
                 .label(&label)
                 .down(PAD * 2.0)
@@ -1657,6 +1660,130 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 }).ok();
             }
 
+            /////////////////////
+            // Attack Duration //
+            /////////////////////
+
+            widget::Text::new("Fade-In Duration")
+                .align_left()
+                .down(PAD * 2.0)
+                .font_size(SMALL_FONT_SIZE)
+                .set(ids.source_editor_selected_soundscape_attack_duration_text, ui);
+
+            let skew = 0.5;
+            let min_duration = Ms(0.0);
+            let max_duration = audio::source::MAX_ATTACK_DURATION;
+            let min_duration_ms = min_duration.ms();
+            let max_duration_ms = max_duration.ms();
+            let range = attack_duration;
+            let label = format!("{} to {}", duration_label(&range.min), duration_label(&range.max));
+
+            let normalise_and_skew = |ms: Ms| -> f64 {
+                let ms = ms.ms();
+                utils::normalise_and_skew(ms, min_duration_ms, max_duration_ms, skew)
+            };
+
+            let unskew_and_unnormalise = |skewed: f64| -> Ms {
+                Ms(utils::unskew_and_unnormalise(skewed, min_duration_ms, max_duration_ms, skew))
+            };
+
+            for (edge, value) in range_slider(normalise_and_skew(range.min), normalise_and_skew(range.max))
+                .align_left()
+                .label(&label)
+                .down(PAD * 2.0)
+                .set(ids.source_editor_selected_soundscape_attack_duration_slider, ui)
+            {
+                let duration = unskew_and_unnormalise(value);
+                let id = sources[i].id;
+
+                // Update the local copy.
+                let new_duration = {
+                    let soundscape = sources[i].audio.role
+                        .as_mut()
+                        .expect("no role was assigned")
+                        .soundscape_mut()
+                        .expect("role was not Soundscape");
+                    match edge {
+                        widget::range_slider::Edge::Start => {
+                            soundscape.attack_duration.min = duration;
+                        },
+                        widget::range_slider::Edge::End => {
+                            soundscape.attack_duration.max = duration;
+                        }
+                    }
+                    soundscape.attack_duration
+                };
+
+                // Update the soundscape copy.
+                channels.soundscape.send(move |soundscape| {
+                    soundscape.update_source(&id, |source| {
+                        source.attack_duration = new_duration;
+                    });
+                }).ok();
+            }
+
+            //////////////////////
+            // Release Duration //
+            //////////////////////
+
+            widget::Text::new("Fade-Out Duration")
+                .align_left()
+                .down(PAD * 2.0)
+                .font_size(SMALL_FONT_SIZE)
+                .set(ids.source_editor_selected_soundscape_release_duration_text, ui);
+
+            let skew = 0.5;
+            let min_duration = Ms(0.0);
+            let max_duration = audio::source::MAX_RELEASE_DURATION;
+            let min_duration_ms = min_duration.ms();
+            let max_duration_ms = max_duration.ms();
+            let range = release_duration;
+            let label = format!("{} to {}", duration_label(&range.min), duration_label(&range.max));
+
+            let normalise_and_skew = |ms: Ms| -> f64 {
+                let ms = ms.ms();
+                utils::normalise_and_skew(ms, min_duration_ms, max_duration_ms, skew)
+            };
+
+            let unskew_and_unnormalise = |skewed: f64| -> Ms {
+                Ms(utils::unskew_and_unnormalise(skewed, min_duration_ms, max_duration_ms, skew))
+            };
+
+            for (edge, value) in range_slider(normalise_and_skew(range.min), normalise_and_skew(range.max))
+                .align_left()
+                .label(&label)
+                .down(PAD * 2.0)
+                .set(ids.source_editor_selected_soundscape_release_duration_slider, ui)
+            {
+                let duration = unskew_and_unnormalise(value);
+                let id = sources[i].id;
+
+                // Update the local copy.
+                let new_duration = {
+                    let soundscape = sources[i].audio.role
+                        .as_mut()
+                        .expect("no role was assigned")
+                        .soundscape_mut()
+                        .expect("role was not Soundscape");
+                    match edge {
+                        widget::range_slider::Edge::Start => {
+                            soundscape.release_duration.min = duration;
+                        },
+                        widget::range_slider::Edge::End => {
+                            soundscape.release_duration.max = duration;
+                        }
+                    }
+                    soundscape.release_duration
+                };
+
+                // Update the soundscape copy.
+                channels.soundscape.send(move |soundscape| {
+                    soundscape.update_source(&id, |source| {
+                        source.release_duration = new_duration;
+                    });
+                }).ok();
+            }
+
             //////////////////////////////////
             // Soundscape Group Assignments //
             //////////////////////////////////
@@ -1685,7 +1812,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     // Instantiate a button for each group.
                     Event::Item(item) => {
                         let selected = is_selected(item.i);
-                        let (&group_id, group) = groups_vec[item.i];
+                        let (&group_id, _) = groups_vec[item.i];
                         let source_id = sources[i].id;
                         let soundscape = sources[i].audio.role
                             .as_mut()
