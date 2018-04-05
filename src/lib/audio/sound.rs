@@ -142,8 +142,8 @@ pub fn spawn_from_source(
                 max_duration_frames,
                 output_stream,
             )
-
         },
+
         source::Kind::Realtime(ref realtime) => {
             spawn_from_realtime(
                 id,

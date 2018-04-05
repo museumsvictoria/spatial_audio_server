@@ -1601,13 +1601,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             //
             // - If it is a non-looping WAV, then the max duration is the length of the WAV.
             // - If it is a looping WAV or a realtime source the max is some arbitrary limit.
-            const MAX_DURATION: Ms = Ms(utils::DAY_MS);
-            const MAX_DURATION_SKEW: f64 = 0.1;
-            let (max_duration, skew) = match sources[i].kind {
-                audio::source::Kind::Realtime(_) => (MAX_DURATION, MAX_DURATION_SKEW),
+            let skew = sources[i].kind.playback_duration_skew();
+            let max_duration = match sources[i].kind {
+                audio::source::Kind::Realtime(_) => audio::source::MAX_PLAYBACK_DURATION,
                 audio::source::Kind::Wav(ref wav) => match wav.should_loop {
-                    true => (MAX_DURATION, MAX_DURATION_SKEW),
-                    false => (wav.duration.to_ms(audio::SAMPLE_RATE), 0.5),
+                    true => audio::source::MAX_PLAYBACK_DURATION,
+                    false => wav.duration.to_ms(audio::SAMPLE_RATE),
                 }
             };
             let min_duration = Ms(0.0);
@@ -1670,7 +1669,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .font_size(SMALL_FONT_SIZE)
                 .set(ids.source_editor_selected_soundscape_attack_duration_text, ui);
 
-            let skew = 0.5;
+            let skew = audio::source::skew::ATTACK;
             let min_duration = Ms(0.0);
             let max_duration = audio::source::MAX_ATTACK_DURATION;
             let min_duration_ms = min_duration.ms();
@@ -1732,7 +1731,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .font_size(SMALL_FONT_SIZE)
                 .set(ids.source_editor_selected_soundscape_release_duration_text, ui);
 
-            let skew = 0.5;
+            let skew = audio::source::skew::RELEASE;
             let min_duration = Ms(0.0);
             let max_duration = audio::source::MAX_RELEASE_DURATION;
             let min_duration_ms = min_duration.ms();

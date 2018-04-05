@@ -2,7 +2,7 @@ use nannou::math::map_range;
 use nannou::math::num_traits::NumCast;
 use serde;
 use serde_json;
-use std::{fmt, fs, io};
+use std::{cmp, fmt, fs, io};
 use std::error::Error;
 use std::io::Write;
 use std::path::Path;
@@ -19,6 +19,9 @@ pub const MIN_IN_HZ: f64 = SEC_IN_HZ / 60.0;
 pub const HR_IN_HZ: f64 = MIN_IN_HZ / 60.0;
 pub const DAY_IN_HZ: f64 = HR_IN_HZ / 24.0;
 
+/// The type used to seed `XorShiftRng`s.
+pub type Seed = [u32; 4];
+
 /// Min and max values along a range.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Range<T> {
@@ -32,6 +35,35 @@ pub enum HumanReadableTime {
     Mins,
     Hrs,
     Days,
+}
+
+/// Sums seed `b` onto seed `a` in a wrapping manner.
+pub fn add_seeds(a: &Seed, b: &Seed) -> Seed {
+    let s0 = a[0].wrapping_add(b[0]);
+    let s1 = a[1].wrapping_add(b[1]);
+    let s2 = a[2].wrapping_add(b[2]);
+    let s3 = a[3].wrapping_add(b[3]);
+    [s0, s1, s2, s3]
+}
+
+/// Count the number of elements that are equal to one another at the front.
+pub fn count_equal<I, F>(iter: I, cmp: F) -> usize
+where
+    I: IntoIterator,
+    F: Fn(&I::Item, &I::Item) -> cmp::Ordering,
+{
+    let mut count = 0;
+    let mut iter = iter.into_iter().peekable();
+    while let Some(item) = iter.next() {
+        count += 1;
+        if let Some(next) = iter.peek() {
+            if let cmp::Ordering::Equal = cmp(&item, &next) {
+                continue;
+            }
+        }
+        break;
+    }
+    count
 }
 
 /// Convert the given interval in milliseconds to a rate in hz.

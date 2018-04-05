@@ -297,7 +297,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         // Remove the local copy from the map.
         soundscape_editor.groups.remove(&id);
 
-        // TODO: Remove this group from any sources on the soundscape thread.
+        // Remove this group from any sources on the soundscape thread.
+        channels.soundscape.send(move |soundscape| {
+            soundscape.remove_group(&id);
+        }).ok();
     }
 
     ////////////////////
