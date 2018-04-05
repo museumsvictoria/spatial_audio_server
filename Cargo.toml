@@ -16,6 +16,7 @@ conrod = { version = "0.58", features = ["winit", "glium"] }
 conrod_derive = "0.1"
 custom_derive = "0.1"
 hound = "3.3"
+mindtree_utils = "0.4"
 newtype_derive = "0.1"
 nannou = "0.3"
 pitch_calc = "0.11"

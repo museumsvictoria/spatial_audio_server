@@ -1,5 +1,7 @@
 use installation::Installation;
 use metres::Metres;
+use nannou::math::map_range;
+use nannou::rand::Rng;
 use soundscape;
 use std::collections::HashSet;
 use std::ops;
@@ -142,6 +144,52 @@ pub enum Kind {
     Realtime(Realtime),
 }
 
+impl Kind {
+    /// The value used to skew the playback duration to a suitable linear range for a slider.
+    ///
+    /// This is dependent upon whether or not the source is potentially infinite.
+    pub fn playback_duration_skew(&self) -> f64 {
+        match *self {
+            Kind::Realtime(_) => skew::PLAYBACK_DURATION_MAX,
+            Kind::Wav(ref wav) => match wav.should_loop {
+                true => skew::PLAYBACK_DURATION_MAX,
+                false => playback_duration_skew(wav.duration.to_ms(super::SAMPLE_RATE)),
+            },
+        }
+    }
+}
+
+/// Skew some given playback duration into a "perceived" linear range.
+///
+/// This is useful for GUI sliders and for generating durations based on some given range.
+pub fn playback_duration_skew(duration: Ms) -> f64 {
+    let no_skew = 1.0;
+    if duration < Ms(utils::SEC_MS) {
+        return no_skew;
+    }
+    if duration > MAX_PLAYBACK_DURATION {
+        return skew::PLAYBACK_DURATION_MAX;
+    }
+    map_range(
+        duration.0,
+        utils::SEC_MS,
+        MAX_PLAYBACK_DURATION.0,
+        no_skew,
+        skew::PLAYBACK_DURATION_MAX,
+    )
+}
+
+/// Generate a random playback duration within the given range.
+pub fn random_playback_duration<R>(mut rng: R, range: Range<Ms>) -> Ms
+where
+    R: Rng,
+{
+    let range_duration = range.max - range.min;
+    let skew = playback_duration_skew(range_duration);
+    let skewed_normalised_value = rng.gen::<f64>().powf(skew);
+    Ms(utils::unskew_and_unnormalise(skewed_normalised_value, range.min.0, range.max.0, skew))
+}
+
 impl Source {
     pub fn channel_count(&self) -> usize {
         match self.kind {
@@ -229,12 +277,6 @@ impl Signal {
             (_, Some(b)) => Some(b),
             _ => None,
         }
-    }
-
-    // The number of frames that the signal will yield before the release kicks in.
-    fn frames_until_release_begins(&self) -> Option<Samples> {
-        self.remaining_frames()
-            .map(|frames| frames_until_release_begins(frames, &self.release))
     }
 
     /// Borrow the inner iterator yielding samples and apply the attack and release.
@@ -394,13 +436,22 @@ impl<'a> Iterator for SignalSamples<'a> {
     }
 }
 
+/// The values used to skew parameters in order to create a linear range across their perceptual
+/// differences.
+pub mod skew {
+    pub const ATTACK: f64 = 0.5;
+    pub const RELEASE: f64 = 0.5;
+    pub const PLAYBACK_DURATION_MAX: f64 = 0.1;
+    pub const PLAYBACK_DURATION: f64 = 0.5;
+}
+
 pub mod default {
     use metres::Metres;
     use time_calc::Ms;
     use utils::{HR_MS, Range};
     pub const SPREAD: Metres = Metres(2.5);
     pub const OCCURRENCE_RATE: Range<Ms> = Range { min: Ms(500.0), max: Ms(HR_MS as _) };
-    pub const SIMULTANEOUS_SOUNDS: Range<usize> = Range { min: 1, max: 3 };
+    pub const SIMULTANEOUS_SOUNDS: Range<usize> = Range { min: 0, max: 1 };
     // Assume that the user wants to play back the sound endlessly at first.
     pub const PLAYBACK_DURATION: Range<Ms> = Range {
         min: super::MAX_PLAYBACK_DURATION,

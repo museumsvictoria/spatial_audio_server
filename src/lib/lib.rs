@@ -19,6 +19,7 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate time_calc;
 extern crate toml;
+extern crate utils as mindtree_utils;
 extern crate walkdir;
 
 use nannou::prelude::*;
@@ -36,7 +37,7 @@ mod soundscape;
 mod utils;
 
 pub fn run() {
-    nannou::app(model, update, draw).exit(exit).run();
+    nannou::app(model, event, view).exit(exit).run();
 }
 
 /// The model of the application state.
@@ -77,6 +78,9 @@ fn model(app: &App) -> Model {
     // A channel for sending active sound info from the audio thread to the GUI.
     let (audio_monitor_tx, audio_monitor_rx) = mpsc::sync_channel(1024);
 
+    // A channel for sending and receiving on the soundscape thread.
+    let (soundscape_tx, soundscape_rx) = mpsc::channel();
+
     // Initialise the audio input model and create the input stream.
     let input_device = app.audio.default_input_device().unwrap();
     let max_supported_input_channels = if cfg!(feature = "test_with_stereo") {
@@ -102,7 +106,11 @@ fn model(app: &App) -> Model {
     } else {
         output_device.max_supported_output_channels()
     };
-    let audio_output_model = audio::output::Model::new(audio_monitor_tx, osc_out_msg_tx.clone());
+    let audio_output_model = audio::output::Model::new(
+        audio_monitor_tx,
+        osc_out_msg_tx.clone(),
+        soundscape_tx.clone(),
+    );
     let audio_output_stream = app.audio
         .new_output_stream(audio_output_model, audio::output::render)
         .sample_rate(audio::SAMPLE_RATE as u32)
@@ -120,7 +128,14 @@ fn model(app: &App) -> Model {
     let sound_id_gen = audio::sound::IdGenerator::new();
 
     // Spawn the composer thread.
-    let soundscape = soundscape::spawn(audio_output_stream.clone(), sound_id_gen.clone());
+    let soundscape = soundscape::spawn(
+        config.seed,
+        soundscape_tx,
+        soundscape_rx,
+        audio_input_stream.clone(),
+        audio_output_stream.clone(),
+        sound_id_gen.clone(),
+    );
 
     // Initalise the GUI model.
     let gui_channels = gui::Channels::new(
@@ -150,7 +165,7 @@ fn model(app: &App) -> Model {
 }
 
 // Update the application in accordance with the given event.
-fn update(app: &App, mut model: Model, event: Event) -> Model {
+fn event(app: &App, mut model: Model, event: Event) -> Model {
     match event {
         Event::WindowEvent {
             simple: Some(_event),
@@ -173,7 +188,7 @@ fn update(app: &App, mut model: Model, event: Event) -> Model {
 }
 
 // Draw the state of the application to the screen.
-fn draw(app: &App, model: &Model, frame: Frame) -> Frame {
+fn view(app: &App, model: &Model, frame: Frame) -> Frame {
     model.gui.ui.draw_to_frame(app, &frame).unwrap();
     frame
 }

@@ -167,7 +167,16 @@ pub fn set(gui: &mut Gui) -> widget::Id {
         .down(PAD)
         .set(ids.master_realtime_source_latency, ui)
     {
+        // Update the local copy.
         master.params.realtime_source_latency = Ms(new_latency);
+
+        // Update the soundscape copy.
+        channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.realtime_source_latency = Ms(new_latency);
+            })
+            .ok();
     }
 
     // The master volume slider.

@@ -305,7 +305,7 @@ impl Model {
             state:
                 State {
                     master,
-                    installation_editor: InstallationEditor { computer_map, .. },
+                    installation_editor: InstallationEditor { state: installations, .. },
                     speaker_editor:
                         SpeakerEditor {
                             speakers,
@@ -331,7 +331,7 @@ impl Model {
         } = self;
 
         utils::save_to_json_or_panic(&master_path(&assets), &master.params);
-        utils::save_to_json_or_panic(&installations_path(&assets), &computer_map);
+        utils::save_to_json_or_panic(&installations_path(&assets), &installations);
         let stored_speakers = StoredSpeakers { speakers, next_id: next_speaker_id };
         utils::save_to_json_or_panic(&speakers_path(&assets), &stored_speakers);
         let stored_soundscape = soundscape_editor::Stored { groups, next_group_id };
@@ -360,6 +360,8 @@ impl State {
         // Load the master parameters.
         let params = utils::load_from_json_or_default(&master_path(assets));
         let master = Master::from_params(params);
+
+        // Send the loaded volume and rolloff to the audio output thread.
         let master_volume = master.params.volume;
         let dbap_rolloff_db = master.params.dbap_rolloff_db;
         channels
@@ -368,13 +370,34 @@ impl State {
                 audio.master_volume = master_volume;
                 audio.dbap_rolloff_db = dbap_rolloff_db;
             })
-            .expect("failed to send loaded master volume");
+            .expect("failed to send loaded master volume and dbap rolloff");
+
+        // Send the latency to the soundscape thread.
+        let realtime_source_latency = master.params.realtime_source_latency;
+        channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.realtime_source_latency = realtime_source_latency;
+            })
+            .expect("failed to send loaded realtime source latency");
 
         // Load the stored isntallation editor state.
-        let computer_map = installation_editor::load_computer_map(&installations_path(assets));
+        let inst_state: installation_editor::State =
+            utils::load_from_json_or_default(&installations_path(assets));
+
+        // Send the loaded installation-related soundscape state to the soundscape thread.
+        for (&inst, soundscape) in &inst_state.installations {
+            let clone = soundscape.clone();
+            channels
+                .soundscape
+                .send(move |soundscape| {
+                    soundscape.insert_installation(inst, clone);
+                })
+                .expect("failed to send loaded installation soundscape state");
+        }
 
         // Send the loaded OSC installation targets to the osc output thread.
-        for (&inst, computers) in &computer_map {
+        for (&inst, computers) in &inst_state.computer_map {
             for (&computer, addr) in computers {
                 let osc_tx = nannou::osc::sender()
                     .expect("failed to create OSC sender")
@@ -393,7 +416,7 @@ impl State {
         let installation_editor = InstallationEditor {
             is_open: false,
             selected: None,
-            computer_map,
+            state: inst_state,
         };
 
         // Load the existing speaker layout configuration if there is one.
@@ -775,6 +798,7 @@ struct ChannelLevels {
 }
 
 /// A message sent from the audio thread with some audio levels.
+#[derive(Debug)]
 pub enum AudioMonitorMessage {
     Master { peak: f32 },
     ActiveSound(audio::sound::Id, ActiveSoundMessage),
@@ -782,6 +806,7 @@ pub enum AudioMonitorMessage {
 }
 
 /// A message related to an active sound.
+#[derive(Debug)]
 pub enum ActiveSoundMessage {
     Start {
         source_id: audio::source::Id,
@@ -800,6 +825,7 @@ pub enum ActiveSoundMessage {
 }
 
 /// A message related to a speaker.
+#[derive(Debug)]
 pub enum SpeakerMessage {
     Add,
     Update { rms: f32, peak: f32 },
@@ -888,6 +914,9 @@ widget_ids! {
         installation_editor_osc_text,
         installation_editor_osc_ip_text_box,
         installation_editor_osc_address_text_box,
+        installation_editor_soundscape_canvas,
+        installation_editor_soundscape_text,
+        installation_editor_soundscape_simultaneous_sounds_slider,
         // Speaker Editor.
         speaker_editor,
         speaker_editor_no_speakers,
@@ -978,7 +1007,7 @@ widget_ids! {
         floorplan_canvas,
         floorplan,
         floorplan_speakers[],
-        floorplan_source_preview,
+        floorplan_sounds[],
         floorplan_channel_to_speaker_lines[],
     }
 }
@@ -1427,7 +1456,7 @@ fn set_widgets(gui: &mut Gui) {
         let point = state.source_editor.preview.point;
         let selected = state.source_editor.selected;
         let mut channel_amplitudes = [0.0f32; 16];
-        for (&sound_id, active_sound) in &audio_monitor.active_sounds {
+        for (i, (&sound_id, active_sound)) in audio_monitor.active_sounds.iter().enumerate() {
             let radians = 0.0;
 
             // Fill the channel amplitudes.
@@ -1436,7 +1465,10 @@ fn set_widgets(gui: &mut Gui) {
             }
 
             // TODO: There should be an Id per active sound.
-            let sound_widget_id = ids.floorplan_source_preview;
+            if ids.floorplan_sounds.len() <= i {
+                ids.floorplan_sounds.resize(i + 1, &mut ui.widget_id_generator());
+            }
+            let sound_widget_id = ids.floorplan_sounds[i];
 
             // If this is the preview sound it should be draggable and stand out.
             let condition = (current, point, selected);
@@ -1514,11 +1546,10 @@ fn set_widgets(gui: &mut Gui) {
             let side_m = custom_widget::sound::dimension_metres(0.0);
             let side = state.camera.metres_to_scalar(side_m);
             let channel_amps = &channel_amplitudes[..channel_count];
-            let maybe_source = state.source_editor
+            let installations = state.source_editor
                 .sources
                 .iter()
-                .find(|s| s.id == active_sound.source_id);
-            let installations = maybe_source.as_ref()
+                .find(|s| s.id == active_sound.source_id)
                 .map(|s| s.audio.role.clone().into())
                 .unwrap_or(audio::sound::Installations::All);
 

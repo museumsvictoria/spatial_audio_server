@@ -16,6 +16,7 @@ use nannou::math::{MetricSpace, Point2};
 use osc;
 use rustfft::num_complex::Complex;
 use rustfft::num_traits::Zero;
+use soundscape;
 use std;
 use std::collections::HashMap;
 use std::sync::mpsc;
@@ -86,6 +87,8 @@ pub struct Model {
     gui_audio_monitor_msg_tx: mpsc::SyncSender<gui::AudioMonitorMessage>,
     /// Channel for sending sound analysis data to the OSC output thread.
     osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
+    /// A handle to the soundscape thread - for notifying when a sound is complete.
+    soundscape_tx: mpsc::Sender<soundscape::Message>,
     /// An analysis per installation to re-use for sending to the OSC output thread.
     installation_analyses: HashMap<Installation, Vec<SpeakerAnalysis>>,
     /// A buffer to re-use for DBAP speaker calculations.
@@ -117,6 +120,7 @@ impl Model {
     pub fn new(
         gui_audio_monitor_msg_tx: mpsc::SyncSender<gui::AudioMonitorMessage>,
         osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
+        soundscape_tx: mpsc::Sender<soundscape::Message>,
     ) -> Self {
         // A map from audio sound IDs to the audio sounds themselves.
         let sounds: HashMap<sound::Id, ActiveSound> = HashMap::with_capacity(1024);
@@ -170,6 +174,7 @@ impl Model {
             installation_analyses,
             gui_audio_monitor_msg_tx,
             osc_output_msg_tx,
+            soundscape_tx,
             dbap_speakers,
             dbap_speaker_gains,
             fft,
@@ -276,9 +281,16 @@ impl Model {
     pub fn remove_sound(&mut self, id: sound::Id) -> Option<ActiveSound> {
         let removed = self.sounds.remove(&id);
         if removed.is_some() {
+            // Notify the gui.
             let sound_msg = gui::ActiveSoundMessage::End;
             let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
             self.gui_audio_monitor_msg_tx.try_send(msg).ok();
+
+            // Notify the soundscape thread.
+            let update = move |soundscape: &mut soundscape::Model| {
+                soundscape.remove_active_sound(&id);
+            };
+            self.soundscape_tx.send(soundscape::UpdateFn::from(update).into()).ok();
         }
         removed
     }
@@ -306,6 +318,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref mut dbap_speaker_gains,
             ref gui_audio_monitor_msg_tx,
             ref osc_output_msg_tx,
+            ref soundscape_tx,
             ref mut fft,
             ref mut fft_frequency_amplitudes_2,
         } = model;
@@ -512,10 +525,17 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             // TODO: Possibly send this with the `End` message to avoid de-allocating on audio
             // thread.
             let _sound = sounds.remove(&sound_id).unwrap();
-            // Send signal of completion back to GUI/Composer threads.
+
+            // Send signal of completion back to GUI thread.
             let sound_msg = gui::ActiveSoundMessage::End;
             let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
             gui_audio_monitor_msg_tx.try_send(msg).ok();
+
+            // Notify the soundscape thread.
+            let update = move |soundscape: &mut soundscape::Model| {
+                soundscape.remove_active_sound(&sound_id);
+            };
+            soundscape_tx.send(soundscape::UpdateFn::from(update).into()).ok();
         }
 
         // Apply the master volume.

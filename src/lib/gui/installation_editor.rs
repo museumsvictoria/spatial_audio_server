@@ -1,4 +1,4 @@
-use gui::{collapsible_area, Channels, Gui, State};
+use gui::{self, collapsible_area, Channels, Gui};
 use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
 use installation::{self, ComputerId, Installation};
 use nannou;
@@ -7,8 +7,7 @@ use nannou::ui;
 use nannou::ui::prelude::*;
 use osc;
 use std::collections::HashMap;
-use std::{io, net};
-use std::path::Path;
+use std::{io, net, ops};
 use utils;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -25,6 +24,13 @@ pub type ComputerMap = HashMap<Installation, AddressMap>;
 pub struct InstallationEditor {
     pub is_open: bool,
     pub selected: Option<Selected>,
+    pub state: State,
+}
+
+/// State to be serialized/deserialized.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct State {
+    pub installations: HashMap<Installation, installation::Soundscape>,
     pub computer_map: ComputerMap,
 }
 
@@ -59,9 +65,30 @@ pub fn default_computer_map() -> ComputerMap {
         .collect()
 }
 
-/// Load the computer map from file or fall back to the default.
-pub fn load_computer_map(path: &Path) -> ComputerMap {
-    utils::load_from_json(path).ok().unwrap_or_else(default_computer_map)
+impl Default for State {
+    fn default() -> Self {
+        let installations = installation::ALL.iter()
+            .map(|&inst| (inst, installation::Soundscape::default()))
+            .collect();
+        let computer_map = default_computer_map();
+        State {
+            installations,
+            computer_map,
+        }
+    }
+}
+
+impl ops::Deref for InstallationEditor {
+    type Target = State;
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl ops::DerefMut for InstallationEditor {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
+    }
 }
 
 pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
@@ -70,12 +97,15 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         ref ids,
         channels,
         state:
-            &mut State {
+            &mut gui::State {
                 installation_editor:
                     InstallationEditor {
                         ref mut is_open,
                         ref mut selected,
-                        ref mut computer_map,
+                        state: State {
+                            ref mut installations,
+                            ref mut computer_map,
+                        },
                     },
                 ..
             },
@@ -87,6 +117,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     const COMPUTER_LIST_HEIGHT: Scalar = ITEM_HEIGHT * 3.0;
     const PAD: Scalar = 6.0;
     const TEXT_PAD: Scalar = PAD * 2.0;
+    const SLIDER_H: Scalar = ITEM_HEIGHT;
 
     // The height of the canvas displaying options for the selected installation.
     //
@@ -95,7 +126,11 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     // - Music Data OSC Output (Text and TextBox)
     let osc_canvas_h = PAD + ITEM_HEIGHT * 3.0 + PAD;
     let computer_canvas_h = ITEM_HEIGHT + PAD + ITEM_HEIGHT + PAD + COMPUTER_LIST_HEIGHT;
-    let selected_canvas_h = PAD + computer_canvas_h + PAD + osc_canvas_h + PAD;
+    let soundscape_canvas_h = PAD + PAD * 3.0 + PAD + SLIDER_H + PAD;
+    let selected_canvas_h = PAD
+        + computer_canvas_h + PAD
+        + osc_canvas_h + PAD
+        + soundscape_canvas_h + PAD;
 
     // The total height of the installation editor as a sum of the previous heights plus necessary
     // padding.
@@ -461,6 +496,81 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 selected_computer.osc_addr = new_string;
             }
         }
+    }
+
+    // The canvas for displaying the osc output address editor.
+    widget::Canvas::new()
+        .align_middle_x_of(ids.installation_editor_selected_canvas)
+        .down_from(ids.installation_editor_osc_canvas, PAD)
+        .parent(ids.installation_editor_selected_canvas)
+        .color(color::CHARCOAL)
+        .w(selected_canvas_kid_area.w())
+        .h(soundscape_canvas_h)
+        .pad(PAD)
+        .set(ids.installation_editor_soundscape_canvas, ui);
+
+    // OSC output address header.
+    widget::Text::new("Soundscape - Simultaneous Sounds")
+        .font_size(SMALL_FONT_SIZE)
+        .top_left_of(ids.installation_editor_soundscape_canvas)
+        .set(ids.installation_editor_soundscape_text, ui);
+
+    /////////////////////////
+    // SIMULTANEOUS SOUNDS //
+    /////////////////////////
+
+    let range = installations[&installation].simultaneous_sounds;
+    let label = format!("{} to {} sounds at once", range.min, range.max);
+    let total_min_num = 0.0;
+    let total_max_num = 100.0;
+    let skew = 0.5;
+
+    // Map a value from the total hz range to [0.0, 1.0] with the given skew.
+    let map_and_skew = |num: usize| {
+        utils::normalise_and_skew(num as f64, total_min_num, total_max_num, skew)
+    };
+
+    // Unskew the given skewed, normalised value and map it back to the hz range.
+    let map_unskewed = |skewed: f64| -> usize {
+        utils::unskew_and_unnormalise(skewed, total_min_num, total_max_num, skew).round() as _
+    };
+
+    let range_slider = |start, end, min, max| {
+        widget::RangeSlider::new(start, end, min, max)
+            .kid_area_w_of(ids.installation_editor_soundscape_canvas)
+            .h(SLIDER_H)
+            .label_font_size(SMALL_FONT_SIZE)
+            .color(ui::color::LIGHT_CHARCOAL)
+    };
+
+    for (edge, value) in range_slider(map_and_skew(range.min), map_and_skew(range.max), 0.0, 1.0)
+        .align_left()
+        .label(&label)
+        .down(PAD * 2.0)
+        .set(ids.soundscape_editor_simultaneous_sounds_slider, ui)
+    {
+        let num = map_unskewed(value);
+
+        // Update the local copy.
+        let new_range = {
+            let installation = installations.get_mut(&installation).unwrap();
+            match edge {
+                widget::range_slider::Edge::Start => {
+                    installation.simultaneous_sounds.min = num;
+                },
+                widget::range_slider::Edge::End => {
+                    installation.simultaneous_sounds.max = num;
+                }
+            }
+            installation.simultaneous_sounds
+        };
+
+        // Update the soundscape copy.
+        channels.soundscape.send(move |soundscape| {
+            soundscape.update_installation(&installation, |installation| {
+                installation.simultaneous_sounds = new_range;
+            });
+        }).ok();
     }
 
     area.id

@@ -2,6 +2,7 @@ use metres::Metres;
 use std;
 use std::path::Path;
 use toml;
+use utils::Seed;
 
 /// Various configuration parameters for the audio_server loaded on startup.
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq)]
@@ -24,11 +25,15 @@ pub struct Config {
     pub min_speaker_radius_metres: Metres,
     #[serde(default = "default::max_speaker_radius_metres")]
     pub max_speaker_radius_metres: Metres,
+    #[serde(default = "default::seed")]
+    pub seed: Seed,
 }
 
 // Fallback parameters in the case that they are missing from the file or invalid.
 pub mod default {
     use metres::Metres;
+    use utils::Seed;
+
     pub fn window_width() -> u32 {
         1280
     }
@@ -55,6 +60,10 @@ pub mod default {
     }
     pub fn max_speaker_radius_metres() -> Metres {
         Metres(1.0)
+    }
+
+    pub fn seed() -> Seed {
+        [0, 0, 0, 0]
     }
 }
 

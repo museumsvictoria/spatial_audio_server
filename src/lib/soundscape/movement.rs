@@ -3,17 +3,24 @@ use nannou::prelude::*;
 
 /// The bounding box for an iterator yielding points.
 #[derive(Copy, Clone, Debug)]
-pub struct BoundingBox {
+pub struct BoundingRect {
     pub left: Metres,
     pub right: Metres,
     pub top: Metres,
     pub bottom: Metres,
 }
 
-impl BoundingBox {
+/// Includes the bounding box and
+#[derive(Copy, Clone, Debug)]
+pub struct Area {
+    pub bounding_rect: BoundingRect,
+    pub centroid: Point2<Metres>,
+}
+
+impl BoundingRect {
     /// Initialise a bounding box at a single point in space.
     pub fn from_point(p: Point2<Metres>) -> Self {
-        BoundingBox { left: p.x, right: p.x, top: p.y, bottom: p.y }
+        BoundingRect { left: p.x, right: p.x, top: p.y, bottom: p.y }
     }
 
     /// Determine the movement area bounds on the given set of points.
@@ -25,14 +32,14 @@ impl BoundingBox {
         points
             .next()
             .map(|p| {
-                let init = BoundingBox::from_point(p);
-                points.fold(init, BoundingBox::with_point)
+                let init = BoundingRect::from_point(p);
+                points.fold(init, BoundingRect::with_point)
             })
     }
 
     /// Extend the bounding box to include the given point.
     pub fn with_point(self, p: Point2<Metres>) -> Self {
-        BoundingBox {
+        BoundingRect {
             left: p.x.min(self.left),
             right: p.x.max(self.right),
             bottom: p.y.min(self.bottom),
