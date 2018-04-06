@@ -29,6 +29,7 @@ mod custom_widget;
 pub mod installation_editor;
 pub mod interaction_log;
 pub mod master;
+pub mod monitor;
 pub mod osc_in_log;
 pub mod osc_out_log;
 pub mod source_editor;

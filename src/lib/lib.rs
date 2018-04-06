@@ -25,6 +25,7 @@ extern crate walkdir;
 use nannou::prelude::*;
 use soundscape::Soundscape;
 use std::sync::mpsc;
+use std::thread;
 
 mod audio;
 mod config;
@@ -46,6 +47,7 @@ pub fn run() {
 struct Model {
     gui: gui::Model,
     soundscape: Soundscape,
+    audio_monitor: thread::JoinHandle<()>,
 }
 
 // Initialise the state of the application.
@@ -82,7 +84,9 @@ fn model(app: &App) -> Model {
     let (_osc_out_thread_handle, osc_out_msg_tx, osc_out_log_rx) = osc::output::spawn();
 
     // A channel for sending active sound info from the audio thread to the GUI.
-    let (audio_monitor_tx, audio_monitor_rx) = mpsc::sync_channel(1024);
+    let app_proxy = app.create_proxy();
+    let (audio_monitor, audio_monitor_tx, audio_monitor_rx) = gui::monitor::spawn(app_proxy)
+        .expect("failed to spawn audio_monitor thread");
 
     // A channel for sending and receiving on the soundscape thread.
     let (soundscape_tx, soundscape_rx) = mpsc::channel();
@@ -168,6 +172,7 @@ fn model(app: &App) -> Model {
     Model {
         soundscape,
         gui,
+        audio_monitor,
     }
 }
 
@@ -205,14 +210,21 @@ fn exit(_app: &App, model: Model) {
     let Model {
         gui,
         soundscape,
+        audio_monitor,
         ..
     } = model;
 
     gui.exit();
+
+    // Wait for the audio monitoring thread to close
+    //
+    // This should be instant as `GUI` has exited and the receiving channel should be dropped.
+    audio_monitor.join().expect("failed to join audio_monitor thread when exiting");
 
     // Send exit signals to the audio and composer threads.
     let soundscape_thread = soundscape.exit().expect("only the main thread should exit soundscape");
 
     // Wait for the composer thread to finish.
     soundscape_thread.join().expect("failed to join the soundscape thread when exiting");
+
 }
