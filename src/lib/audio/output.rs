@@ -545,7 +545,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
         // Find the peak amplitude and send it via the monitor channel.
         let peak = buffer.iter().fold(0.0, |peak, &s| s.max(peak));
-        gui_audio_monitor_msg_tx.send(gui::AudioMonitorMessage::Master { peak }).ok();
+        gui_audio_monitor_msg_tx.try_send(gui::AudioMonitorMessage::Master { peak }).ok();
 
         // Step the frame count.
         *frame_count += buffer.len_frames() as u64;
