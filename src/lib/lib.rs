@@ -25,6 +25,7 @@ extern crate walkdir;
 use nannou::prelude::*;
 use soundscape::Soundscape;
 use std::sync::mpsc;
+use std::thread;
 
 mod audio;
 mod config;
@@ -46,6 +47,7 @@ pub fn run() {
 struct Model {
     gui: gui::Model,
     soundscape: Soundscape,
+    audio_monitor: thread::JoinHandle<()>,
 }
 
 // Initialise the state of the application.
@@ -54,10 +56,13 @@ fn model(app: &App) -> Model {
     app.set_loop_mode(LoopMode::wait(3));
 
     // Find the assets directory.
-    let assets = app.assets_path().unwrap();
+    let assets = app.assets_path()
+        .expect("could not find assets directory");
 
     // Load the configuration struct.
-    let config = config::load(&assets.join("config.toml")).unwrap();
+    let config_path = assets.join("config.toml");
+    let config = config::load(&config_path)
+        .unwrap_or_else(|err| panic!("could not load {}: {}", config_path.display(), err));
 
     // Create a window.
     let window = app.new_window()
@@ -66,23 +71,29 @@ fn model(app: &App) -> Model {
         .with_vsync(true)
         .with_multisampling(4)
         .build()
-        .unwrap();
+        .expect("failed to create window");
 
     // Spawn the OSC input thread.
-    let osc_receiver = nannou::osc::receiver(config.osc_input_port).unwrap();
+    let osc_receiver = nannou::osc::receiver(config.osc_input_port)
+        .unwrap_or_else(|err| {
+            panic!("failed to create OSC receiver bound to port {}: {}", config.osc_input_port, err)
+        });
     let (_osc_in_thread_handle, osc_in_log_rx, interaction_rx) = osc::input::spawn(osc_receiver);
 
     // Spawn the OSC output thread.
     let (_osc_out_thread_handle, osc_out_msg_tx, osc_out_log_rx) = osc::output::spawn();
 
     // A channel for sending active sound info from the audio thread to the GUI.
-    let (audio_monitor_tx, audio_monitor_rx) = mpsc::sync_channel(1024);
+    let app_proxy = app.create_proxy();
+    let (audio_monitor, audio_monitor_tx, audio_monitor_rx) = gui::monitor::spawn(app_proxy)
+        .expect("failed to spawn audio_monitor thread");
 
     // A channel for sending and receiving on the soundscape thread.
     let (soundscape_tx, soundscape_rx) = mpsc::channel();
 
     // Initialise the audio input model and create the input stream.
-    let input_device = app.audio.default_input_device().unwrap();
+    let input_device = app.audio.default_input_device()
+        .expect("no default input device available on the system");
     let max_supported_input_channels = if cfg!(feature = "test_with_stereo") {
         std::cmp::min(input_device.max_supported_input_channels(), 2)
     } else {
@@ -97,7 +108,7 @@ fn model(app: &App) -> Model {
         .channels(max_supported_input_channels)
         .device(input_device)
         .build()
-        .unwrap();
+        .expect("failed to build audio input stream");
 
     // Initialise the audio output model and create the output stream.
     let output_device = app.audio.default_output_device().unwrap();
@@ -121,7 +132,7 @@ fn model(app: &App) -> Model {
         ))
         .device(output_device)
         .build()
-        .unwrap();
+        .expect("failed to build audio output stream");
 
     // To be shared between the `Composer` and `GUI` threads as both are responsible for creating
     // sounds and sending them to the audio thread.
@@ -161,6 +172,7 @@ fn model(app: &App) -> Model {
     Model {
         soundscape,
         gui,
+        audio_monitor,
     }
 }
 
@@ -189,7 +201,7 @@ fn event(app: &App, mut model: Model, event: Event) -> Model {
 
 // Draw the state of the application to the screen.
 fn view(app: &App, model: &Model, frame: Frame) -> Frame {
-    model.gui.ui.draw_to_frame(app, &frame).unwrap();
+    model.gui.ui.draw_to_frame(app, &frame).expect("failed to draw to frame");
     frame
 }
 
@@ -198,14 +210,21 @@ fn exit(_app: &App, model: Model) {
     let Model {
         gui,
         soundscape,
+        audio_monitor,
         ..
     } = model;
 
     gui.exit();
 
+    // Wait for the audio monitoring thread to close
+    //
+    // This should be instant as `GUI` has exited and the receiving channel should be dropped.
+    audio_monitor.join().expect("failed to join audio_monitor thread when exiting");
+
     // Send exit signals to the audio and composer threads.
     let soundscape_thread = soundscape.exit().expect("only the main thread should exit soundscape");
 
     // Wait for the composer thread to finish.
-    soundscape_thread.join().unwrap();
+    soundscape_thread.join().expect("failed to join the soundscape thread when exiting");
+
 }
