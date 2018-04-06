@@ -817,7 +817,7 @@ fn tick(model: &mut Model, tick: Tick) {
                         (&None, &None) => cmp::Ordering::Equal,
                         (&Some(ref a), &Some(ref b)) => {
                             a.duration_until_sound_needed
-                                .partial_cmp(&a.duration_until_sound_needed)
+                                .partial_cmp(&b.duration_until_sound_needed)
                                 .expect("could not compare `duration_until_sound_needed`")
                         },
                     }
