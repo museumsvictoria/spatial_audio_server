@@ -1,57 +1,5 @@
 {
   "groups": {
-    "4": {
-      "group": {
-        "occurrence_rate": {
-          "min": 1.0,
-          "max": 3600000.0
-        },
-        "simultaneous_sounds": {
-          "min": 1,
-          "max": 10
-        }
-      },
-      "name": "Group E"
-    },
-    "5": {
-      "group": {
-        "occurrence_rate": {
-          "min": 1.0,
-          "max": 3600000.0
-        },
-        "simultaneous_sounds": {
-          "min": 1,
-          "max": 10
-        }
-      },
-      "name": "Group F"
-    },
-    "3": {
-      "group": {
-        "occurrence_rate": {
-          "min": 1.0,
-          "max": 3600000.0
-        },
-        "simultaneous_sounds": {
-          "min": 1,
-          "max": 10
-        }
-      },
-      "name": "Group D"
-    },
-    "2": {
-      "group": {
-        "occurrence_rate": {
-          "min": 1.0,
-          "max": 3600000.0
-        },
-        "simultaneous_sounds": {
-          "min": 1,
-          "max": 10
-        }
-      },
-      "name": "Group C"
-    },
     "1": {
       "group": {
         "occurrence_rate": {
@@ -77,6 +25,58 @@
         }
       },
       "name": "Group A"
+    },
+    "3": {
+      "group": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group D"
+    },
+    "5": {
+      "group": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group F"
+    },
+    "4": {
+      "group": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group E"
+    },
+    "2": {
+      "group": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group C"
     }
   },
   "next_group_id": 6
