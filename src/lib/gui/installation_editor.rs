@@ -8,7 +8,6 @@ use nannou::ui::prelude::*;
 use osc;
 use std::collections::HashMap;
 use std::{io, net, ops};
-use utils;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Address {
@@ -523,33 +522,22 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     let label = format!("{} to {} sounds at once", range.min, range.max);
     let total_min_num = 0.0;
     let total_max_num = 100.0;
-    let skew = 0.5;
-
-    // Map a value from the total hz range to [0.0, 1.0] with the given skew.
-    let map_and_skew = |num: usize| {
-        utils::normalise_and_skew(num as f64, total_min_num, total_max_num, skew)
-    };
-
-    // Unskew the given skewed, normalised value and map it back to the hz range.
-    let map_unskewed = |skewed: f64| -> usize {
-        utils::unskew_and_unnormalise(skewed, total_min_num, total_max_num, skew).round() as _
-    };
-
-    let range_slider = |start, end, min, max| {
-        widget::RangeSlider::new(start, end, min, max)
-            .kid_area_w_of(ids.installation_editor_soundscape_canvas)
-            .h(SLIDER_H)
-            .label_font_size(SMALL_FONT_SIZE)
-            .color(ui::color::LIGHT_CHARCOAL)
-    };
-
-    for (edge, value) in range_slider(map_and_skew(range.min), map_and_skew(range.max), 0.0, 1.0)
+    let min = range.min as f64;
+    let max = range.max as f64;
+    let total_min = total_min_num as f64;
+    let total_max = total_max_num as f64;
+    for (edge, value) in widget::RangeSlider::new(min, max, total_min, total_max)
+        .skew(0.5)
+        .kid_area_w_of(ids.installation_editor_soundscape_canvas)
+        .h(SLIDER_H)
+        .label_font_size(SMALL_FONT_SIZE)
+        .color(ui::color::LIGHT_CHARCOAL)
         .align_left()
         .label(&label)
         .down(PAD * 2.0)
         .set(ids.soundscape_editor_simultaneous_sounds_slider, ui)
     {
-        let num = map_unskewed(value);
+        let num = value as usize;
 
         // Update the local copy.
         let new_range = {

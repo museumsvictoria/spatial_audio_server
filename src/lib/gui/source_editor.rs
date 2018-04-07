@@ -5,7 +5,6 @@ use gui::{collapsible_area, duration_label, hz_label, Gui, State};
 use gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
 use installation::{self, Installation};
 use metres::Metres;
-use nannou;
 use nannou::prelude::*;
 use nannou::ui;
 use nannou::ui::prelude::*;
@@ -209,12 +208,12 @@ impl StoredSources {
                 let kind = audio::source::Kind::Wav(wav);
                 let role = None;
                 let spread = Metres(2.5);
-                let radians = 0.0;
+                let channel_radians = 0.0;
                 let audio = audio::Source {
                     kind,
                     role,
                     spread,
-                    radians,
+                    channel_radians,
                 };
                 let id = stored.next_id;
                 let source = Source { name, audio, id };
@@ -254,7 +253,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         + TEXT_PAD + PAD + SLIDER_H + PAD
         + TEXT_PAD + PAD + SLIDER_H + PAD
         + TEXT_PAD + PAD + SLIDER_H + PAD
-        + TEXT_PAD + PAD * 2.5 + SOUNDSCAPE_GROUP_LIST_H + PAD;
+        + TEXT_PAD + PAD * 3.5 + SOUNDSCAPE_GROUP_LIST_H + PAD;
     const LOOP_TOGGLE_H: Scalar = ITEM_HEIGHT;
     const PLAYBACK_MODE_H: Scalar = ITEM_HEIGHT;
     const WAV_CANVAS_H: Scalar =
@@ -478,12 +477,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let kind = audio::source::Kind::Realtime(realtime.clone());
         let role = Default::default();
         let spread = audio::source::default::SPREAD;
-        let radians = Default::default();
+        let channel_radians = Default::default();
         let audio = audio::Source {
             kind,
             role,
             spread,
-            radians,
+            channel_radians,
         };
         let source = Source { id, name, audio };
 
@@ -736,11 +735,15 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     let attack_duration = Samples(0);
                     let release_duration = Samples(0);
                     let max_duration = None;
+                    let position = audio::sound::Position {
+                        point: preview.point.unwrap(),
+                        radians: 0.0,
+                    };
                     let _handle = audio::sound::spawn_from_source(
                         sound_id,
                         source.id,
                         &source.audio,
-                        preview.point.unwrap(),
+                        position,
                         attack_duration,
                         release_duration,
                         should_cycle,
@@ -1142,29 +1145,31 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     // Slider for controlling how channels should be rotated.
     const MIN_RADIANS: f32 = 0.0;
     const MAX_RADIANS: f32 = std::f32::consts::PI * 2.0;
-    let mut rotation = sources[i].audio.radians;
-    let label = format!("Rotate: {:.2} radians", rotation);
-    for new_rotation in slider(rotation, MIN_RADIANS, MAX_RADIANS)
+    let mut channel_radians = sources[i].audio.channel_radians;
+    let label = format!("Rotate: {:.2} radians", channel_radians);
+    for new_channel_radians in slider(channel_radians, MIN_RADIANS, MAX_RADIANS)
         .label(&label)
         .mid_right_of(ids.source_editor_selected_channel_layout_canvas)
         .align_middle_y_of(ids.source_editor_selected_channel_layout_spread)
         .set(ids.source_editor_selected_channel_layout_rotation, ui)
     {
-        rotation = new_rotation;
+        channel_radians = new_channel_radians;
 
         // Update the local copy.
-        sources[i].audio.radians = rotation;
+        sources[i].audio.channel_radians = channel_radians;
 
         // Update the soundscape copy.
         let id = sources[i].id;
         channels.soundscape.send(move |soundscape| {
-            soundscape.update_source(&id, move |source| source.radians = rotation);
+            soundscape.update_source(&id, move |source| {
+                source.channel_radians = channel_radians;
+            });
         }).expect("soundscape was closed");
 
         // Update the audio output copies.
         channels.audio_output.send(move |audio| {
             for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
-                sound.radians = rotation;
+                sound.channel_radians = channel_radians;
             }
         }).ok();
     }
@@ -1221,8 +1226,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             (0.0, 0.0)
         } else {
             let phase = i as f32 / num_channels as f32;
-            let default_radians = phase * MAX_RADIANS;
-            let radians = (rotation + default_radians) as Scalar;
+            let channel_radians_offset = phase * MAX_RADIANS;
+            let radians = (channel_radians + channel_radians_offset) as Scalar;
             let x = -radians.cos() * spread_circle_radius;
             let y = radians.sin() * spread_circle_radius;
             (x, y)
@@ -1464,33 +1469,23 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             let label = format!("{} to {}", min_hz_label, max_hz_label);
             let total_min_hz = utils::ms_interval_to_hz(Ms(utils::DAY_MS));
             let total_max_hz = utils::ms_interval_to_hz(Ms(1.0));
-            let skew = 1.0 / 10.0;
 
-            // Map a value from the total hz range to [0.0, 1.0] with the given skew.
-            let map_and_skew = |hz: f64| -> f64 {
-                utils::normalise_and_skew(hz, total_min_hz, total_max_hz, skew)
-            };
-
-            // Unskew the given skewed, normalised value and map it back to the hz range.
-            let map_unskewed = |skewed: f64| -> f64 {
-                utils::unskew_and_unnormalise(skewed, total_min_hz, total_max_hz, skew)
-            };
-
-            let range_slider = |start, end| {
-                widget::RangeSlider::new(start, end, 0.0, 1.0)
+            let range_slider = |start, end, min, max| {
+                widget::RangeSlider::new(start, end, min, max)
                     .kid_area_w_of(ids.source_editor_selected_soundscape_canvas)
                     .h(SLIDER_H)
                     .label_font_size(SMALL_FONT_SIZE)
                     .color(ui::color::LIGHT_CHARCOAL)
             };
 
-            for (edge, value) in range_slider(map_and_skew(min_hz), map_and_skew(max_hz))
+            for (edge, value) in range_slider(min_hz, max_hz, total_min_hz, total_max_hz)
+                .skew(0.1)
                 .align_left()
                 .label(&label)
                 .down(PAD * 2.0)
                 .set(ids.source_editor_selected_soundscape_occurrence_rate_slider, ui)
             {
-                let hz = map_unskewed(value);
+                let hz = value as _;
                 let id = sources[i].id;
 
                 // Update the local copy.
@@ -1535,30 +1530,16 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             let label = format!("{} to {} sounds at once", range.min, range.max);
             let total_min_num = 0.0;
             let total_max_num = 10.0;
-            let skew = 0.5;
-
-            // Map a value from the total hz range to [0.0, 1.0] with the given skew.
-            let map_and_skew = |num: usize| -> f64 {
-                let num_f = num as f64;
-                let mapped = nannou::math::map_range(num_f, total_min_num, total_max_num, 0.0f64, 1.0);
-                let skewed = mapped.powf(skew);
-                skewed
-            };
-
-            // Unskew the given skewed, normalised value and map it back to the hz range.
-            let map_unskewed = |normalised: f64| -> usize {
-                let unskewed = normalised.powf(1.0 / skew);
-                let unmapped = nannou::math::map_range(unskewed, 0.0, 1.0, total_min_num, total_max_num);
-                unmapped.round() as _
-            };
-
-            for (edge, value) in range_slider(map_and_skew(range.min), map_and_skew(range.max))
+            let min = range.min as f64;
+            let max = range.max as f64;
+            for (edge, value) in range_slider(min, max, total_min_num, total_max_num)
+                .skew(0.5)
                 .align_left()
                 .label(&label)
                 .down(PAD * 2.0)
                 .set(ids.source_editor_selected_soundscape_simultaneous_sounds_slider, ui)
             {
-                let num = map_unskewed(value);
+                let num = value as _;
                 let id = sources[i].id;
 
                 // Update the local copy.
@@ -1614,23 +1595,16 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             let max_duration_ms = max_duration.ms();
             let range = playback_duration;
             let label = format!("{} to {}", duration_label(&range.min), duration_label(&range.max));
-
-            let normalise_and_skew = |ms: Ms| -> f64 {
-                let ms = ms.ms();
-                utils::normalise_and_skew(ms, min_duration_ms, max_duration_ms, skew)
-            };
-
-            let unskew_and_unnormalise = |skewed: f64| -> Ms {
-                Ms(utils::unskew_and_unnormalise(skewed, min_duration_ms, max_duration_ms, skew))
-            };
-
-            for (edge, value) in range_slider(normalise_and_skew(range.min), normalise_and_skew(range.max))
+            let start = range.min.ms() as f64;
+            let end = range.max.ms() as f64;
+            for (edge, value) in range_slider(start, end, min_duration_ms, max_duration_ms)
+                .skew(skew)
                 .align_left()
                 .label(&label)
                 .down(PAD * 2.0)
                 .set(ids.source_editor_selected_soundscape_playback_duration_slider, ui)
             {
-                let duration = unskew_and_unnormalise(value);
+                let duration = Ms(value as _);
                 let id = sources[i].id;
 
                 // Update the local copy.
@@ -1669,30 +1643,22 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .font_size(SMALL_FONT_SIZE)
                 .set(ids.source_editor_selected_soundscape_attack_duration_text, ui);
 
-            let skew = audio::source::skew::ATTACK;
             let min_duration = Ms(0.0);
             let max_duration = audio::source::MAX_ATTACK_DURATION;
             let min_duration_ms = min_duration.ms();
             let max_duration_ms = max_duration.ms();
             let range = attack_duration;
             let label = format!("{} to {}", duration_label(&range.min), duration_label(&range.max));
-
-            let normalise_and_skew = |ms: Ms| -> f64 {
-                let ms = ms.ms();
-                utils::normalise_and_skew(ms, min_duration_ms, max_duration_ms, skew)
-            };
-
-            let unskew_and_unnormalise = |skewed: f64| -> Ms {
-                Ms(utils::unskew_and_unnormalise(skewed, min_duration_ms, max_duration_ms, skew))
-            };
-
-            for (edge, value) in range_slider(normalise_and_skew(range.min), normalise_and_skew(range.max))
+            let start = range.min.ms() as f64;
+            let end = range.max.ms() as f64;
+            for (edge, value) in range_slider(start, end, min_duration_ms, max_duration_ms)
+                .skew(audio::source::skew::ATTACK)
                 .align_left()
                 .label(&label)
                 .down(PAD * 2.0)
                 .set(ids.source_editor_selected_soundscape_attack_duration_slider, ui)
             {
-                let duration = unskew_and_unnormalise(value);
+                let duration = Ms(value);
                 let id = sources[i].id;
 
                 // Update the local copy.
@@ -1731,30 +1697,22 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .font_size(SMALL_FONT_SIZE)
                 .set(ids.source_editor_selected_soundscape_release_duration_text, ui);
 
-            let skew = audio::source::skew::RELEASE;
             let min_duration = Ms(0.0);
             let max_duration = audio::source::MAX_RELEASE_DURATION;
             let min_duration_ms = min_duration.ms();
             let max_duration_ms = max_duration.ms();
             let range = release_duration;
             let label = format!("{} to {}", duration_label(&range.min), duration_label(&range.max));
-
-            let normalise_and_skew = |ms: Ms| -> f64 {
-                let ms = ms.ms();
-                utils::normalise_and_skew(ms, min_duration_ms, max_duration_ms, skew)
-            };
-
-            let unskew_and_unnormalise = |skewed: f64| -> Ms {
-                Ms(utils::unskew_and_unnormalise(skewed, min_duration_ms, max_duration_ms, skew))
-            };
-
-            for (edge, value) in range_slider(normalise_and_skew(range.min), normalise_and_skew(range.max))
+            let start = range.min.ms();
+            let end = range.max.ms();
+            for (edge, value) in range_slider(start, end, min_duration_ms, max_duration_ms)
+                .skew(audio::source::skew::RELEASE)
                 .align_left()
                 .label(&label)
                 .down(PAD * 2.0)
                 .set(ids.source_editor_selected_soundscape_release_duration_slider, ui)
             {
-                let duration = unskew_and_unnormalise(value);
+                let duration = Ms(value);
                 let id = sources[i].id;
 
                 // Update the local copy.

@@ -235,7 +235,7 @@ impl Model {
 
     /// Inserts the sound and sends an `Start` active sound message to the GUI.
     pub fn insert_sound(&mut self, id: sound::Id, sound: ActiveSound) -> Option<ActiveSound> {
-        let position = sound.sound.point;
+        let position = sound.sound.position;
         let channels = sound.sound.channels;
         let source_id = sound.sound.source_id();
         let sound_msg = gui::ActiveSoundMessage::Start {
@@ -382,11 +382,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             }
 
             // Mix the audio from the signal onto each of the output channels.
-            for i in 0..sound.channels {
-                // Find the absolute position of the channel.
-                let channel_point =
-                    channel_point(sound.point, i, sound.channels, sound.spread, sound.radians);
-
+            for (i, channel_point) in sound.channel_points().enumerate() {
                 // Update the dbap_speakers buffer with their distances to this sound channel.
                 dbap_speakers.clear();
                 for channel in 0..buffer.channels() {
@@ -566,8 +562,8 @@ pub fn channel_point(
         sound_point
     } else {
         let phase = channel_index as f32 / total_channels as f32;
-        let default_radians = phase * std::f32::consts::PI * 2.0;
-        let radians = (radians + default_radians) as f64;
+        let channel_radians_offset = phase * std::f32::consts::PI * 2.0;
+        let radians = (radians + channel_radians_offset) as f64;
         let rel_x = Metres(-radians.cos() * spread.0);
         let rel_y = Metres(radians.sin() * spread.0);
         let x = sound_point.x + rel_x;

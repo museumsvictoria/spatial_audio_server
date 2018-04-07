@@ -379,17 +379,6 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     let label = format!("{} to {}", min_hz_label, max_hz_label);
     let total_min_hz = utils::ms_interval_to_hz(Ms(utils::DAY_MS));
     let total_max_hz = utils::ms_interval_to_hz(Ms(1.0));
-    let skew = 1.0 / 10.0;
-
-    // Map a value from the total hz range to [0.0, 1.0] with the given skew.
-    let map_and_skew = |hz: f64| -> f64 {
-        utils::normalise_and_skew(hz, total_min_hz, total_max_hz, skew)
-    };
-
-    // Unskew the given skewed, normalised value and map it back to the hz range.
-    let map_unskewed = |skewed: f64| -> f64 {
-        utils::unskew_and_unnormalise(skewed, total_min_hz, total_max_hz, skew)
-    };
 
     let range_slider = |start, end, min, max| {
         widget::RangeSlider::new(start, end, min, max)
@@ -399,13 +388,14 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             .color(ui::color::LIGHT_CHARCOAL)
     };
 
-    for (edge, value) in range_slider(map_and_skew(min_hz), map_and_skew(max_hz), 0.0, 1.0)
+    for (edge, value) in range_slider(min_hz, max_hz, total_min_hz, total_max_hz)
+        .skew(0.1)
         .align_left()
         .label(&label)
         .down(PAD * 2.0)
         .set(ids.soundscape_editor_occurrence_rate_slider, ui)
     {
-        let hz = map_unskewed(value);
+        let hz = value as _;
         let id = selected.id;
 
         // Update the local copy.
@@ -446,25 +436,16 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     let label = format!("{} to {} sounds at once", range.min, range.max);
     let total_min_num = 0.0;
     let total_max_num = 100.0;
-    let skew = 0.5;
-
-    // Map a value from the total hz range to [0.0, 1.0] with the given skew.
-    let map_and_skew = |num: usize| {
-        utils::normalise_and_skew(num as f64, total_min_num, total_max_num, skew)
-    };
-
-    // Unskew the given skewed, normalised value and map it back to the hz range.
-    let map_unskewed = |skewed: f64| -> usize {
-        utils::unskew_and_unnormalise(skewed, total_min_num, total_max_num, skew).round() as _
-    };
-
-    for (edge, value) in range_slider(map_and_skew(range.min), map_and_skew(range.max), 0.0, 1.0)
+    let min = range.min as f64;
+    let max = range.max as f64;
+    for (edge, value) in range_slider(min, max, total_min_num, total_max_num)
+        .skew(0.5)
         .align_left()
         .label(&label)
         .down(PAD * 2.0)
         .set(ids.soundscape_editor_simultaneous_sounds_slider, ui)
     {
-        let num = map_unskewed(value);
+        let num = value as _;
         let id = selected.id;
 
         // Update the local copy.

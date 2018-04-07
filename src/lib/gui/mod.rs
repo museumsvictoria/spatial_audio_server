@@ -787,7 +787,7 @@ struct AudioMonitor {
 // The state of an active sound.
 struct ActiveSound {
     source_id: audio::source::Id,
-    position: Point2<Metres>,
+    position: audio::sound::Position,
     channels: Vec<ChannelLevels>,
 }
 
@@ -811,11 +811,11 @@ pub enum AudioMonitorMessage {
 pub enum ActiveSoundMessage {
     Start {
         source_id: audio::source::Id,
-        position: Point2<Metres>,
+        position: audio::sound::Position,
         channels: usize,
     },
     Update {
-        position: Point2<Metres>,
+        position: audio::sound::Position,
     },
     UpdateChannel {
         index: usize,
@@ -1458,8 +1458,6 @@ fn set_widgets(gui: &mut Gui) {
         let selected = state.source_editor.selected;
         let mut channel_amplitudes = [0.0f32; 16];
         for (i, (&sound_id, active_sound)) in audio_monitor.active_sounds.iter().enumerate() {
-            let radians = 0.0;
-
             // Fill the channel amplitudes.
             for (i, channel) in active_sound.channels.iter().enumerate() {
                 channel_amplitudes[i] = channel.rms.powf(0.5); // Emphasise lower amplitudes.
@@ -1478,7 +1476,7 @@ fn set_widgets(gui: &mut Gui) {
                     let (spread, channel_radians, channel_count) = {
                         let source = &state.source_editor.sources[i];
                         let spread = source.audio.spread;
-                        let channel_radians = source.audio.radians as f64;
+                        let channel_radians = source.audio.channel_radians;
                         let channel_count = source.audio.channel_count();
                         (spread, channel_radians, channel_count)
                     };
@@ -1506,11 +1504,17 @@ fn set_widgets(gui: &mut Gui) {
                             channels
                                 .audio_output
                                 .send(move |audio| {
-                                    audio.update_sound(&sound_id, move |s| s.point = new_p);
+                                    audio.update_sound(&sound_id, move |s| {
+                                        s.position.point = new_p;
+                                    });
                                 })
                                 .ok();
                         }
-                        new_p
+
+                        audio::sound::Position {
+                            point: new_p,
+                            radians: 0.0,
+                        }
                     };
 
                     (
@@ -1530,7 +1534,7 @@ fn set_widgets(gui: &mut Gui) {
                         .find(|s| s.id == active_sound.source_id)
                         .expect("No source found for active sound");
                     let spread = source.audio.spread;
-                    let channel_radians = source.audio.radians as f64;
+                    let channel_radians = source.audio.channel_radians;
                     let channel_count = source.audio.channel_count();
                     let position = active_sound.position;
                     (
@@ -1568,9 +1572,10 @@ fn set_widgets(gui: &mut Gui) {
             // sending audio.
             let mut line_index = 0;
             for channel in 0..channel_count {
-                let rad = channel_radians as f32;
+                let point = position.point;
+                let radians = position.radians + channel_radians;
                 let channel_point_m =
-                    audio::output::channel_point(position, channel, channel_count, spread_m, rad);
+                    audio::output::channel_point(point, channel, channel_count, spread_m, radians);
                 let (ch_x, ch_y) = position_metres_to_gui(channel_point_m, &state.camera);
                 let channel_amp = channel_amplitudes[channel];
                 let speakers = &state.speaker_editor.speakers;
@@ -1654,8 +1659,9 @@ fn set_widgets(gui: &mut Gui) {
                 }
             }
 
-            let (x, y) = position_metres_to_gui(position, &state.camera);
-            custom_widget::Sound::new(channel_amps, spread, radians, channel_radians)
+            let (x, y) = position_metres_to_gui(position.point, &state.camera);
+            let radians = position.radians as _;
+            custom_widget::Sound::new(channel_amps, spread, radians, channel_radians as _)
                 .color(color)
                 .x_y(x, y)
                 .w_h(side, side)

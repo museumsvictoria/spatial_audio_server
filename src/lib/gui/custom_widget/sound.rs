@@ -132,8 +132,8 @@ impl<'a> Widget for Sound<'a> {
                 (sound_x, sound_y)
             } else {
                 let phase = channel_index as f64 / total_channels as f64;
-                let default_radians = phase * std::f64::consts::PI * 2.0;
-                let radians = radians + default_radians;
+                let channel_radians_offset = phase * std::f64::consts::PI * 2.0;
+                let radians = radians + channel_radians_offset;
                 let rel_x = -radians.cos() * spread;
                 let rel_y = radians.sin() * spread;
                 let x = sound_x + rel_x;
@@ -157,8 +157,8 @@ impl<'a> Widget for Sound<'a> {
             let circle_id = state.ids.channel_circles[i];
             let line_id = state.ids.channel_lines[i];
             let label_id = state.ids.channel_labels[i];
-            let (ch_x, ch_y) =
-                channel_point((x, y), i, channels.len(), spread, radians + channel_radians);
+            let radians_sum = radians + channel_radians;
+            let (ch_x, ch_y) = channel_point((x, y), i, channels.len(), spread, radians_sum);
 
             let base_thickness = 1.0;
             let amp_thickness = amp as f64 * 10.0;
