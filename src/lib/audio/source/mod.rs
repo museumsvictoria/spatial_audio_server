@@ -148,7 +148,7 @@ impl Kind {
     /// The value used to skew the playback duration to a suitable linear range for a slider.
     ///
     /// This is dependent upon whether or not the source is potentially infinite.
-    pub fn playback_duration_skew(&self) -> f64 {
+    pub fn playback_duration_skew(&self) -> f32 {
         match *self {
             Kind::Realtime(_) => skew::PLAYBACK_DURATION_MAX,
             Kind::Wav(ref wav) => match wav.should_loop {
@@ -162,7 +162,7 @@ impl Kind {
 /// Skew some given playback duration into a "perceived" linear range.
 ///
 /// This is useful for GUI sliders and for generating durations based on some given range.
-pub fn playback_duration_skew(duration: Ms) -> f64 {
+pub fn playback_duration_skew(duration: Ms) -> f32 {
     let no_skew = 1.0;
     if duration < Ms(utils::SEC_MS) {
         return no_skew;
@@ -186,7 +186,7 @@ where
 {
     let range_duration = range.max - range.min;
     let skew = playback_duration_skew(range_duration);
-    let skewed_normalised_value = rng.gen::<f64>().powf(skew);
+    let skewed_normalised_value = rng.gen::<f64>().powf(skew as f64);
     Ms(utils::unskew_and_unnormalise(skewed_normalised_value, range.min.0, range.max.0, skew))
 }
 
@@ -439,10 +439,9 @@ impl<'a> Iterator for SignalSamples<'a> {
 /// The values used to skew parameters in order to create a linear range across their perceptual
 /// differences.
 pub mod skew {
-    pub const ATTACK: f64 = 0.5;
-    pub const RELEASE: f64 = 0.5;
-    pub const PLAYBACK_DURATION_MAX: f64 = 0.1;
-    pub const PLAYBACK_DURATION: f64 = 0.5;
+    pub const ATTACK: f32 = 0.5;
+    pub const RELEASE: f32 = 0.5;
+    pub const PLAYBACK_DURATION_MAX: f32 = 0.1;
 }
 
 pub mod default {
