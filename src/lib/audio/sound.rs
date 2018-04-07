@@ -3,6 +3,7 @@ use installation::Installation;
 use metres::Metres;
 use nannou::math::Point2;
 use std::collections::HashSet;
+use std::ops;
 use std::sync::{mpsc, Arc, Mutex};
 use std::sync::atomic::{self, AtomicBool};
 use time_calc::{Ms, Samples};
@@ -28,12 +29,26 @@ pub struct Sound {
     // TODO: This could potentially just be an actual type? `sound::Signal` that matched on
     // the source kind, stored its own stack of effects, etc?
     pub signal: source::Signal,
-    // The location of the sound within the space.
-    pub point: Point2<Metres>,
+    // The location and orientation of the sound within the space.
+    pub position: Position,
+    // A constant radians offset for the channels, provided by the sound's `Source`.
+    //
+    // When calculating the position of each channel around a `Sound`'s position, this is summed
+    // onto the sound's current orientation.
+    pub channel_radians: f32,
+    // The distance of the channel locations from the sound.
     pub spread: Metres,
-    pub radians: f32,
     // Installations in which this sound can be played.
     pub installations: Installations,
+}
+
+/// The location and orientation or a **Sound** within an exhibition.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Position {
+    /// The location within the exhibition within metres.
+    pub point: Point2<Metres>,
+    /// The orientation of the sound.
+    pub radians: f32,
 }
 
 /// A handle to a currently playing sound.
@@ -58,6 +73,13 @@ pub struct Shared {
     source_id: source::Id,
     id: Id,
     source: SourceHandle,
+}
+
+/// An iterator yielding the location of each channel around a `Sound`.
+#[derive(Clone)]
+pub struct ChannelPoints<'a> {
+    sound: &'a Sound,
+    index: usize,
 }
 
 impl Shared {
@@ -115,7 +137,7 @@ pub fn spawn_from_source(
     id: Id,
     source_id: source::Id,
     source: &Source,
-    initial_position: Point2<Metres>,
+    position: Position,
     attack_duration_frames: Samples,
     release_duration_frames: Samples,
     continuous_preview: bool,
@@ -133,9 +155,9 @@ pub fn spawn_from_source(
                 source_id,
                 wav,
                 source.spread,
-                source.radians,
+                position,
+                source.channel_radians,
                 installations,
-                initial_position,
                 attack_duration_frames,
                 release_duration_frames,
                 continuous_preview,
@@ -150,9 +172,9 @@ pub fn spawn_from_source(
                 source_id,
                 realtime,
                 source.spread,
-                source.radians,
+                position,
+                source.channel_radians,
                 installations,
-                initial_position,
                 attack_duration_frames,
                 release_duration_frames,
                 continuous_preview,
@@ -171,9 +193,9 @@ pub fn spawn_from_wav(
     source_id: source::Id,
     wav: &source::Wav,
     spread: Metres,
-    radians: f32,
+    initial_position: Position,
+    channel_radians: f32,
     installations: Installations,
-    initial_position: Point2<Metres>,
     attack_duration_frames: Samples,
     release_duration_frames: Samples,
     continuous_preview: bool,
@@ -211,9 +233,9 @@ pub fn spawn_from_wav(
         shared: shared.clone(),
         channels: wav.channels,
         signal,
-        point: initial_position,
+        position: initial_position,
+        channel_radians,
         spread,
-        radians,
         installations,
     };
 
@@ -243,9 +265,9 @@ pub fn spawn_from_realtime(
     source_id: source::Id,
     realtime: &source::Realtime,
     spread: Metres,
-    radians: f32,
+    initial_position: Position,
+    channel_radians: f32,
     installations: Installations,
-    initial_position: Point2<Metres>,
     attack_duration_frames: Samples,
     release_duration_frames: Samples,
     continuous_preview: bool,
@@ -316,9 +338,9 @@ pub fn spawn_from_realtime(
         shared: shared.clone(),
         channels: n_channels,
         signal,
-        point: initial_position,
+        position: initial_position,
+        channel_radians,
         spread,
-        radians,
         installations,
     };
 
@@ -352,6 +374,26 @@ pub fn spawn_from_realtime(
 }
 
 impl Sound {
+    /// The location of the channel at the given index.
+    ///
+    /// Returns `None` if there is no channel for the given index.
+    pub fn channel_point(&self, index: usize) -> Option<Point2<Metres>> {
+        if self.channels <= index {
+            return None;
+        }
+        let point = self.position.point;
+        let radians = self.position.radians + self.channel_radians;
+        Some(super::output::channel_point(point, index, self.channels, self.spread, radians))
+    }
+
+    /// Produce an iterator yielding the location of each channel around the sound.
+    pub fn channel_points(&self) -> ChannelPoints {
+        ChannelPoints {
+            index: 0,
+            sound: self,
+        }
+    }
+
     /// The ID of the source used to generate this sound.
     pub fn source_id(&self) -> source::Id {
         self.shared.source_id
@@ -384,6 +426,31 @@ impl From<source::Role> for Installations {
             source::Role::Soundscape(s) => Installations::Set(s.installations),
             _ => Installations::All,
         }
+    }
+}
+
+impl ops::Deref for Position {
+    type Target = Point2<Metres>;
+    fn deref(&self) -> &Self::Target {
+        &self.point
+    }
+}
+
+impl ops::DerefMut for Position {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.point
+    }
+}
+
+impl<'a> Iterator for ChannelPoints<'a> {
+    type Item = Point2<Metres>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.sound
+            .channel_point(self.index)
+            .map(|point| {
+                self.index +=1 ;
+                point
+            })
     }
 }
 

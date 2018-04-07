@@ -28,7 +28,9 @@ pub const MAX_RELEASE_DURATION: Ms = Ms(utils::MIN_MS);
 /// 2. Realtime - input from some other currently running program (e.g. MSP, Live, etc).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Source {
+    /// The kind of source (WAV or Realtime).
     pub kind: Kind,
+    /// The role of the source within the exhibition.
     #[serde(default)]
     pub role: Option<Role>,
     /// The distance with which the channels should be spread from the source position.
@@ -38,9 +40,12 @@ pub struct Source {
     pub spread: Metres,
     /// The rotation of the channels around the source position in radians.
     ///
+    /// This is a constant offset that is added to a sound's orientation when determining channel
+    /// locations during playback.
+    ///
     /// If the source only has one channel, `radians` is ignored.
     #[serde(default)]
-    pub radians: f32,
+    pub channel_radians: f32,
 }
 
 /// A **Signal** yielding interleaved samples.

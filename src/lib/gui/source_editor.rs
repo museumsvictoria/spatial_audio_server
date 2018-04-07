@@ -208,12 +208,12 @@ impl StoredSources {
                 let kind = audio::source::Kind::Wav(wav);
                 let role = None;
                 let spread = Metres(2.5);
-                let radians = 0.0;
+                let channel_radians = 0.0;
                 let audio = audio::Source {
                     kind,
                     role,
                     spread,
-                    radians,
+                    channel_radians,
                 };
                 let id = stored.next_id;
                 let source = Source { name, audio, id };
@@ -477,12 +477,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let kind = audio::source::Kind::Realtime(realtime.clone());
         let role = Default::default();
         let spread = audio::source::default::SPREAD;
-        let radians = Default::default();
+        let channel_radians = Default::default();
         let audio = audio::Source {
             kind,
             role,
             spread,
-            radians,
+            channel_radians,
         };
         let source = Source { id, name, audio };
 
@@ -735,11 +735,15 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     let attack_duration = Samples(0);
                     let release_duration = Samples(0);
                     let max_duration = None;
+                    let position = audio::sound::Position {
+                        point: preview.point.unwrap(),
+                        radians: 0.0,
+                    };
                     let _handle = audio::sound::spawn_from_source(
                         sound_id,
                         source.id,
                         &source.audio,
-                        preview.point.unwrap(),
+                        position,
                         attack_duration,
                         release_duration,
                         should_cycle,
@@ -1141,29 +1145,31 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     // Slider for controlling how channels should be rotated.
     const MIN_RADIANS: f32 = 0.0;
     const MAX_RADIANS: f32 = std::f32::consts::PI * 2.0;
-    let mut rotation = sources[i].audio.radians;
-    let label = format!("Rotate: {:.2} radians", rotation);
-    for new_rotation in slider(rotation, MIN_RADIANS, MAX_RADIANS)
+    let mut channel_radians = sources[i].audio.channel_radians;
+    let label = format!("Rotate: {:.2} radians", channel_radians);
+    for new_channel_radians in slider(channel_radians, MIN_RADIANS, MAX_RADIANS)
         .label(&label)
         .mid_right_of(ids.source_editor_selected_channel_layout_canvas)
         .align_middle_y_of(ids.source_editor_selected_channel_layout_spread)
         .set(ids.source_editor_selected_channel_layout_rotation, ui)
     {
-        rotation = new_rotation;
+        channel_radians = new_channel_radians;
 
         // Update the local copy.
-        sources[i].audio.radians = rotation;
+        sources[i].audio.channel_radians = channel_radians;
 
         // Update the soundscape copy.
         let id = sources[i].id;
         channels.soundscape.send(move |soundscape| {
-            soundscape.update_source(&id, move |source| source.radians = rotation);
+            soundscape.update_source(&id, move |source| {
+                source.channel_radians = channel_radians;
+            });
         }).expect("soundscape was closed");
 
         // Update the audio output copies.
         channels.audio_output.send(move |audio| {
             for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
-                sound.radians = rotation;
+                sound.channel_radians = channel_radians;
             }
         }).ok();
     }
@@ -1220,8 +1226,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             (0.0, 0.0)
         } else {
             let phase = i as f32 / num_channels as f32;
-            let default_radians = phase * MAX_RADIANS;
-            let radians = (rotation + default_radians) as Scalar;
+            let channel_radians_offset = phase * MAX_RADIANS;
+            let radians = (channel_radians + channel_radians_offset) as Scalar;
             let x = -radians.cos() * spread_circle_radius;
             let y = radians.sin() * spread_circle_radius;
             (x, y)

@@ -21,7 +21,7 @@ use self::movement::BoundingRect;
 pub mod group;
 mod movement;
 
-const TICK_RATE_MS: u64 = 1_000;
+const TICK_RATE_MS: u64 = 16;
 
 // The kinds of messages received by the soundscape thread.
 pub enum Message {
@@ -78,7 +78,7 @@ pub struct Source {
     pub constraints: audio::source::Soundscape,
     pub kind: audio::source::Kind,
     pub spread: Metres,
-    pub radians: f32,
+    pub channel_radians: f32,
     /// The time at which the source was last used to create a sound.
     pub last_sound_created: Option<time::Instant>,
 }
@@ -90,12 +90,11 @@ pub struct ActiveSound {
     /// The installation for which this sound was triggered.
     initial_installation: Installation,
 
-    // movement: fn(Tick) -> (Point2<Metres>, f32)
-    // TODO: We can probably remove these as we can always get them from `movement`.
-    /// The current location of the sound.
-    point: Point2<Metres>,
-    /// The direction the sound is facing in radians.
-    direction_radians: f32,
+    // movement: fn(Tick) -> audio::sound::Position,
+    // TODO: We can probably remove this as we can always get them from `movement` in a purely
+    // functional manner?
+    /// The current location and orientation of the sound.
+    position: audio::sound::Position,
 }
 
 /// The model containing all state running on the soundscape thread.
@@ -154,13 +153,13 @@ impl Source {
         };
         let kind = source.kind.clone();
         let spread = source.spread;
-        let radians = source.radians;
+        let channel_radians = source.channel_radians;
         let last_sound_created = None;
         Some(Source {
             constraints,
             kind,
             spread,
-            radians,
+            channel_radians,
             last_sound_created,
         })
     }
@@ -170,12 +169,12 @@ impl Source {
         let kind = self.kind.clone();
         let role = Some(audio::source::Role::Soundscape(self.constraints.clone()));
         let spread = self.spread;
-        let radians = self.radians;
+        let channel_radians = self.channel_radians;
         audio::Source {
             kind,
             role,
             spread,
-            radians,
+            channel_radians,
         }
     }
 }
@@ -577,7 +576,7 @@ fn tick(model: &mut Model, tick: Tick) {
     for s in active_sounds.values() {
         let source_id = s.handle.source_id();
         if let Some(source) = sources.get(&source_id) {
-            let sound_point = Point2 { x: s.point.x.0, y: s.point.y.0 };
+            let sound_point = Point2 { x: s.position.x.0, y: s.position.y.0 };
             let mut distances = source
                 .constraints
                 .installations
@@ -970,7 +969,7 @@ fn tick(model: &mut Model, tick: Tick) {
                     //
                     // 1. Installation for which we're triggereing a sound.
                     // 2. Movement properties and constraints of the source and group.
-                    let (initial_position, initial_radians) = {
+                    let initial_position = {
                         let mut rng = nannou::rand::thread_rng();
                         let left: bool = rng.gen();
                         let x_mag: f64 = rng.gen();
@@ -1001,8 +1000,8 @@ fn tick(model: &mut Model, tick: Tick) {
                             },
                         };
                         let point = Point2 { x, y };
-                        let radians = 0.0;
-                        (point, radians)
+                        let radians = rng.gen::<f32>() * 2.0 * ::std::f32::consts::PI;
+                        audio::sound::Position { point, radians }
                     };
 
                     // Generate the attack and release durations based on their source ranges.
@@ -1053,8 +1052,7 @@ fn tick(model: &mut Model, tick: Tick) {
                     let active_sound = ActiveSound {
                         handle: sound,
                         initial_installation: *installation,
-                        point: initial_position,
-                        direction_radians: initial_radians,
+                        position: initial_position,
                     };
 
                     // Store the new active sound.
@@ -1070,7 +1068,7 @@ fn tick(model: &mut Model, tick: Tick) {
                 }
             }
 
-            // TODO: Re-sort the `available_groups`.
+            // Re-sort the `available_groups` now that their suitability has been updated.
             available_groups.sort_by(|a, b| suitability(&a.suitability, &b.suitability));
         }
     }
