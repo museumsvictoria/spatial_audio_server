@@ -426,10 +426,10 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 let mut sample_index = i;
                 for frame in buffer.frames_mut() {
                     let channel_sample = unmixed_samples[sample_index];
-                    for (channel, &gain) in dbap_speaker_gains.iter().enumerate() {
+                    for (channel, &speaker_gain) in dbap_speaker_gains.iter().enumerate() {
                         // Only write to the channels that will be read by the audio device.
                         if let Some(sample) = frame.get_mut(channel) {
-                            *sample += channel_sample * gain;
+                            *sample += channel_sample * speaker_gain * sound.volume;
                         }
                     }
                     sample_index += sound.channels;

@@ -18,6 +18,8 @@ pub struct Sound {
     pub shared: Arc<Shared>,
     // The number of channels yielded by the `Sound`.
     pub channels: usize,
+    // An amplitude multiplier specified by the user for mixing the sound.
+    pub volume: f32,
     // Includes the source and pre-spatial effects.
     //
     // The signal is unique in that channels are interleaved rather than presented side-by-side in
@@ -155,6 +157,7 @@ pub fn spawn_from_source(
                 source_id,
                 wav,
                 source.spread,
+                source.volume,
                 position,
                 source.channel_radians,
                 installations,
@@ -172,6 +175,7 @@ pub fn spawn_from_source(
                 source_id,
                 realtime,
                 source.spread,
+                source.volume,
                 position,
                 source.channel_radians,
                 installations,
@@ -193,6 +197,7 @@ pub fn spawn_from_wav(
     source_id: source::Id,
     wav: &source::Wav,
     spread: Metres,
+    volume: f32,
     initial_position: Position,
     channel_radians: f32,
     installations: Installations,
@@ -232,6 +237,7 @@ pub fn spawn_from_wav(
     let sound = Sound {
         shared: shared.clone(),
         channels: wav.channels,
+        volume,
         signal,
         position: initial_position,
         channel_radians,
@@ -265,6 +271,7 @@ pub fn spawn_from_realtime(
     source_id: source::Id,
     realtime: &source::Realtime,
     spread: Metres,
+    volume: f32,
     initial_position: Position,
     channel_radians: f32,
     installations: Installations,
@@ -337,6 +344,7 @@ pub fn spawn_from_realtime(
     let sound = Sound {
         shared: shared.clone(),
         channels: n_channels,
+        volume,
         signal,
         position: initial_position,
         channel_radians,

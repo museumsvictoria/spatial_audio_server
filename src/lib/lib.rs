@@ -1,5 +1,5 @@
 // Extend the macro recursion limit to allow for many GUI widget IDs.
-#![recursion_limit = "128"]
+#![recursion_limit = "256"]
 
 #[macro_use]
 extern crate conrod;

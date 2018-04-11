@@ -207,13 +207,15 @@ impl StoredSources {
                 };
                 let kind = audio::source::Kind::Wav(wav);
                 let role = None;
-                let spread = Metres(2.5);
-                let channel_radians = 0.0;
+                let spread = audio::source::default::SPREAD;
+                let channel_radians = audio::source::default::CHANNEL_RADIANS;
+                let volume = audio::source::default::VOLUME;
                 let audio = audio::Source {
                     kind,
                     role,
                     spread,
                     channel_radians,
+                    volume,
                 };
                 let id = stored.next_id;
                 let source = Source { name, audio, id };
@@ -259,11 +261,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     const WAV_CANVAS_H: Scalar =
         100.0 + PAD + LOOP_TOGGLE_H + PAD * 4.0 + PLAYBACK_MODE_H + PAD;
     const REALTIME_CANVAS_H: Scalar = 94.0;
-    const CHANNEL_LAYOUT_CANVAS_H: Scalar = 200.0;
+    const CHANNEL_LAYOUT_H: Scalar = 200.0;
+    const COMMON_CANVAS_H: Scalar = TEXT_PAD + PAD + SLIDER_H + PAD + CHANNEL_LAYOUT_H;
         PAD + ITEM_HEIGHT * 2.0 + PAD + INSTALLATION_LIST_H + PAD;
     let kind_specific_h = WAV_CANVAS_H.max(REALTIME_CANVAS_H);
     let selected_canvas_h = ITEM_HEIGHT * 2.0 + PAD * 7.0 + PREVIEW_CANVAS_H + kind_specific_h
-        + CHANNEL_LAYOUT_CANVAS_H + INSTALLATIONS_CANVAS_H + PAD + SOUNDSCAPE_CANVAS_H;
+        + COMMON_CANVAS_H + INSTALLATIONS_CANVAS_H + PAD + SOUNDSCAPE_CANVAS_H;
     let source_editor_canvas_h = LIST_HEIGHT + ITEM_HEIGHT + selected_canvas_h;
 
     let (area, event) = collapsible_area(is_open, "Source Editor", gui.ids.side_menu)
@@ -477,12 +480,14 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let kind = audio::source::Kind::Realtime(realtime.clone());
         let role = Default::default();
         let spread = audio::source::default::SPREAD;
-        let channel_radians = Default::default();
+        let channel_radians = audio::source::default::CHANNEL_RADIANS;
+        let volume = audio::source::default::VOLUME;
         let audio = audio::Source {
             kind,
             role,
             spread,
             channel_radians,
+            volume,
         };
         let source = Source { id, name, audio };
 
@@ -1087,20 +1092,62 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     // Channel layout widgets.
     widget::Canvas::new()
         .down_from(kind_canvas_id, PAD)
-        .h(CHANNEL_LAYOUT_CANVAS_H)
+        .h(COMMON_CANVAS_H)
         .w(selected_canvas_kid_area.w())
         .pad(PAD)
         .parent(ids.source_editor_selected_canvas)
         .color(color::CHARCOAL)
-        .set(ids.source_editor_selected_channel_layout_canvas, ui);
+        .set(ids.source_editor_selected_common_canvas, ui);
 
-    // Display the immutable WAV data.
+    // Display the volume slider.
+    widget::Text::new("VOLUME")
+        .font_size(SMALL_FONT_SIZE)
+        .top_left_of(ids.source_editor_selected_common_canvas)
+        .set(ids.source_editor_selected_volume_text, ui);
+
+    let volume = sources[i].volume;
+    let label = format!("{:.3}", volume);
+    for new_volume in widget::Slider::new(volume, 0.0, 1.0)
+        .label(&label)
+        .label_font_size(SMALL_FONT_SIZE)
+        .kid_area_w_of(ids.source_editor_selected_common_canvas)
+        .h(SLIDER_H)
+        .align_left()
+        .down(PAD * 1.5)
+        .color(color::DARK_GREEN)
+        .set(ids.source_editor_selected_volume_slider, ui)
+    {
+        // Update the local copy.
+        sources[i].volume = new_volume;
+
+        // Update the soundscape copy.
+        let id = sources[i].id;
+        channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.update_source(&id, |source| source.volume = new_volume);
+            })
+            .expect("could not update source volume on soundscape");
+
+        // Update the audio output copies.
+        channels
+            .audio_output
+            .send(move |audio| {
+                audio.update_sounds_with_source(&id, move |_, sound| {
+                    sound.volume = new_volume;
+                });
+            })
+            .ok();
+    }
+
+    // Display the channel layout.
     widget::Text::new("CHANNEL LAYOUT")
         .font_size(SMALL_FONT_SIZE)
-        .top_left_of(ids.source_editor_selected_channel_layout_canvas)
+        .mid_left_of(ids.source_editor_selected_common_canvas)
+        .down(PAD * 1.5)
         .set(ids.source_editor_selected_channel_layout_text, ui);
 
-    let channel_layout_kid_area = ui.kid_area_of(ids.source_editor_selected_channel_layout_canvas)
+    let channel_layout_kid_area = ui.kid_area_of(ids.source_editor_selected_common_canvas)
         .unwrap();
     let slider_w = channel_layout_kid_area.w() / 2.0 - PAD / 2.0;
 
@@ -1118,7 +1165,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     for new_spread in slider(spread, MIN_SPREAD, MAX_SPREAD)
         .skew(2.0)
         .label(&label)
-        .mid_left_of(ids.source_editor_selected_channel_layout_canvas)
+        .mid_left_of(ids.source_editor_selected_common_canvas)
         .down(PAD * 1.5)
         .set(ids.source_editor_selected_channel_layout_spread, ui)
     {
@@ -1149,7 +1196,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     let label = format!("Rotate: {:.2} radians", channel_radians);
     for new_channel_radians in slider(channel_radians, MIN_RADIANS, MAX_RADIANS)
         .label(&label)
-        .mid_right_of(ids.source_editor_selected_channel_layout_canvas)
+        .mid_right_of(ids.source_editor_selected_common_canvas)
         .align_middle_y_of(ids.source_editor_selected_channel_layout_spread)
         .set(ids.source_editor_selected_channel_layout_rotation, ui)
     {
@@ -1189,7 +1236,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             ids.source_editor_selected_channel_layout_spread,
             PAD + CHANNEL_CIRCLE_RADIUS,
         )
-        .align_middle_x_of(ids.source_editor_selected_channel_layout_canvas)
+        .align_middle_x_of(ids.source_editor_selected_common_canvas)
         .set(ids.source_editor_selected_channel_layout_field, ui);
 
     // Circle demonstrating the actual spread distance of the channels relative to min/max.
@@ -1275,7 +1322,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .h(INSTALLATIONS_CANVAS_H)
                 .align_middle_x_of(ids.source_editor_selected_canvas)
                 .parent(ids.source_editor_selected_canvas)
-                .down_from(ids.source_editor_selected_channel_layout_canvas, PAD)
+                .down_from(ids.source_editor_selected_common_canvas, PAD)
                 .pad(PAD)
                 .color(color::CHARCOAL)
                 .set(ids.source_editor_selected_installations_canvas, ui);
