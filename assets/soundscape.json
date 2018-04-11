@@ -1,6 +1,6 @@
 {
   "groups": {
-    "5": {
+    "1": {
       "group": {
         "occurrence_rate": {
           "min": 1.0,
@@ -11,20 +11,7 @@
           "max": 10
         }
       },
-      "name": "Group F"
-    },
-    "3": {
-      "group": {
-        "occurrence_rate": {
-          "min": 1.0,
-          "max": 3600000.0
-        },
-        "simultaneous_sounds": {
-          "min": 1,
-          "max": 10
-        }
-      },
-      "name": "Group D"
+      "name": "Group B"
     },
     "4": {
       "group": {
@@ -52,7 +39,7 @@
       },
       "name": "Group C"
     },
-    "1": {
+    "3": {
       "group": {
         "occurrence_rate": {
           "min": 1.0,
@@ -63,7 +50,20 @@
           "max": 10
         }
       },
-      "name": "Group B"
+      "name": "Group D"
+    },
+    "5": {
+      "group": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group F"
     },
     "0": {
       "group": {

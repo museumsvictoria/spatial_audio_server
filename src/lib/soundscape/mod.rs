@@ -93,6 +93,7 @@ pub struct Source {
     pub kind: audio::source::Kind,
     pub spread: Metres,
     pub channel_radians: f32,
+    pub volume: f32,
     /// The time at which the source was last used to create a sound.
     pub last_sound_created: Option<time::Instant>,
 }
@@ -192,12 +193,14 @@ impl Source {
         let kind = source.kind.clone();
         let spread = source.spread;
         let channel_radians = source.channel_radians;
+        let volume = source.volume;
         let last_sound_created = None;
         Some(Source {
             constraints,
             kind,
             spread,
             channel_radians,
+            volume,
             last_sound_created,
         })
     }
@@ -208,11 +211,13 @@ impl Source {
         let role = Some(audio::source::Role::Soundscape(self.constraints.clone()));
         let spread = self.spread;
         let channel_radians = self.channel_radians;
+        let volume = self.volume;
         audio::Source {
             kind,
             role,
             spread,
             channel_radians,
+            volume,
         }
     }
 }
@@ -462,7 +467,6 @@ pub fn spawn(
         .stack_size(512)
         .spawn(move || {
             let mut last = time::Instant::now();
-            let mut last_tick_attempt = last;
             let mut playback_duration = time::Duration::from_secs(0);
             loop {
                 thread::sleep(time::Duration::from_millis(TICK_RATE_MS));

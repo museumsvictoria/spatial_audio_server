@@ -46,6 +46,9 @@ pub struct Source {
     /// If the source only has one channel, `radians` is ignored.
     #[serde(default = "default::channel_radians")]
     pub channel_radians: f32,
+    /// An amplitude modulator specified by the user via the GUI.
+    #[serde(default = "default::volume")]
+    pub volume: f32,
 }
 
 /// A **Signal** yielding interleaved samples.
@@ -81,14 +84,14 @@ pub struct Duration {
     current_frame: Samples,
 }
 
-/// An iterator producing the gain modifier for an attack envelope.
+/// An iterator producing the volume modifier for an attack envelope.
 #[derive(Clone, Debug)]
 pub struct Attack {
     duration_frames: Samples,
     current_frame: Samples,
 }
 
-/// An iterator producing the gain modifier for a release envelope.
+/// An iterator producing the volume modifier for a release envelope.
 #[derive(Clone, Debug)]
 pub struct Release {
     duration_frames: Samples,
@@ -457,6 +460,7 @@ pub mod default {
     pub const SPREAD: Metres = Metres(2.5);
     // Rotate the channel radians 90deg so that stereo channels are to the side by default.
     pub const CHANNEL_RADIANS: f32 = ::std::f32::consts::PI * 0.25;
+    pub const VOLUME: f32 = 0.6;
     pub const OCCURRENCE_RATE: Range<Ms> = Range { min: Ms(500.0), max: Ms(HR_MS as _) };
     pub const SIMULTANEOUS_SOUNDS: Range<usize> = Range { min: 0, max: 1 };
     // Assume that the user wants to play back the sound endlessly at first.
@@ -473,6 +477,10 @@ pub mod default {
 
     pub fn channel_radians() -> f32 {
         CHANNEL_RADIANS
+    }
+
+    pub fn volume() -> f32 {
+        VOLUME
     }
 
     pub fn occurrence_rate() -> Range<Ms> {

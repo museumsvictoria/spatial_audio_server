@@ -19,12 +19,12 @@
               "Cacophony"
             ],
             "groups": [
-              5,
-              2,
               3,
               1,
               4,
-              0
+              5,
+              0,
+              2
             ],
             "occurrence_rate": {
               "min": 229.79721418514289,
@@ -49,7 +49,8 @@
           }
         },
         "spread": 2.5,
-        "channel_radians": 1.57
+        "channel_radians": 1.57,
+        "volume": 0.6
       },
       "id": 1
     },
@@ -68,7 +69,8 @@
         },
         "role": null,
         "spread": 2.5,
-        "channel_radians": 1.57
+        "channel_radians": 1.57,
+        "volume": 0.6
       },
       "id": 4
     },
@@ -91,12 +93,12 @@
               "Cacophony"
             ],
             "groups": [
-              5,
-              2,
-              0,
-              4,
+              3,
               1,
-              3
+              0,
+              2,
+              5,
+              4
             ],
             "occurrence_rate": {
               "min": 500.0,
@@ -120,8 +122,9 @@
             }
           }
         },
-        "spread": 2.5,
-        "channel_radians": 1.57
+        "spread": 2.431084632873535,
+        "channel_radians": 1.57,
+        "volume": 0.6003255
       },
       "id": 0
     },
@@ -140,7 +143,8 @@
         },
         "role": null,
         "spread": 2.5,
-        "channel_radians": 1.57
+        "channel_radians": 1.57,
+        "volume": 0.6
       },
       "id": 5
     },
@@ -163,12 +167,12 @@
               "Cacophony"
             ],
             "groups": [
-              0,
-              1,
               4,
-              5,
               2,
-              3
+              5,
+              1,
+              3,
+              0
             ],
             "occurrence_rate": {
               "min": 500.0,
@@ -193,7 +197,8 @@
           }
         },
         "spread": 2.5,
-        "channel_radians": 1.57
+        "channel_radians": 1.57,
+        "volume": 0.6
       },
       "id": 2
     },
@@ -212,7 +217,8 @@
         },
         "role": null,
         "spread": 2.5,
-        "channel_radians": 1.57
+        "channel_radians": 1.57,
+        "volume": 0.6
       },
       "id": 3
     },
@@ -230,7 +236,8 @@
         },
         "role": null,
         "spread": 2.5,
-        "channel_radians": 1.57
+        "channel_radians": 1.57,
+        "volume": 0.6
       },
       "id": 6
     }
