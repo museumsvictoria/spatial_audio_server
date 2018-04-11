@@ -44,7 +44,7 @@ pub struct Source {
     /// locations during playback.
     ///
     /// If the source only has one channel, `radians` is ignored.
-    #[serde(default)]
+    #[serde(default = "default::channel_radians")]
     pub channel_radians: f32,
 }
 
@@ -453,7 +453,10 @@ pub mod default {
     use metres::Metres;
     use time_calc::Ms;
     use utils::{HR_MS, Range};
+
     pub const SPREAD: Metres = Metres(2.5);
+    // Rotate the channel radians 90deg so that stereo channels are to the side by default.
+    pub const CHANNEL_RADIANS: f32 = ::std::f32::consts::PI * 0.25;
     pub const OCCURRENCE_RATE: Range<Ms> = Range { min: Ms(500.0), max: Ms(HR_MS as _) };
     pub const SIMULTANEOUS_SOUNDS: Range<usize> = Range { min: 0, max: 1 };
     // Assume that the user wants to play back the sound endlessly at first.
@@ -466,6 +469,10 @@ pub mod default {
 
     pub fn spread() -> Metres {
         SPREAD
+    }
+
+    pub fn channel_radians() -> f32 {
+        CHANNEL_RADIANS
     }
 
     pub fn occurrence_rate() -> Range<Ms> {

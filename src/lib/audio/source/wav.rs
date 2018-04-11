@@ -206,14 +206,19 @@ impl From<CycledSampleStream> for Signal {
 impl Iterator for SampleStream {
     type Item = f32;
     fn next(&mut self) -> Option<Self::Item> {
-        const FAILED_READ: &str = "failed to read sample in WAV file";
-
         // A macro to simplify requesting and returning the next sample.
         macro_rules! next_sample {
             ($T:ty) => {{
-                if let Some(sample) = self.reader.samples::<$T>().next() {
-                    self.sample_index += 1;
-                    return Some(sample.expect(FAILED_READ).to_sample::<f32>());
+                match self.reader.samples::<$T>().next() {
+                    Some(Err(err)) => {
+                        eprintln!("failed to read sample: {}", err);
+                        return None;
+                    },
+                    Some(Ok(sample)) => {
+                        self.sample_index += 1;
+                        return Some(sample.to_sample::<f32>());
+                    },
+                    None => (),
                 }
             }};
         }
@@ -224,10 +229,12 @@ impl Iterator for SampleStream {
                 (SampleFormat::Int, 8) => next_sample!(i8),
                 (SampleFormat::Int, 16) => next_sample!(i16),
                 (SampleFormat::Int, 32) => next_sample!(i32),
-                _ => panic!(
-                    "Unsupported bit depth {} - currently only 8, 16 and 32 are supported",
-                    self.spec.bits_per_sample
-                ),
+                _ => {
+                    eprintln!(
+                        "Unsupported bit depth {} - currently only 8, 16 and 32 are supported",
+                        self.spec.bits_per_sample
+                    );
+                },
             }
             return None;
         }

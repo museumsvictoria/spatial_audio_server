@@ -3,43 +3,57 @@ use installation::{self, Installation};
 use metres::Metres;
 use mindtree_utils::noise_walk;
 use nannou;
-use nannou::rand::{Rng, SeedableRng, XorShiftRng};
 use nannou::prelude::*;
+use nannou::rand::{Rng, SeedableRng, XorShiftRng};
 use std::cmp;
 use std::collections::{HashMap, HashSet};
 use std::ops;
-use std::sync::{atomic, mpsc, Arc, Mutex};
 use std::sync::atomic::AtomicBool;
+use std::sync::{atomic, mpsc, Arc, Mutex};
 use std::thread;
 use std::time;
 use time_calc::Ms;
-use utils::{self, Range, Seed};
+use utils::{self, duration_to_secs, Range, Seed};
 
 pub use self::group::Group;
-use self::movement::BoundingRect;
+use self::movement::{BoundingRect, Movement};
 
 pub mod group;
 mod movement;
 
 const TICK_RATE_MS: u64 = 16;
 
-// The kinds of messages received by the soundscape thread.
+type Installations = HashMap<Installation, installation::Soundscape>;
+type Groups = HashMap<group::Id, Group>;
+type Sources = HashMap<audio::source::Id, Source>;
+type Speakers = HashMap<audio::speaker::Id, Speaker>;
+type GroupsLastUsed = HashMap<group::Id, time::Instant>;
+type SourcesLastUsed = HashMap<audio::source::Id, time::Instant>;
+type InstallationAreas = HashMap<Installation, movement::Area>;
+type InstallationSpeakers = HashMap<Installation, Vec<audio::speaker::Id>>;
+type ActiveSounds = HashMap<audio::sound::Id, ActiveSound>;
+type ActiveSoundPositions = HashMap<audio::sound::Id, ActiveSoundPosition>;
+type ActiveSoundsPerInstallation = HashMap<Installation, Vec<audio::sound::Id>>;
+type TargetSoundsPerInstallation = HashMap<Installation, usize>;
+
+/// The kinds of messages received by the soundscape thread.
 pub enum Message {
-    // Updates to the soundscape state from other threads.
+    /// Updates to the soundscape state from other threads.
     Update(UpdateFn),
-    // Steps forward the soundscape.
+    /// Steps forward the soundscape.
     Tick(Tick),
-    // Play all active sounds.
+    /// Play all active sounds.
     Play,
-    // Pause all active sounds.
+    /// Pause all active sounds.
     Pause,
-    // Stop running the soundscape and exit.
+    /// Stop running the soundscape and exit.
     Exit,
 }
 
 #[derive(Copy, Clone, Debug)]
 pub struct Tick {
     instant: time::Instant,
+    /// The time that accumulated since the last tick occurred only while playback was enabled.
     since_last_tick: time::Duration,
     /// The total duration over which the soundscape has played.
     ///
@@ -87,13 +101,20 @@ pub struct Source {
 pub struct ActiveSound {
     /// The handle associated with this sound.
     handle: audio::sound::Handle,
-    /// The installation for which this sound was triggered.
-    initial_installation: Installation,
-
+    /// State related to active sound's assigned movement.
+    movement: Movement,
     // movement: fn(Tick) -> audio::sound::Position,
     // TODO: We can probably remove this as we can always get them from `movement` in a purely
     // functional manner?
-    /// The current location and orientation of the sound.
+    // /// The current location and orientation of the sound.
+    // position: audio::sound::Position,
+}
+
+// The current positioning of an active sound.
+struct ActiveSoundPosition {
+    // The source from which this active sound was produced.
+    source_id: audio::source::Id,
+    // The current location of the active sound.
     position: audio::sound::Position,
 }
 
@@ -104,25 +125,25 @@ pub struct Model {
     /// The soundscape's deterministic source of randomness.
     seed: Seed,
     /// All installations within the exhibition.
-    installations: HashMap<Installation, installation::Soundscape>,
+    installations: Installations,
     /// Constraints for collections of sources.
-    groups: HashMap<group::Id, Group>,
+    groups: Groups,
     /// All sources available to the soundscape for producing audio.
-    sources: HashMap<audio::source::Id, Source>,
+    sources: Sources,
     /// All speakers within the exhibition.
-    speakers: HashMap<audio::speaker::Id, Speaker>,
+    speakers: Speakers,
     /// The moment at which each `Group` was last used to spawn a sound.
-    groups_last_used: HashMap<group::Id, time::Instant>,
+    groups_last_used: GroupsLastUsed,
     /// The moment at which each `Source` was last used to spawn a sound.
-    sources_last_used: HashMap<audio::source::Id, time::Instant>,
+    sources_last_used: SourcesLastUsed,
 
     /// All sounds currently being played that were spawned by the soundscape thread.
-    active_sounds: HashMap<audio::sound::Id, ActiveSound>,
+    active_sounds: ActiveSounds,
 
     /// Tracks the speakers assignned to each installation. Updated at the beginning of each tick.
-    installation_speakers: HashMap<Installation, Vec<audio::speaker::Id>>,
+    installation_speakers: InstallationSpeakers,
     /// This tracks the bounding area for each installation at the beginning of each tick.
-    installation_areas: HashMap<Installation, movement::Area>,
+    installation_areas: InstallationAreas,
     /// A handle for submitting new sounds to the input stream.
     audio_input_stream: audio::input::Stream,
     /// A handle for submitting new sounds to the output stream.
@@ -131,6 +152,23 @@ pub struct Model {
     sound_id_gen: audio::sound::IdGenerator,
     // A handle to the ticker thread.
     tick_thread: thread::JoinHandle<()>,
+}
+
+impl ActiveSound {
+    /// The current location and orientation of the active sound.
+    pub fn position(&self) -> audio::sound::Position {
+        self.movement.position()
+    }
+
+    /// A simplified view of the active sound's position.
+    fn active_sound_position(&self) -> ActiveSoundPosition {
+        let position = self.position();
+        let source_id = self.handle.source_id();
+        ActiveSoundPosition {
+            source_id,
+            position
+        }
+    }
 }
 
 impl Speaker {
@@ -205,7 +243,10 @@ impl Soundscape {
         let result = !self.is_playing() != false;
         let msg = Message::Pause;
         self.is_playing.store(false, atomic::Ordering::Relaxed);
-        self.tx.send(msg).map(|_| result).map_err(|_| mpsc::SendError(()))
+        self.tx
+            .send(msg)
+            .map(|_| result)
+            .map_err(|_| mpsc::SendError(()))
     }
 
     /// Plays the soundscape.
@@ -213,7 +254,10 @@ impl Soundscape {
         let result = self.is_playing() != true;
         let msg = Message::Play;
         self.is_playing.store(true, atomic::Ordering::Relaxed);
-        self.tx.send(msg).map(|_| result).map_err(|_| mpsc::SendError(()))
+        self.tx
+            .send(msg)
+            .map(|_| result)
+            .map_err(|_| mpsc::SendError(()))
     }
 
     /// Stops the soundscape thread and returns the raw handle to its thread.
@@ -229,8 +273,7 @@ impl Model {
         &mut self,
         installation: Installation,
         state: installation::Soundscape,
-    ) -> Option<installation::Soundscape>
-    {
+    ) -> Option<installation::Soundscape> {
         self.installations.insert(installation, state)
     }
 
@@ -246,7 +289,7 @@ impl Model {
             Some(i) => {
                 update(i);
                 true
-            },
+            }
         }
     }
 
@@ -267,7 +310,7 @@ impl Model {
             Some(s) => {
                 update(s);
                 true
-            },
+            }
         }
     }
 
@@ -293,7 +336,7 @@ impl Model {
             Some(s) => {
                 update(s);
                 true
-            },
+            }
         }
     }
 
@@ -319,13 +362,14 @@ impl Model {
             Some(s) => {
                 update(s);
                 true
-            },
+            }
         }
     }
 
     /// Remove a source from the inner hashmap.
     pub fn remove_source(&mut self, id: &audio::source::Id) -> Option<Source> {
-        self.active_sounds.retain(|_, s| *id != s.handle.source_id());
+        self.active_sounds
+            .retain(|_, s| *id != s.handle.source_id());
         self.sources.remove(id)
     }
 
@@ -415,23 +459,28 @@ pub fn spawn(
     let tick_is_playing = is_playing.clone();
     let tick_thread = thread::Builder::new()
         .name("soundscape_ticker".into())
-        .stack_size(512) // 512 bytes - a tiny stack for a tiny job.
+        .stack_size(512)
         .spawn(move || {
             let mut last = time::Instant::now();
+            let mut last_tick_attempt = last;
             let mut playback_duration = time::Duration::from_secs(0);
             loop {
                 thread::sleep(time::Duration::from_millis(TICK_RATE_MS));
                 let instant = time::Instant::now();
                 let since_last_tick = instant.duration_since(last);
+                last = instant;
                 if !tick_is_playing.load(atomic::Ordering::Relaxed) {
                     continue;
                 }
                 playback_duration += since_last_tick;
-                let tick = Tick { instant, since_last_tick, playback_duration };
+                let tick = Tick {
+                    instant,
+                    since_last_tick,
+                    playback_duration,
+                };
                 if tick_tx.send(Message::Tick(tick)).is_err() {
                     break;
                 }
-                last = instant;
             }
         })
         .unwrap();
@@ -471,7 +520,11 @@ pub fn spawn(
         .spawn(move || run(model, rx))
         .unwrap();
     let thread = Arc::new(Mutex::new(Some(thread)));
-    Soundscape { tx, thread, is_playing }
+    Soundscape {
+        tx,
+        thread,
+        is_playing,
+    }
 }
 
 // A blocking function that is run on the unique soundscape thread (called by spawn).
@@ -493,7 +546,7 @@ fn run(mut model: Model, msg_rx: mpsc::Receiver<Message>) {
                 for sound in model.active_sounds.values() {
                     sound.handle.play();
                 }
-            },
+            }
 
             // Pause all active sounds.
             Message::Pause => {
@@ -503,6 +556,147 @@ fn run(mut model: Model, msg_rx: mpsc::Receiver<Message>) {
             }
         }
     }
+}
+
+// Convert a map of active sounds to a map of data only relevant to their positions.
+fn active_sound_positions(active_sounds: &ActiveSounds) -> ActiveSoundPositions {
+    active_sounds.iter()
+        .map(|(&id, sound)| (id, sound.active_sound_position()))
+        .collect()
+}
+
+// Find the sound's closest assigned installation.
+//
+// Returns `None` if:
+//
+// - installation_areas is empty
+// - no installations are assigned
+// - there are no sources for the sound's current source `Id`
+fn closest_assigned_installation(
+    sound: &ActiveSoundPosition,
+    sources: &Sources,
+    installation_areas: &InstallationAreas,
+) -> Option<Installation>
+{
+    if let Some(source) = sources.get(&sound.source_id) {
+        let sound_point = Point2 {
+            x: sound.position.x.0,
+            y: sound.position.y.0,
+        };
+        let mut distances = source
+            .constraints
+            .installations
+            .iter()
+            .filter_map(|&i| installation_areas.get(&i).map(|a| (i, a)))
+            .map(|(i, a)| {
+                let centroid = Point2 {
+                    x: a.centroid.x.0,
+                    y: a.centroid.y.0,
+                };
+                (i, sound_point.distance2(centroid))
+            });
+        if let Some((i, dist)) = distances.next() {
+            let (closest_installation, _) = distances.fold(
+                (i, dist),
+                |(ia, min), (ib, dist)| {
+                    if dist < min {
+                        (ib, dist)
+                    } else {
+                        (ia, min)
+                    }
+                },
+            );
+            return Some(closest_installation);
+        }
+    }
+    None
+}
+
+// Group the active sounds via the installation they are currently closest to.
+fn active_sounds_per_installation(
+    active_sound_positions: &ActiveSoundPositions,
+    sources: &Sources,
+    installation_areas: &InstallationAreas,
+) -> ActiveSoundsPerInstallation
+{
+    let mut active_sounds_per_installation = ActiveSoundsPerInstallation::default();
+    for (&sound_id, sound) in active_sound_positions.iter() {
+        if let Some(inst) = closest_assigned_installation(sound, sources, installation_areas) {
+            active_sounds_per_installation
+                .entry(inst)
+                .or_insert_with(Vec::new)
+                .push(sound_id);
+        }
+    }
+    active_sounds_per_installation
+}
+
+// Collect the necessary data for each installation relevant to the agent.
+fn agent_installation_data(
+    source_id: audio::source::Id,
+    sources: &Sources,
+    installations: &Installations,
+    installation_areas: &InstallationAreas,
+    target_sounds_per_installation: &TargetSoundsPerInstallation,
+    active_sound_positions: &ActiveSoundPositions,
+) -> movement::agent::InstallationDataMap
+{
+    // We can't find installation data if there is no source for the given id.
+    let source = match sources.get(&source_id) {
+        None => {
+            eprintln!("`agent_installation_data`: no source found for given `source::Id`");
+            return Default::default();
+        },
+        Some(s) => s,
+    };
+
+    // Group the sounds by the installations that they are closest to.
+    let active_sounds_per_installation =
+        active_sounds_per_installation(active_sound_positions, sources, installation_areas);
+
+    // For each assigned installation, collect the necessary installation data.
+    //
+    // Installations that have no assigned speakers (and in turn no area) are discluded.
+    source
+        .installations
+        .iter()
+        .filter_map(|inst| {
+            let area = match installation_areas.get(inst) {
+                None => return None,
+                Some(area) => area.clone()
+            };
+            let range = &installations[inst].simultaneous_sounds;
+            let current_num_sounds = active_sounds_per_installation
+                .get(inst)
+                .map(|sounds| {
+                    sounds
+                        .iter()
+                        .filter(|s| active_sound_positions[s].source_id == source_id)
+                        .count()
+                })
+                .unwrap_or(0);
+            let target_num_sounds = target_sounds_per_installation[inst];
+            let num_sounds_needed_to_reach_target =
+                target_num_sounds as i32 - current_num_sounds as i32;
+            let num_sounds_needed = if current_num_sounds < range.min {
+                range.min - current_num_sounds
+            } else {
+                0
+            };
+            let num_available_sounds = if current_num_sounds < range.max {
+                range.max - current_num_sounds
+            } else {
+                0
+            };
+            let data = movement::agent::InstallationData {
+                area,
+                num_sounds_needed_to_reach_target,
+                num_sounds_needed,
+                num_available_sounds,
+            };
+            Some((*inst, data))
+        })
+        .collect()
 }
 
 // Called each time the soundscape thread receives a tick.
@@ -525,8 +719,6 @@ fn tick(model: &mut Model, tick: Tick) {
         ..
     } = *model;
 
-    println!("SOUNDSCAPE TICK");
-
     // Update the map from installations to speakers.
     for speakers in installation_speakers.values_mut() {
         speakers.clear();
@@ -545,61 +737,20 @@ fn tick(model: &mut Model, tick: Tick) {
     // An installations `Area` is determined via the assigned speaker locations.
     installation_areas.clear();
     for (&installation, installation_speakers) in installation_speakers {
-        let mut iter = installation_speakers.iter();
-        let first_id = match iter.next() {
+        let speaker_points = || installation_speakers.iter().map(|id| speakers[id].point);
+        let bounding_rect = match BoundingRect::from_points(speaker_points()) {
             None => continue,
-            Some(first) => first,
+            Some(rect) => rect,
         };
-        let init = BoundingRect::from_point(speakers[first_id].point);
-        let bounding_rect = iter.fold(init, |b, id| b.with_point(speakers[id].point));
-        let centroid = {
-            let points = installation_speakers.iter()
-                .map(|id| speakers[id].point)
-                .map(|p| Point2 { x: p.x.0, y: p.y.0 });
-            nannou::geom::centroid(points)
-                .map(|p| Point2 { x: Metres(p.x), y: Metres(p.y) })
-                .unwrap()
+        let centroid = match nannou::geom::centroid(speaker_points().map(|p| pt2(p.x.0, p.y.0))) {
+            None => continue,
+            Some(p) => pt2(Metres(p.x), Metres(p.y)),
         };
-        let area = movement::Area { bounding_rect, centroid };
+        let area = movement::Area {
+            bounding_rect,
+            centroid,
+        };
         installation_areas.insert(installation, area);
-    }
-
-    // TODO: Update the movement of each active sound.
-
-
-    // For each installation, check the number of sounds that are playing.
-    //
-    // Sound/Installation associations are determined by finding the installation's centroid that
-    // is closest to each sound (as long as that installation is one of those assigned to the
-    // sound's source).
-    let mut active_sounds_per_installation: HashMap<Installation, Vec<audio::sound::Id>> = HashMap::default();
-    for s in active_sounds.values() {
-        let source_id = s.handle.source_id();
-        if let Some(source) = sources.get(&source_id) {
-            let sound_point = Point2 { x: s.position.x.0, y: s.position.y.0 };
-            let mut distances = source
-                .constraints
-                .installations
-                .iter()
-                .filter_map(|&i| installation_areas.get(&i).map(|a| (i, a)))
-                .map(|(i, a)| {
-                    let centroid = Point2 { x: a.centroid.x.0, y: a.centroid.y.0 };
-                    (i, sound_point.distance2(centroid))
-                });
-            if let Some((i, dist)) = distances.next() {
-                let (closest_installation, _) = distances.fold((i, dist), |(ia, min), (ib, dist)| {
-                    if dist < min {
-                        (ib, dist)
-                    } else {
-                        (ia, min)
-                    }
-                });
-                active_sounds_per_installation
-                    .entry(closest_installation)
-                    .or_insert_with(Vec::new)
-                    .push(s.id());
-            }
-        }
     }
 
     // A unique, constant seed associated with the installation.
@@ -614,7 +765,7 @@ fn tick(model: &mut Model, tick: Tick) {
     //
     // We can determine this in a purely functional manner by using the playback duration as the
     // phase for a noise_walk signal.
-    let mut target_sounds_per_installation: HashMap<Installation, usize> = HashMap::default();
+    let mut target_sounds_per_installation: TargetSoundsPerInstallation = HashMap::default();
     for (&installation, constraints) in installations {
         let target_num_sounds = {
             let playback_secs = duration_to_secs(&tick.playback_duration);
@@ -638,23 +789,64 @@ fn tick(model: &mut Model, tick: Tick) {
         target_sounds_per_installation.insert(installation, target_num_sounds);
     }
 
+    // TODO: Update the movement of each active sound.
+    {
+        let mut rng = nannou::rand::thread_rng();
+        let active_sound_positions = active_sound_positions(active_sounds);
+        for (&sound_id, sound) in active_sounds.iter_mut() {
+            match sound.movement {
+                Movement::Agent(ref mut agent) => {
+                    let source_id = sound.handle.source_id();
+                    let installation_data = agent_installation_data(
+                        source_id,
+                        sources,
+                        installations,
+                        installation_areas,
+                        &target_sounds_per_installation,
+                        &active_sound_positions,
+                    );
+                    agent.update(&mut rng, &tick.since_last_tick, &installation_data);
+                },
+            }
+
+            // Update the position of the sounds on the audio thread.
+            //
+            // The audio thread will then notify the GUI of the new position upon the next rendered
+            // buffer.
+            let position = sound.position();
+            audio_output_stream
+                .send(move |audio| {
+                    audio.update_sound(&sound_id, move |sound| {
+                        sound.position = position;
+                    });
+                })
+                .ok();
+        }
+    }
+
+    // For each installation, check the number of sounds that are playing.
+    //
+    // Sound/Installation associations are determined by finding the installation's centroid that
+    // is closest to each sound (as long as that installation is one of those assigned to the
+    // sound's source).
+    let active_sounds_per_installation = {
+        let active_sound_positions = active_sound_positions(active_sounds);
+        active_sounds_per_installation(&active_sound_positions, sources, installation_areas)
+    };
+
     // Determine how many sounds to add (if any) by finding the difference between the target
     // number and actual number.
     for (installation, &num_target_sounds) in &target_sounds_per_installation {
-        println!("\tInstallation: {:?}", installation);
-        println!("\t\tnum_target_sounds: {}", num_target_sounds);
         let num_active_sounds = match active_sounds_per_installation.get(installation) {
             None => 0,
             Some(sounds) => sounds.len(),
         };
-        println!("\t\tnum_active_sounds: {}", num_active_sounds);
         let sounds_to_add = if num_target_sounds > num_active_sounds {
             num_target_sounds - num_active_sounds
         } else {
             // If there are no sounds to add, move on to the next installation.
             continue;
         };
-        println!("\t\tsounds_to_add: {}", sounds_to_add);
 
         // The movement area associated with this installation.
         //
@@ -663,9 +855,6 @@ fn tick(model: &mut Model, tick: Tick) {
             Some(area) => area,
             None => continue,
         };
-
-        println!("\t\tarea.rect: {:?}", installation_area.bounding_rect);
-        println!("\t\tarea.centroid: {:?}", installation_area.centroid);
 
         #[derive(Debug)]
         struct Suitability {
@@ -697,7 +886,7 @@ fn tick(model: &mut Model, tick: Tick) {
         impl Suitability {
             // This is called when the group or source that owns these suitability parameters have
             // been used as a source for a new sound. Using this we can incrementally update the
-            // list of 
+            // list of
             //
             // Returns `true` if the source or group that owns these suitability parameters should
             // be removed from the list of available groups/sounds. This will always be the case if
@@ -729,7 +918,7 @@ fn tick(model: &mut Model, tick: Tick) {
         // Collect available groups of sounds (based on occurrence rate and simultaneous sounds).
         let mut available_groups: Vec<AvailableGroup> = groups
             .iter()
-            .filter_map(|(group_id, group) | {
+            .filter_map(|(group_id, group)| {
                 // The number of active sounds in this installation sourced from this group.
                 let num_active_sounds = active_sounds_per_installation
                     .get(installation)
@@ -765,14 +954,18 @@ fn tick(model: &mut Model, tick: Tick) {
                 // Find the duration since the last time a sound was spawned using a source from
                 // this group.
                 let timing = if let Some(&last_used) = groups_last_used.get(group_id) {
-                    let duration_since_last: time::Duration = tick.instant.duration_since(last_used);
-                    let duration_since_last_ms = Ms(duration_to_secs(&duration_since_last) * 1_000.0);
-                    let duration_since_min_interval = if duration_since_last_ms > group.occurrence_rate.min {
-                        duration_since_last_ms - group.occurrence_rate.min
-                    } else {
-                        return None;
-                    };
-                    let duration_until_sound_needed = group.occurrence_rate.max - duration_since_last_ms;
+                    let duration_since_last: time::Duration =
+                        tick.instant.duration_since(last_used);
+                    let duration_since_last_ms =
+                        Ms(duration_to_secs(&duration_since_last) * 1_000.0);
+                    let duration_since_min_interval =
+                        if duration_since_last_ms > group.occurrence_rate.min {
+                            duration_since_last_ms - group.occurrence_rate.min
+                        } else {
+                            return None;
+                        };
+                    let duration_until_sound_needed =
+                        group.occurrence_rate.max - duration_since_last_ms;
                     Some(Timing {
                         duration_since_min_interval,
                         duration_until_sound_needed,
@@ -796,11 +989,6 @@ fn tick(model: &mut Model, tick: Tick) {
             })
             .collect();
 
-        println!("\t\tavailable groups: {:?}", available_groups.len());
-        for g in &available_groups {
-            println!("\t\t\t{:?}", g);
-        }
-
         // If there are no available groups, go to the next installation.
         if available_groups.is_empty() {
             continue;
@@ -809,17 +997,13 @@ fn tick(model: &mut Model, tick: Tick) {
         // Order the two sets or properties by their suitability for use as the next sound.
         fn suitability(a: &Suitability, b: &Suitability) -> cmp::Ordering {
             match b.num_sounds_needed.cmp(&a.num_sounds_needed) {
-                cmp::Ordering::Equal => {
-                    match (&a.timing, &b.timing) {
-                        (&None, &Some(_)) => cmp::Ordering::Less,
-                        (&Some(_), &None) => cmp::Ordering::Greater,
-                        (&None, &None) => cmp::Ordering::Equal,
-                        (&Some(ref a), &Some(ref b)) => {
-                            a.duration_until_sound_needed
-                                .partial_cmp(&b.duration_until_sound_needed)
-                                .expect("could not compare `duration_until_sound_needed`")
-                        },
-                    }
+                cmp::Ordering::Equal => match (&a.timing, &b.timing) {
+                    (&None, &Some(_)) => cmp::Ordering::Less,
+                    (&Some(_), &None) => cmp::Ordering::Greater,
+                    (&None, &None) => cmp::Ordering::Equal,
+                    (&Some(ref a), &Some(ref b)) => a.duration_until_sound_needed
+                        .partial_cmp(&b.duration_until_sound_needed)
+                        .expect("could not compare `duration_until_sound_needed`"),
                 },
                 ord => ord,
             }
@@ -836,24 +1020,23 @@ fn tick(model: &mut Model, tick: Tick) {
         // Each time a sound is added the available group from which it was sourced should be
         // updated and the vec should be re-sorted.
         for _ in 0..sounds_to_add {
-            println!("\t\tAdding Sounds...");
             {
                 // The active sounds for the installation.
-                let installation_active_sounds = match active_sounds_per_installation.get(installation) {
-                    None => &[],
-                    Some(s) => &s[..],
-                };
+                let installation_active_sounds =
+                    match active_sounds_per_installation.get(installation) {
+                        None => &[],
+                        Some(s) => &s[..],
+                    };
 
                 // Retrieve the front group if there is still one.
                 let group_index: usize = match available_groups.is_empty() {
                     true => continue,
                     false => {
-                        let num_equal = utils::count_equal(
-                            &available_groups,
-                            |a, b| suitability(&a.suitability, &b.suitability),
-                        );
+                        let num_equal = utils::count_equal(&available_groups, |a, b| {
+                            suitability(&a.suitability, &b.suitability)
+                        });
                         nannou::rand::thread_rng().gen_range(0, num_equal)
-                    },
+                    }
                 };
 
                 #[derive(Debug)]
@@ -902,13 +1085,16 @@ fn tick(model: &mut Model, tick: Tick) {
                         // from this group.
                         let timing = if let Some(&last_use) = sources_last_used.get(source_id) {
                             let duration_since_last = tick.instant.duration_since(last_use);
-                            let duration_since_last_ms = Ms(duration_to_secs(&duration_since_last) * 1_000.0);
-                            let duration_since_min_interval = if duration_since_last_ms > source.occurrence_rate.min {
-                                duration_since_last_ms - source.occurrence_rate.min
-                            } else {
-                                return None;
-                            };
-                            let duration_until_sound_needed = source.occurrence_rate.max - duration_since_last_ms;
+                            let duration_since_last_ms =
+                                Ms(duration_to_secs(&duration_since_last) * 1_000.0);
+                            let duration_since_min_interval =
+                                if duration_since_last_ms > source.occurrence_rate.min {
+                                    duration_since_last_ms - source.occurrence_rate.min
+                                } else {
+                                    return None;
+                                };
+                            let duration_until_sound_needed =
+                                source.occurrence_rate.max - duration_since_last_ms;
                             Some(Timing {
                                 duration_since_min_interval,
                                 duration_until_sound_needed,
@@ -940,11 +1126,6 @@ fn tick(model: &mut Model, tick: Tick) {
                     continue;
                 }
 
-                println!("\t\t\tavailable sources: {:?}", available_sources.len());
-                for s in &available_sources {
-                    println!("\t\t\t\t{:?}", s);
-                }
-
                 // Sort the groups by:
                 //
                 // 1. The number of sounds needed
@@ -953,10 +1134,9 @@ fn tick(model: &mut Model, tick: Tick) {
 
                 // The index of the source.
                 let source_index: usize = {
-                    let num_equal = utils::count_equal(
-                        &available_sources,
-                        |a, b| suitability(&a.suitability, &b.suitability),
-                    );
+                    let num_equal = utils::count_equal(&available_sources, |a, b| {
+                        suitability(&a.suitability, &b.suitability)
+                    });
                     nannou::rand::thread_rng().gen_range(0, num_equal)
                 };
 
@@ -976,12 +1156,14 @@ fn tick(model: &mut Model, tick: Tick) {
                         let x = match left {
                             true => {
                                 Metres(x_mag)
-                                    * (installation_area.centroid.x - installation_area.bounding_rect.left)
+                                    * (installation_area.centroid.x
+                                        - installation_area.bounding_rect.left)
                                     + installation_area.centroid.x
                             }
                             false => {
                                 Metres(x_mag)
-                                    * (installation_area.centroid.x - installation_area.bounding_rect.right)
+                                    * (installation_area.centroid.x
+                                        - installation_area.bounding_rect.right)
                                     + installation_area.centroid.x
                             }
                         };
@@ -990,14 +1172,16 @@ fn tick(model: &mut Model, tick: Tick) {
                         let y = match down {
                             true => {
                                 Metres(y_mag)
-                                    * (installation_area.centroid.y - installation_area.bounding_rect.bottom)
+                                    * (installation_area.centroid.y
+                                        - installation_area.bounding_rect.bottom)
                                     + installation_area.centroid.y
-                            },
+                            }
                             false => {
                                 Metres(y_mag)
-                                    * (installation_area.centroid.y - installation_area.bounding_rect.top)
+                                    * (installation_area.centroid.y
+                                        - installation_area.bounding_rect.top)
                                     + installation_area.centroid.y
-                            },
+                            }
                         };
                         let point = Point2 { x, y };
                         let radians = rng.gen::<f32>() * 2.0 * ::std::f32::consts::PI;
@@ -1015,13 +1199,6 @@ fn tick(model: &mut Model, tick: Tick) {
                     let duration_frames =
                         audio::source::random_playback_duration(&mut rng, source.playback_duration)
                             .to_samples(audio::SAMPLE_RATE);
-
-                    println!("\t\t\t\tid:       {:?}", source.id);
-                    println!("\t\t\t\tposition: {:?}", initial_position);
-                    println!("\t\t\t\tradians:  {:?}", initial_position);
-                    println!("\t\t\t\tattack:   {:?}", attack_duration_frames);
-                    println!("\t\t\t\trelease:  {:?}", release_duration_frames);
-                    println!("\t\t\t\tduration: {:?}", duration_frames);
 
                     // This is not a continuous preview (this is only used for GUI sounds).
                     let continuous_preview = false;
@@ -1048,11 +1225,34 @@ fn tick(model: &mut Model, tick: Tick) {
                     groups_last_used.insert(available_groups[group_index].id, tick.instant);
                     sources_last_used.insert(source_id, tick.instant);
 
+                    // TODO: Choose a movement type based on the source's assigned options.
+                    let agent = {
+                        let active_sound_positions = active_sound_positions(active_sounds);
+                        let installation_data = agent_installation_data(
+                            source.id,
+                            sources,
+                            installations,
+                            installation_areas,
+                            &target_sounds_per_installation,
+                            &active_sound_positions,
+                        );
+                        // TODO: Generate the max speed in metres per second from GUI constraints.
+                        let max_speed = 2.0 + 3.0 * rng.gen::<f64>();
+                        let max_force = 0.04 + 0.06 * rng.gen::<f64>();
+                        movement::Agent::generate(
+                            rng,
+                            *installation,
+                            &installation_data,
+                            max_speed,
+                            max_force,
+                        )
+                    };
+                    let movement = Movement::Agent(agent);
+
                     // Create the active sound for out use.
                     let active_sound = ActiveSound {
                         handle: sound,
-                        initial_installation: *installation,
-                        position: initial_position,
+                        movement,
                     };
 
                     // Store the new active sound.
@@ -1060,10 +1260,16 @@ fn tick(model: &mut Model, tick: Tick) {
                 }
 
                 // Update the `AvailableGroup` and `AvailableSource` for this source.
-                if available_groups[group_index].suitability.update_for_used_sound() {
+                if available_groups[group_index]
+                    .suitability
+                    .update_for_used_sound()
+                {
                     available_groups.remove(group_index);
                 }
-                if available_sources[source_index].suitability.update_for_used_sound() {
+                if available_sources[source_index]
+                    .suitability
+                    .update_for_used_sound()
+                {
                     available_sources.remove(source_index);
                 }
             }
@@ -1072,8 +1278,4 @@ fn tick(model: &mut Model, tick: Tick) {
             available_groups.sort_by(|a, b| suitability(&a.suitability, &b.suitability));
         }
     }
-}
-
-fn duration_to_secs(d: &time::Duration) -> f64 {
-    d.as_secs() as f64 + d.subsec_nanos() as f64 * 1e-9
 }

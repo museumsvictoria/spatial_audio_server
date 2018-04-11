@@ -22,8 +22,11 @@ pub struct Group {
 
 pub mod default {
     use time_calc::Ms;
-    use utils::{HR_MS, Range};
-    pub const OCCURRENCE_RATE: Range<Ms> = Range { min: Ms(0.0), max: Ms(HR_MS as _) };
+    use utils::{Range, HR_MS};
+    pub const OCCURRENCE_RATE: Range<Ms> = Range {
+        min: Ms(0.0),
+        max: Ms(HR_MS as _),
+    };
     pub const SIMULTANEOUS_SOUNDS: Range<usize> = Range { min: 1, max: 10 };
 }
 

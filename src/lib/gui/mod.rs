@@ -151,14 +151,18 @@ impl Model {
         let mut ui = app.new_ui(window_id)
             .with_theme(theme::construct())
             .build()
-            .unwrap();
+            .expect("failed to build `Ui`");
 
         // The type containing the unique ID for each widget in the GUI.
         let ids = Ids::new(ui.widget_id_generator());
 
         // Load and insert the fonts to be used.
         let font_path = fonts_directory(assets).join("NotoSans/NotoSans-Regular.ttf");
-        let notosans_regular = ui.fonts_mut().insert_from_file(font_path).unwrap();
+        let notosans_regular = ui.fonts_mut()
+            .insert_from_file(&font_path)
+            .unwrap_or_else(|err| {
+                panic!("failed to load font \"{}\": {}", font_path.display(), err)
+            });
         let fonts = Fonts { notosans_regular };
 
         // Load and insert the images to be used.
@@ -238,25 +242,24 @@ impl Model {
                         position,
                         channels,
                     } => {
-                        let channels = (0..channels).map(|_| ChannelLevels::default()).collect();
-                        let mut active_sound = ActiveSound {
-                            source_id,
-                            position,
-                            channels,
-                        };
+                        let active_sound = ActiveSound::new(source_id, position, channels);
                         audio_monitor.active_sounds.insert(id, active_sound);
                     }
-                    ActiveSoundMessage::Update { position } => {
-                        let active_sound = audio_monitor.active_sounds.get_mut(&id).unwrap();
-                        active_sound.position = position;
+                    ActiveSoundMessage::Update { source_id, position, channels } => {
+                        audio_monitor
+                            .active_sounds
+                            .entry(id)
+                            .or_insert_with(|| ActiveSound::new(source_id, position, channels))
+                            .position = position;
                     }
                     ActiveSoundMessage::UpdateChannel { index, rms, peak } => {
-                        let active_sound = audio_monitor.active_sounds.get_mut(&id).unwrap();
-                        let mut channel = &mut active_sound.channels[index];
-                        channel.rms = rms;
-                        channel.peak = peak;
+                        if let Some(active_sound) = audio_monitor.active_sounds.get_mut(&id) {
+                            let mut channel = &mut active_sound.channels[index];
+                            channel.rms = rms;
+                            channel.peak = peak;
+                        }
                     }
-                    ActiveSoundMessage::End => {
+                    ActiveSoundMessage::End { sound: _sound } => {
                         audio_monitor.active_sounds.remove(&id);
 
                         // If the Id of the sound being removed matches the current preview, remove
@@ -791,6 +794,16 @@ struct ActiveSound {
     channels: Vec<ChannelLevels>,
 }
 
+impl ActiveSound {
+    fn new(source_id: audio::source::Id, pos: audio::sound::Position, channels: usize) -> Self {
+        ActiveSound {
+            source_id,
+            position: pos,
+            channels: (0..channels).map(|_| ChannelLevels::default()).collect(),
+        }
+    }
+}
+
 // The detected levels for a single channel.
 #[derive(Default)]
 struct ChannelLevels {
@@ -799,7 +812,6 @@ struct ChannelLevels {
 }
 
 /// A message sent from the audio thread with some audio levels.
-#[derive(Debug)]
 pub enum AudioMonitorMessage {
     Master { peak: f32 },
     ActiveSound(audio::sound::Id, ActiveSoundMessage),
@@ -807,7 +819,6 @@ pub enum AudioMonitorMessage {
 }
 
 /// A message related to an active sound.
-#[derive(Debug)]
 pub enum ActiveSoundMessage {
     Start {
         source_id: audio::source::Id,
@@ -815,14 +826,18 @@ pub enum ActiveSoundMessage {
         channels: usize,
     },
     Update {
+        source_id: audio::source::Id,
         position: audio::sound::Position,
+        channels: usize,
     },
     UpdateChannel {
         index: usize,
         rms: f32,
         peak: f32,
     },
-    End,
+    End {
+        sound: audio::output::ActiveSound,
+    },
 }
 
 /// A message related to a speaker.
@@ -850,11 +865,14 @@ fn load_image(
     path: &Path,
     display: &glium::Display,
 ) -> ((Scalar, Scalar), glium::texture::Texture2d) {
-    let rgba_image = nannou::image::open(&path).unwrap().to_rgba();
+    let rgba_image = nannou::image::open(&path)
+        .unwrap_or_else(|err| panic!("failed to load image \"{}\": {}", path.display(), err))
+        .to_rgba();
     let (w, h) = rgba_image.dimensions();
     let raw_image =
         glium::texture::RawImage2d::from_raw_rgba_reversed(&rgba_image.into_raw(), (w, h));
-    let texture = glium::texture::Texture2d::new(display, raw_image).unwrap();
+    let texture = glium::texture::Texture2d::new(display, raw_image)
+        .expect("failed to create texture for imaage");
     ((w as Scalar, h as Scalar), texture)
 }
 
