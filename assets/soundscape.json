@@ -1,44 +1,5 @@
 {
   "groups": {
-    "1": {
-      "group": {
-        "occurrence_rate": {
-          "min": 1.0,
-          "max": 3600000.0
-        },
-        "simultaneous_sounds": {
-          "min": 1,
-          "max": 10
-        }
-      },
-      "name": "Group B"
-    },
-    "4": {
-      "group": {
-        "occurrence_rate": {
-          "min": 1.0,
-          "max": 3600000.0
-        },
-        "simultaneous_sounds": {
-          "min": 1,
-          "max": 10
-        }
-      },
-      "name": "Group E"
-    },
-    "2": {
-      "group": {
-        "occurrence_rate": {
-          "min": 1.0,
-          "max": 3600000.0
-        },
-        "simultaneous_sounds": {
-          "min": 1,
-          "max": 10
-        }
-      },
-      "name": "Group C"
-    },
     "3": {
       "group": {
         "occurrence_rate": {
@@ -51,6 +12,19 @@
         }
       },
       "name": "Group D"
+    },
+    "0": {
+      "group": {
+        "occurrence_rate": {
+          "min": 63.35345410449991,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group A"
     },
     "5": {
       "group": {
@@ -65,10 +39,10 @@
       },
       "name": "Group F"
     },
-    "0": {
+    "4": {
       "group": {
         "occurrence_rate": {
-          "min": 63.35345410449991,
+          "min": 1.0,
           "max": 3600000.0
         },
         "simultaneous_sounds": {
@@ -76,7 +50,33 @@
           "max": 10
         }
       },
-      "name": "Group A"
+      "name": "Group E"
+    },
+    "1": {
+      "group": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group B"
+    },
+    "2": {
+      "group": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group C"
     }
   },
   "next_group_id": 6

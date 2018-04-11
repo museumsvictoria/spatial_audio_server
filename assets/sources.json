@@ -19,12 +19,12 @@
               "Cacophony"
             ],
             "groups": [
+              4,
+              2,
               3,
               1,
-              4,
               5,
-              0,
-              2
+              0
             ],
             "occurrence_rate": {
               "min": 229.79721418514289,
@@ -35,7 +35,7 @@
               "max": 9
             },
             "playback_duration": {
-              "min": 86400000.0,
+              "min": 2980.3174603174604,
               "max": 2980.3174603174604
             },
             "attack_duration": {
@@ -50,7 +50,8 @@
         },
         "spread": 2.5,
         "channel_radians": 1.57,
-        "volume": 0.6
+        "volume": 0.6,
+        "muted": false
       },
       "id": 1
     },
@@ -70,7 +71,8 @@
         "role": null,
         "spread": 2.5,
         "channel_radians": 1.57,
-        "volume": 0.6
+        "volume": 0.6,
+        "muted": false
       },
       "id": 4
     },
@@ -93,12 +95,12 @@
               "Cacophony"
             ],
             "groups": [
-              3,
-              1,
               0,
-              2,
+              4,
               5,
-              4
+              3,
+              2,
+              1
             ],
             "occurrence_rate": {
               "min": 500.0,
@@ -124,7 +126,8 @@
         },
         "spread": 2.431084632873535,
         "channel_radians": 1.57,
-        "volume": 0.6003255
+        "volume": 0.6003255,
+        "muted": false
       },
       "id": 0
     },
@@ -144,7 +147,8 @@
         "role": null,
         "spread": 2.5,
         "channel_radians": 1.57,
-        "volume": 0.6
+        "volume": 0.6,
+        "muted": false
       },
       "id": 5
     },
@@ -167,10 +171,10 @@
               "Cacophony"
             ],
             "groups": [
-              4,
               2,
               5,
               1,
+              4,
               3,
               0
             ],
@@ -198,7 +202,8 @@
         },
         "spread": 2.5,
         "channel_radians": 1.57,
-        "volume": 0.6
+        "volume": 0.6,
+        "muted": false
       },
       "id": 2
     },
@@ -218,7 +223,8 @@
         "role": null,
         "spread": 2.5,
         "channel_radians": 1.57,
-        "volume": 0.6
+        "volume": 0.6,
+        "muted": false
       },
       "id": 3
     },
@@ -237,10 +243,12 @@
         "role": null,
         "spread": 2.5,
         "channel_radians": 1.57,
-        "volume": 0.6
+        "volume": 0.6,
+        "muted": false
       },
       "id": 6
     }
   ],
-  "next_id": 7
+  "next_id": 7,
+  "soloed": []
 }

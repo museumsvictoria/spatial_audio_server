@@ -18,7 +18,7 @@ use rustfft::num_complex::Complex;
 use rustfft::num_traits::Zero;
 use soundscape;
 use std;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use utils;
 
@@ -74,6 +74,8 @@ pub struct Model {
     pub master_volume: f32,
     /// The DBAP rolloff decibel amount, used to attenuate speaker gains over distances.
     pub dbap_rolloff_db: f64,
+    /// The set of sources that are currently soloed. If not empty, only these sounds should play.
+    pub soloed: HashSet<source::Id>,
     /// A map from audio sound IDs to the audio sounds themselves.
     sounds: HashMap<sound::Id, ActiveSound>,
     /// A map from speaker IDs to the speakers themselves.
@@ -123,11 +125,14 @@ impl Model {
         osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
         soundscape_tx: mpsc::Sender<soundscape::Message>,
     ) -> Self {
+        // The currently soloed sources (none by default).
+        let soloed = Default::default();
+
         // A map from audio sound IDs to the audio sounds themselves.
-        let sounds: HashMap<sound::Id, ActiveSound> = HashMap::with_capacity(1024);
+        let sounds = HashMap::with_capacity(1024);
 
         // A map from speaker IDs to the speakers themselves.
-        let speakers: HashMap<speaker::Id, ActiveSpeaker> = HashMap::with_capacity(MAX_CHANNELS);
+        let speakers = HashMap::with_capacity(MAX_CHANNELS);
 
         // A buffer for collecting frames from `Sound`s that have not yet been mixed and written.
         let unmixed_samples = vec![0.0; 1024];
@@ -168,6 +173,7 @@ impl Model {
             frame_count,
             master_volume,
             dbap_rolloff_db,
+            soloed,
             sounds,
             speakers,
             unmixed_samples,
@@ -313,6 +319,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
         let Model {
             master_volume,
             dbap_rolloff_db,
+            ref soloed,
             ref mut frame_count,
             ref mut sounds,
             ref mut unmixed_samples,
@@ -341,8 +348,29 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 ref mut channel_detectors,
             } = *active_sound;
 
-            // Don't play it if paused.
+            // Update the GUI with the position of the sound.
+            let source_id = sound.source_id();
+            let position = sound.position;
+            let channels = sound.channels;
+            let update = gui::ActiveSoundMessage::Update { source_id, position, channels };
+            let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, update);
+            gui_audio_monitor_msg_tx.try_send(msg).ok();
+
+            // Don't play or request samples if paused.
             if !sound.shared.is_playing() {
+                continue;
+            }
+
+            // The number of samples to request from the sound for this buffer.
+            let num_samples = buffer.len_frames() * sound.channels;
+
+            // Don't play it if some other sources are soloed.
+            if sound.muted || (!soloed.is_empty() && !soloed.contains(&sound.source_id())) {
+                // Pull samples from the signal but do not render them.
+                let samples_yielded = sound.signal.samples().take(num_samples).count();
+                if samples_yielded < num_samples {
+                    exhausted_sounds.push(sound_id);
+                }
                 continue;
             }
 
@@ -355,17 +383,6 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     }
                 }
             }
-
-            // Update the GUI with the position of the sound.
-            let source_id = sound.source_id();
-            let position = sound.position;
-            let channels = sound.channels;
-            let update = gui::ActiveSoundMessage::Update { source_id, position, channels };
-            let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, update);
-            gui_audio_monitor_msg_tx.try_send(msg).ok();
-
-            // The number of samples to request from the sound for this buffer.
-            let num_samples = buffer.len_frames() * sound.channels;
 
             // Clear the unmixed samples, ready to collect the new ones.
             unmixed_samples.clear();

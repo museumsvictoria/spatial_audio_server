@@ -10,6 +10,7 @@ use nannou::ui;
 use nannou::ui::prelude::*;
 use soundscape;
 use std;
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::mem;
 use std::ops;
@@ -21,6 +22,8 @@ use walkdir::WalkDir;
 pub struct SourceEditor {
     pub is_open: bool,
     pub sources: Vec<Source>,
+    // The tracks that currently have solo enabled.
+    pub soloed: HashSet<audio::source::Id>,
     // The index of the selected source.
     pub selected: Option<usize>,
     // The next ID to be used for a new source.
@@ -54,6 +57,8 @@ pub struct StoredSources {
     pub sources: Vec<Source>,
     #[serde(default = "first_source_id")]
     pub next_id: audio::source::Id,
+    #[serde(default)]
+    pub soloed: HashSet<audio::source::Id>,
 }
 
 pub fn first_source_id() -> audio::source::Id {
@@ -91,6 +96,7 @@ impl Default for StoredSources {
         StoredSources {
             sources: Vec::new(),
             next_id: audio::source::Id::INITIAL,
+            soloed: Default::default(),
         }
     }
 }
@@ -210,18 +216,26 @@ impl StoredSources {
                 let spread = audio::source::default::SPREAD;
                 let channel_radians = audio::source::default::CHANNEL_RADIANS;
                 let volume = audio::source::default::VOLUME;
+                let muted = bool::default();
                 let audio = audio::Source {
                     kind,
                     role,
                     spread,
                     channel_radians,
                     volume,
+                    muted,
                 };
                 let id = stored.next_id;
                 let source = Source { name, audio, id };
                 stored.sources.push(source);
                 stored.next_id = audio::source::Id(stored.next_id.0 + 1);
             }
+        }
+
+        // Only keep soloed sources that remain.
+        {
+            let StoredSources { ref mut soloed, ref sources, .. } = stored;
+            soloed.retain(|&id| sources.iter().any(|s| s.id == id));
         }
 
         // Sort all sources by kind then name.
@@ -482,12 +496,14 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let spread = audio::source::default::SPREAD;
         let channel_radians = audio::source::default::CHANNEL_RADIANS;
         let volume = audio::source::default::VOLUME;
+        let muted = bool::default();
         let audio = audio::Source {
             kind,
             role,
             spread,
             channel_radians,
             volume,
+            muted,
         };
         let source = Source { id, name, audio };
 
@@ -547,6 +563,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     SourceEditor {
                         ref mut sources,
                         ref mut preview,
+                        ref mut soloed,
                         ..
                     },
                 ref soundscape_editor,
@@ -1140,6 +1157,90 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             .ok();
     }
 
+    // Buttons for solo and mute behaviour.
+    let channel_layout_kid_area = ui.kid_area_of(ids.source_editor_selected_common_canvas)
+        .unwrap();
+    let button_w = channel_layout_kid_area.w() / 2.0 - PAD / 2.0;
+    let toggle = |value: bool| widget::Toggle::new(value)
+        .w(button_w)
+        .h(ITEM_HEIGHT)
+        .label_font_size(SMALL_FONT_SIZE);
+
+    // Solo button.
+    let solo = soloed.contains(&sources[i].id);
+    for new_solo in toggle(solo)
+        .label("SOLO")
+        .align_left()
+        .down(PAD)
+        .color(color::DARK_YELLOW)
+        .set(ids.source_editor_selected_solo, ui)
+    {
+        // If the CTRL key was down, unsolo all other sources.
+        if ui.global_input().current.modifiers.contains(ui::input::keyboard::ModifierKey::CTRL) {
+            // Update local copy.
+            soloed.clear();
+
+            // Update audio output copy.
+            channels
+                .audio_output
+                .send(move |audio| {
+                    audio.soloed.clear();
+                })
+                .ok();
+        }
+
+        // Update local copy.
+        let id = sources[i].id;
+        if new_solo {
+            soloed.insert(id);
+        } else {
+            soloed.remove(&id);
+        }
+
+        // Update audio output copy.
+        channels
+            .audio_output
+            .send(move |audio| {
+                if new_solo {
+                    audio.soloed.insert(id);
+                } else {
+                    audio.soloed.remove(&id);
+                }
+            })
+            .ok();
+    }
+
+    // Mute button.
+    for new_mute in toggle(sources[i].muted)
+        .label("MUTE")
+        .align_top()
+        .right(PAD)
+        .color(color::BLUE)
+        .set(ids.source_editor_selected_mute, ui)
+    {
+        // Update local copy.
+        sources[i].muted = new_mute;
+
+        // Update soundscape copy.
+        let id = sources[i].id;
+        channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.update_source(&id, |source| source.muted = new_mute);
+            })
+            .ok();
+
+        // Update audio output copy.
+        channels
+            .audio_output
+            .send(move |audio| {
+                audio.update_sounds_with_source(&id, move |_, sound| {
+                    sound.muted = new_mute;
+                });
+            })
+            .ok();
+    }
+
     // Display the channel layout.
     widget::Text::new("CHANNEL LAYOUT")
         .font_size(SMALL_FONT_SIZE)
@@ -1147,10 +1248,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         .down(PAD * 1.5)
         .set(ids.source_editor_selected_channel_layout_text, ui);
 
-    let channel_layout_kid_area = ui.kid_area_of(ids.source_editor_selected_common_canvas)
-        .unwrap();
-    let slider_w = channel_layout_kid_area.w() / 2.0 - PAD / 2.0;
-
+    let slider_w = button_w;
     let slider = |value, min, max| {
         widget::Slider::new(value, min, max)
             .label_font_size(SMALL_FONT_SIZE)

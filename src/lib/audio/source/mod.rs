@@ -49,6 +49,9 @@ pub struct Source {
     /// An amplitude modulator specified by the user via the GUI.
     #[serde(default = "default::volume")]
     pub volume: f32,
+    /// Whether or not the source has been muted.
+    #[serde(default)]
+    pub muted: bool,
 }
 
 /// A **Signal** yielding interleaved samples.
