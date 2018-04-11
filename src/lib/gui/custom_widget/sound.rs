@@ -4,6 +4,7 @@ use metres::Metres;
 use nannou::ui::Color;
 use nannou::ui::prelude::*;
 use std;
+use utils;
 
 #[derive(Clone, WidgetCommon)]
 pub struct Sound<'a> {
@@ -134,8 +135,7 @@ impl<'a> Widget for Sound<'a> {
                 let phase = channel_index as f64 / total_channels as f64;
                 let channel_radians_offset = phase * std::f64::consts::PI * 2.0;
                 let radians = radians + channel_radians_offset;
-                let rel_x = -radians.cos() * spread;
-                let rel_y = radians.sin() * spread;
+                let (rel_x, rel_y) = utils::rad_mag_to_x_y(radians, spread);
                 let x = sound_x + rel_x;
                 let y = sound_y + rel_y;
                 (x, y)
@@ -194,18 +194,18 @@ impl<'a> Widget for Sound<'a> {
         let front_to_back_radians = std::f64::consts::PI * 2.5 / 3.0;
         let br_radians = radians + front_to_back_radians;
         let bl_radians = radians - front_to_back_radians;
-        let rel_front = [
-            x + -radians.cos() * tri_radius,
-            y + radians.sin() * tri_radius,
-        ];
-        let rel_back_right = [
-            x + -bl_radians.cos() * tri_radius,
-            y + bl_radians.sin() * tri_radius,
-        ];
-        let rel_back_left = [
-            x + -br_radians.cos() * tri_radius,
-            y + br_radians.sin() * tri_radius,
-        ];
+        let rel_front = {
+            let (x, y) = utils::rad_mag_to_x_y(radians, tri_radius);
+            [x, y]
+        };
+        let rel_back_right = {
+            let (x, y) = utils::rad_mag_to_x_y(bl_radians, tri_radius);
+            [x, y]
+        };
+        let rel_back_left = {
+            let (x, y) = utils::rad_mag_to_x_y(br_radians, tri_radius);
+            [x, y]
+        };
         let points = [rel_front, rel_back_right, rel_back_left];
         widget::Polygon::centred_fill(points.iter().cloned())
             .x_y(x, y)

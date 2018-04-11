@@ -6,6 +6,7 @@ use std::{cmp, fmt, fs, io};
 use std::error::Error;
 use std::io::Write;
 use std::path::Path;
+use std::time;
 use time_calc::Ms;
 
 pub const SEC_MS: f64 = 1_000.0;
@@ -113,6 +114,11 @@ pub fn human_readable_ms(ms: &Ms) -> (HumanReadableTime, f64) {
     } else {
         (HumanReadableTime::Days, ms / DAY_MS)
     }
+}
+
+/// Convert the given standard duration into its representation in seconds.
+pub fn duration_to_secs(d: &time::Duration) -> f64 {
+    d.as_secs() as f64 + d.subsec_nanos() as f64 * 1e-9
 }
 
 /// Errors that might occur when saving a file.
@@ -237,4 +243,71 @@ where
 {
     let unskewed = skewed_normalised_value.powf(1.0 / skew as f64);
     unnormalise(unskewed, min, max)
+}
+
+/// Convert the given angle and magnitude into the x and y components of the representative vector.
+pub fn rad_mag_to_x_y(rad: f64, mag: f64) -> (f64, f64) {
+    let x = rad.cos() * mag;
+    let y = rad.sin() * mag;
+    (x, y)
+}
+
+pub mod pt2 {
+    use metres::Metres;
+    use nannou::math::Point2;
+
+    /// Maps the given point to some new type over the dimensions.
+    pub fn convert<T, U>(p: Point2<T>) -> Point2<U>
+    where
+        T: Into<U>,
+    {
+        let Point2 { x, y } = p;
+        let x = x.into();
+        let y = y.into();
+        Point2 { x, y }
+    }
+
+    pub fn to_f64<T>(p: Point2<T>) -> Point2<f64>
+    where
+        T: Into<f64>,
+    {
+        convert(p)
+    }
+
+    pub fn to_metres<T>(p: Point2<T>) -> Point2<Metres>
+    where
+        T: Into<Metres>,
+    {
+        convert(p)
+    }
+}
+
+pub mod vt2 {
+    use metres::Metres;
+    use nannou::math::Vector2;
+
+    /// Maps the given vector to some new type over the dimensions.
+    pub fn convert<T, U>(p: Vector2<T>) -> Vector2<U>
+    where
+        T: Into<U>,
+    {
+        let Vector2 { x, y } = p;
+        let x = x.into();
+        let y = y.into();
+        Vector2 { x, y }
+    }
+
+    pub fn to_f64<T>(v: Vector2<T>) -> Vector2<f64>
+    where
+        T: Into<f64>,
+    {
+        convert(v)
+    }
+
+    pub fn to_metres<T>(v: Vector2<T>) -> Vector2<Metres>
+    where
+        T: Into<Metres>,
+    {
+        convert(v)
+    }
 }

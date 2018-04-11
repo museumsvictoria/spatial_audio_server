@@ -20,6 +20,7 @@ use soundscape;
 use std;
 use std::collections::HashMap;
 use std::sync::mpsc;
+use utils;
 
 /// Simplified type alias for the nannou audio output stream used by the audio server.
 pub type Stream = nannou::audio::Stream<Model>;
@@ -278,11 +279,13 @@ impl Model {
     }
 
     /// Removes the sound and sends an `End` active sound message to the GUI.
-    pub fn remove_sound(&mut self, id: sound::Id) -> Option<ActiveSound> {
+    ///
+    /// Returns `false` if the sound did not exist
+    pub fn remove_sound(&mut self, id: sound::Id) -> bool {
         let removed = self.sounds.remove(&id);
-        if removed.is_some() {
+        if let Some(sound) = removed {
             // Notify the gui.
-            let sound_msg = gui::ActiveSoundMessage::End;
+            let sound_msg = gui::ActiveSoundMessage::End { sound };
             let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
             self.gui_audio_monitor_msg_tx.try_send(msg).ok();
 
@@ -291,8 +294,10 @@ impl Model {
                 soundscape.remove_active_sound(&id);
             };
             self.soundscape_tx.send(soundscape::UpdateFn::from(update).into()).ok();
+            true
+        } else {
+            false
         }
-        removed
     }
 
     /// An iterator yielding mutable access to all sounds currently playing.
@@ -350,6 +355,14 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     }
                 }
             }
+
+            // Update the GUI with the position of the sound.
+            let source_id = sound.source_id();
+            let position = sound.position;
+            let channels = sound.channels;
+            let update = gui::ActiveSoundMessage::Update { source_id, position, channels };
+            let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, update);
+            gui_audio_monitor_msg_tx.try_send(msg).ok();
 
             // The number of samples to request from the sound for this buffer.
             let num_samples = buffer.len_frames() * sound.channels;
@@ -520,10 +533,10 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
         for sound_id in exhausted_sounds.drain(..) {
             // TODO: Possibly send this with the `End` message to avoid de-allocating on audio
             // thread.
-            let _sound = sounds.remove(&sound_id).unwrap();
+            let sound = sounds.remove(&sound_id).unwrap();
 
             // Send signal of completion back to GUI thread.
-            let sound_msg = gui::ActiveSoundMessage::End;
+            let sound_msg = gui::ActiveSoundMessage::End { sound };
             let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
             gui_audio_monitor_msg_tx.try_send(msg).ok();
 
@@ -564,10 +577,9 @@ pub fn channel_point(
         let phase = channel_index as f32 / total_channels as f32;
         let channel_radians_offset = phase * std::f32::consts::PI * 2.0;
         let radians = (radians + channel_radians_offset) as f64;
-        let rel_x = Metres(-radians.cos() * spread.0);
-        let rel_y = Metres(radians.sin() * spread.0);
-        let x = sound_point.x + rel_x;
-        let y = sound_point.y + rel_y;
+        let (rel_x, rel_y) = utils::rad_mag_to_x_y(radians, spread.0);
+        let x = sound_point.x + Metres(rel_x);
+        let y = sound_point.y + Metres(rel_y);
         Point2 { x, y }
     }
 }

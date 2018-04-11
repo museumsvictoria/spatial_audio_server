@@ -1228,8 +1228,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             let phase = i as f32 / num_channels as f32;
             let channel_radians_offset = phase * MAX_RADIANS;
             let radians = (channel_radians + channel_radians_offset) as Scalar;
-            let x = -radians.cos() * spread_circle_radius;
-            let y = radians.sin() * spread_circle_radius;
+            let (x, y) = utils::rad_mag_to_x_y(radians, spread_circle_radius);
             (x, y)
         };
         widget::Circle::fill(CHANNEL_CIRCLE_RADIUS)

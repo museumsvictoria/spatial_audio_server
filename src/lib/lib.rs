@@ -111,7 +111,8 @@ fn model(app: &App) -> Model {
         .expect("failed to build audio input stream");
 
     // Initialise the audio output model and create the output stream.
-    let output_device = app.audio.default_output_device().unwrap();
+    let output_device = app.audio.default_output_device()
+        .expect("no default output device available on the system");
     let max_supported_output_channels = if cfg!(feature = "test_with_stereo") {
         std::cmp::min(output_device.max_supported_output_channels(), 2)
     } else {
