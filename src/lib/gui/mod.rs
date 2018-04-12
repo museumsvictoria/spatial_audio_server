@@ -326,6 +326,7 @@ impl Model {
                         SourceEditor {
                             sources,
                             next_id: next_source_id,
+                            soloed,
                             ..
                         },
                     ..
@@ -340,7 +341,7 @@ impl Model {
         utils::save_to_json_or_panic(&speakers_path(&assets), &stored_speakers);
         let stored_soundscape = soundscape_editor::Stored { groups, next_group_id };
         utils::save_to_json_or_panic(&soundscape_path(&assets), &stored_soundscape);
-        let stored_sources = StoredSources { sources, next_id: next_source_id };
+        let stored_sources = StoredSources { sources, next_id: next_source_id, soloed };
         utils::save_to_json_or_panic(&sources_path(&assets), &stored_sources);
     }
 
@@ -481,7 +482,7 @@ impl State {
         // Load the existing sound sources if there are some.
         let audio_path = assets.join(Path::new(AUDIO_DIRECTORY_NAME));
         let stored_sources = StoredSources::load(&sources_path(assets), &audio_path);
-        let StoredSources { sources, next_id } = stored_sources;
+        let StoredSources { sources, next_id, soloed } = stored_sources;
 
         // Send the realtime sources to the input thread.
         for source in &sources {
@@ -507,6 +508,15 @@ impl State {
             }
         }
 
+        // Send the set of soloed sources to the audio thread.
+        let clone = soloed.clone();
+        channels
+            .audio_output
+            .send(move |audio| {
+                audio.soloed = clone;
+            })
+            .ok();
+
         let preview = SourcePreview {
             current: None,
             point: None,
@@ -515,6 +525,7 @@ impl State {
         let source_editor = SourceEditor {
             is_open: false,
             selected: None,
+            soloed,
             next_id,
             sources,
             preview,
@@ -1012,6 +1023,8 @@ widget_ids! {
         source_editor_selected_common_canvas,
         source_editor_selected_volume_text,
         source_editor_selected_volume_slider,
+        source_editor_selected_solo,
+        source_editor_selected_mute,
         source_editor_selected_channel_layout_text,
         source_editor_selected_channel_layout_spread,
         source_editor_selected_channel_layout_rotation,

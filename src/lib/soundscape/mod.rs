@@ -94,6 +94,7 @@ pub struct Source {
     pub spread: Metres,
     pub channel_radians: f32,
     pub volume: f32,
+    pub muted: bool,
     /// The time at which the source was last used to create a sound.
     pub last_sound_created: Option<time::Instant>,
 }
@@ -194,6 +195,7 @@ impl Source {
         let spread = source.spread;
         let channel_radians = source.channel_radians;
         let volume = source.volume;
+        let muted = source.muted;
         let last_sound_created = None;
         Some(Source {
             constraints,
@@ -201,6 +203,7 @@ impl Source {
             spread,
             channel_radians,
             volume,
+            muted,
             last_sound_created,
         })
     }
@@ -212,12 +215,14 @@ impl Source {
         let spread = self.spread;
         let channel_radians = self.channel_radians;
         let volume = self.volume;
+        let muted = self.muted;
         audio::Source {
             kind,
             role,
             spread,
             channel_radians,
             volume,
+            muted,
         }
     }
 }

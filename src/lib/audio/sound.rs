@@ -20,6 +20,8 @@ pub struct Sound {
     pub channels: usize,
     // An amplitude multiplier specified by the user for mixing the sound.
     pub volume: f32,
+    // Whether or not the sound's source has been muted.
+    pub muted: bool,
     // Includes the source and pre-spatial effects.
     //
     // The signal is unique in that channels are interleaved rather than presented side-by-side in
@@ -158,6 +160,7 @@ pub fn spawn_from_source(
                 wav,
                 source.spread,
                 source.volume,
+                source.muted,
                 position,
                 source.channel_radians,
                 installations,
@@ -176,6 +179,7 @@ pub fn spawn_from_source(
                 realtime,
                 source.spread,
                 source.volume,
+                source.muted,
                 position,
                 source.channel_radians,
                 installations,
@@ -198,6 +202,7 @@ pub fn spawn_from_wav(
     wav: &source::Wav,
     spread: Metres,
     volume: f32,
+    muted: bool,
     initial_position: Position,
     channel_radians: f32,
     installations: Installations,
@@ -238,6 +243,7 @@ pub fn spawn_from_wav(
         shared: shared.clone(),
         channels: wav.channels,
         volume,
+        muted,
         signal,
         position: initial_position,
         channel_radians,
@@ -272,6 +278,7 @@ pub fn spawn_from_realtime(
     realtime: &source::Realtime,
     spread: Metres,
     volume: f32,
+    muted: bool,
     initial_position: Position,
     channel_radians: f32,
     installations: Installations,
@@ -345,6 +352,7 @@ pub fn spawn_from_realtime(
         shared: shared.clone(),
         channels: n_channels,
         volume,
+        muted,
         signal,
         position: initial_position,
         channel_radians,
