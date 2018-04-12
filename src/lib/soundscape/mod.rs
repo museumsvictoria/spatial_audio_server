@@ -469,7 +469,6 @@ pub fn spawn(
     let tick_is_playing = is_playing.clone();
     let tick_thread = thread::Builder::new()
         .name("soundscape_ticker".into())
-        .stack_size(512)
         .spawn(move || {
             let mut last = time::Instant::now();
             let mut playback_duration = time::Duration::from_secs(0);

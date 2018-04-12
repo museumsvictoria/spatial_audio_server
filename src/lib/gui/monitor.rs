@@ -23,7 +23,6 @@ pub fn spawn(proxy: nannou::app::Proxy) -> io::Result<Spawned> {
 
     let handle = thread::Builder::new()
         .name("gui_audio_monitor".into())
-        .stack_size(1024) // 512 bytes - a tiny stack for a tiny job.
         .spawn(move || {
             // Attempt to forward every message and wakeup the GUI when successful.
             let mut msgs = vec![];
