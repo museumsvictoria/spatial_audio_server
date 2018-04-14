@@ -811,14 +811,17 @@ fn generate_movement(
             let area = installation_areas
                 .get(&installation)
                 .expect("no area for the given installation");
-            let point = pt2(area.centroid.x + pos.x, area.centroid.y + pos.y);
-            let radians = pos.radians;
+            let x = area.bounding_rect.left + area.bounding_rect.width() * pos.x;
+            let y = area.bounding_rect.bottom + area.bounding_rect.height() * pos.y;
+            let point = pt2(x, y);
+            let radians = 0.0;
             let position = audio::sound::Position { point, radians };
             Movement::Fixed(position)
         },
         audio::source::Movement::Generative(ref gen) => match *gen {
             audio::source::movement::Generative::Agent(ref agent) => {
                 let mut rng = nannou::rand::thread_rng();
+                // TODO: Should these be skewed?
                 let r = &agent.max_speed;
                 let max_speed = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
                 let r = &agent.max_force;
@@ -846,18 +849,21 @@ fn generate_movement(
 
             audio::source::movement::Generative::Ngon(ref ngon) => {
                 let mut rng = nannou::rand::thread_rng();
+                // TODO: Should these be skewed?
                 let r = &ngon.vertices;
                 let vertices = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
                 let r = &ngon.nth;
                 let nth = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
                 let r = &ngon.speed;
                 let speed = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
+                let r = &ngon.radians_offset;
+                let radians_offset = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
                 let bounding_rect = &installation_areas[&installation].bounding_rect;
                 let ngon = movement::Ngon::new(
                     vertices,
                     nth,
                     ngon.normalised_dimensions,
-                    ngon.radians_offset,
+                    radians_offset,
                     speed,
                     bounding_rect,
                 );
