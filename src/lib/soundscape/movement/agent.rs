@@ -29,13 +29,10 @@ pub struct Agent {
     /// The current velocity whose magnitude describes speed in metres per second.
     velocity: Vector,
     /// Used to limit the magnitude of the desired velocity in metres per second.
-    max_speed: f64,
+    pub max_speed: f64,
     /// Used to limit the magnitude of the steering force.
-    max_force: f64,
+    pub max_force: f64,
 }
-
-/// A map of installation data relevant to the agent.
-pub type InstallationDataMap = HashMap<Installation, InstallationData>;
 
 /// Information about an installation required by the Agent.
 #[derive(Debug)]
@@ -50,6 +47,9 @@ pub struct InstallationData {
     /// exceeded.
     pub num_available_sounds: usize,
 }
+
+/// A map of installation data relevant to the agent.
+pub type InstallationDataMap = HashMap<Installation, InstallationData>;
 
 impl Agent {
     /// Generate a new agent starting in the given installation area.

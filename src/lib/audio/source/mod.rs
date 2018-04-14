@@ -8,6 +8,7 @@ use std::ops;
 use time_calc::{Ms, Samples};
 use utils::{self, Range};
 
+pub use self::movement::Movement;
 pub use self::realtime::Realtime;
 pub use self::wav::Wav;
 
@@ -147,6 +148,137 @@ pub struct Soundscape {
     pub attack_duration: Range<Ms>,
     #[serde(default = "default::release_duration")]
     pub release_duration: Range<Ms>,
+    #[serde(default = "default::movement")]
+    pub movement: Movement,
+}
+
+/// Items related to the movement of a source's associated sounds within a soundscape.
+pub mod movement {
+    use audio::sound::Position;
+    use nannou::math::Vector2;
+    use utils::Range;
+
+    /// The number of movement options.
+    pub const NUM_MOVEMENT_OPTIONS: usize = 2;
+
+    /// The number of Generative movement options.
+    pub const NUM_GENERATIVE_OPTIONS: usize = 1;
+
+    /// The absolute maximum speed of an agent.
+    pub const MAX_SPEED: f64 = 10.0;
+
+    /// The absolute maximum force that may be applied to an agent's movement.
+    pub const MAX_FORCE: f64 = 1.0;
+
+    /// The maximum number of vertices in an Ngon.
+    pub const MAX_VERTICES: usize = 100;
+
+    /// The skew applied to the perception of Ngon vertices, whether GUI or generative.
+    pub const VERTICES_SKEW: f32 = 0.25;
+
+    /// Whether a source may assigned to fixed or generative movement.
+    #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+    pub enum Movement {
+        Fixed(Position),
+        Generative(Generative),
+    }
+
+    /// Movement kinds that are guided by some generative algorithm.
+    #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+    pub enum Generative {
+        Agent(Agent),
+        Ngon(Ngon),
+    }
+
+    /// A generative movement kind modelling an automonomous agent.
+    #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+    pub struct Agent {
+        /// The maximum speed (metres per second) that the agent may reach.
+        pub max_speed: Range<f64>,
+        /// The maximum amount of force (metres per second squared) that may be applied to the
+        /// agent.
+        pub max_force: Range<f64>,
+    }
+
+    /// A generative movement kind that traces the vertices of an n-sided polygon.
+    #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+    pub struct Ngon {
+        /// The number of vertices (and in turn, the number of sides) in the ngon.
+        pub vertices: Range<usize>,
+        /// The path should travel between every "nth" vertex.
+        ///
+        /// For example, if this value was `2`
+        pub nth: Range<usize>,
+        /// Describes the radius of the **Ngon** using a normalised value.
+        ///
+        /// `0.0` means all points will be in the center.
+        /// `1.0` means all points will extend to the bounds of the installation area.
+        pub normalised_dimensions: Vector2<f64>,
+        /// Some rotation that is applied to the Ngon's points around the centre.
+        pub radians_offset: f64,
+        /// The rate at which the path is being travelled in metres per second.
+        pub speed: Range<f64>,
+    }
+
+    impl Movement {
+        pub const VARIANT_COUNT: usize = 2;
+
+        /// Produce the index of the Movement value variant.
+        pub fn to_index(&self) -> usize {
+            match *self {
+                Movement::Fixed(_) => 0,
+                Movement::Generative(_) => 1,
+            }
+        }
+
+        /// Produce a label for the variant at the given index.
+        pub fn label_from_index(i: usize) -> &'static str {
+            match i {
+                0 => "FIXED",
+                1 => "GENERATIVE",
+                _ => "",
+            }
+        }
+
+        /// Produce a default Movement variant for the given variant index.
+        pub fn from_index(i: usize) -> Option<Self> {
+            match i {
+                0 => Some(Movement::Fixed(super::default::FIXED)),
+                1 => Some(Movement::Generative(super::default::GENERATIVE)),
+                _ => None,
+            }
+        }
+    }
+
+    impl Generative {
+        pub const VARIANT_COUNT: usize = 2;
+
+        /// Produce the index of the Movement value variant.
+        pub fn to_index(&self) -> usize {
+            match *self {
+                Generative::Agent(_) => 0,
+                Generative::Ngon(_) => 1,
+            }
+        }
+
+        /// Produce a label for the variant at the given index.
+        pub fn label_from_index(i: usize) -> &'static str {
+            match i {
+                0 => "AGENT",
+                1 => "NGON",
+                _ => "",
+            }
+        }
+
+        /// Produce a default Movement variant for the given variant index.
+        pub fn from_index(i: usize) -> Option<Self> {
+            match i {
+                0 => Some(Generative::Agent(super::default::AGENT)),
+                1 => Some(Generative::Ngon(super::default::NGON)),
+                _ => None,
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -456,7 +588,10 @@ pub mod skew {
 }
 
 pub mod default {
+    use audio::sound::Position;
     use metres::Metres;
+    use nannou::math::{Point2, Vector2};
+    use super::{movement, Movement};
     use time_calc::Ms;
     use utils::{HR_MS, Range};
 
@@ -473,6 +608,38 @@ pub mod default {
     };
     pub const ATTACK_DURATION: Range<Ms> = Range { min: Ms(0.0), max: Ms(0.0) };
     pub const RELEASE_DURATION: Range<Ms> = Range { min: Ms(0.0), max: Ms(0.0) };
+    pub const FIXED: Position = Position {
+        point: Point2 {
+            x: Metres(0.0),
+            y: Metres(0.0),
+        },
+        radians: 0.0,
+    };
+    pub const MAX_SPEED: Range<f64> = Range { min: 1.0, max: 5.0 };
+    pub const MAX_FORCE: Range<f64> = Range { min: 0.04, max: 0.06 };
+    pub const AGENT: movement::Agent = movement::Agent {
+        max_speed: MAX_SPEED,
+        max_force: MAX_FORCE,
+    };
+    pub const VERTICES: Range<usize> = Range { min: 3, max: 8 };
+    pub const NTH: Range<usize> = Range { min: 1, max: 3 };
+    pub const NORMALISED_WIDTH: f64 = 1.0;
+    pub const NORMALISED_HEIGHT: f64 = 1.0;
+    pub const NORMALISED_DIMENSIONS: Vector2<f64> = Vector2 {
+        x: NORMALISED_WIDTH,
+        y: NORMALISED_HEIGHT,
+    };
+    pub const RADIANS_OFFSET: f64 = ::std::f64::consts::PI * 0.5;
+    pub const SPEED: Range<f64> = Range { min: 1.0, max: 5.0 };
+    pub const NGON: movement::Ngon = movement::Ngon {
+        vertices: VERTICES,
+        nth: NTH,
+        normalised_dimensions: NORMALISED_DIMENSIONS,
+        radians_offset: RADIANS_OFFSET,
+        speed: SPEED,
+    };
+    pub const GENERATIVE: movement::Generative = movement::Generative::Agent(AGENT);
+    pub const MOVEMENT: Movement = Movement::Fixed(FIXED);
 
     pub fn spread() -> Metres {
         SPREAD
@@ -505,6 +672,10 @@ pub mod default {
     pub fn release_duration() -> Range<Ms> {
         RELEASE_DURATION
     }
+
+    pub fn movement() -> Movement {
+        MOVEMENT
+    }
 }
 
 impl Default for Soundscape {
@@ -516,6 +687,7 @@ impl Default for Soundscape {
         let playback_duration = default::PLAYBACK_DURATION;
         let attack_duration = default::ATTACK_DURATION;
         let release_duration = default::RELEASE_DURATION;
+        let movement = default::MOVEMENT;
         Soundscape {
             installations,
             groups,
@@ -524,6 +696,7 @@ impl Default for Soundscape {
             playback_duration,
             attack_duration,
             release_duration,
+            movement,
         }
     }
 }

@@ -3,15 +3,27 @@ use metres::Metres;
 use nannou::prelude::*;
 
 pub use self::agent::Agent;
+pub use self::ngon::Ngon;
 
 pub mod agent;
+pub mod ngon;
 
-/// The movement kind applied to an active sound.
+/// Whether the sound has fixed movement or generative movement.
 #[derive(Debug)]
 pub enum Movement {
-    /// Uses steering behaviour and basic forces to move an agent toward its desired
-    /// location.
+    /// The sound has a fixed location relative to the centre of the installation.
+    Fixed(audio::sound::Position),
+    /// The sound's movement is guided by a generative algorithm.
+    Generative(Generative),
+}
+
+/// Generative movement kinds applied to an active sound.
+#[derive(Debug)]
+pub enum Generative {
+    /// Uses steering behaviour and basic forces to move an agent toward its desired location.
     Agent(Agent),
+    /// A 2D N-sided, symmetrical polygon path tracing movement implementation.
+    Ngon(Ngon),
 }
 
 /// The bounding box for an iterator yielding points.
@@ -30,11 +42,22 @@ pub struct Area {
     pub centroid: Point2<Metres>,
 }
 
+impl Generative {
+    /// Determine the position and orientation of the sound.
+    pub fn position(&self) -> audio::sound::Position {
+        match *self {
+            Generative::Agent(ref agent) => agent.position(),
+            Generative::Ngon(ref ngon) => ngon.position(),
+        }
+    }
+}
+
 impl Movement {
     /// Determine the position and orientation of the sound.
     pub fn position(&self) -> audio::sound::Position {
         match *self {
-            Movement::Agent(ref agent) => agent.position(),
+            Movement::Fixed(position) => position,
+            Movement::Generative(ref generative) => generative.position(),
         }
     }
 }
@@ -74,9 +97,18 @@ impl BoundingRect {
 
     /// The middle of the bounding box.
     pub fn middle(&self) -> Point2<Metres> {
-        Point2 {
-            x: (self.left + self.right) * 0.5,
-            y: (self.bottom + self.top) * 0.5,
-        }
+        let width = self.width();
+        let height = self.height();
+        let x = self.left + width * 0.5;
+        let y = self.bottom + height * 0.5;
+        Point2 { x, y }
+    }
+
+    pub fn width(&self) -> Metres {
+        self.right - self.left
+    }
+
+    pub fn height(&self) -> Metres {
+        self.top - self.bottom
     }
 }

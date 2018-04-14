@@ -16,10 +16,11 @@ use time_calc::Ms;
 use utils::{self, duration_to_secs, Range, Seed};
 
 pub use self::group::Group;
-use self::movement::{BoundingRect, Movement};
+pub use self::movement::Movement;
+use self::movement::BoundingRect;
 
 pub mod group;
-mod movement;
+pub mod movement;
 
 const TICK_RATE_MS: u64 = 16;
 
@@ -101,15 +102,12 @@ pub struct Source {
 
 /// Represents a currently active sound spawned by the soundscape thread.
 pub struct ActiveSound {
+    /// The installation for which this sound was initially spawned.
+    pub initial_installation: Installation,
+    /// State related to active sound's assigned movement.
+    pub movement: Movement,
     /// The handle associated with this sound.
     handle: audio::sound::Handle,
-    /// State related to active sound's assigned movement.
-    movement: Movement,
-    // movement: fn(Tick) -> audio::sound::Position,
-    // TODO: We can probably remove this as we can always get them from `movement` in a purely
-    // functional manner?
-    // /// The current location and orientation of the sound.
-    // position: audio::sound::Position,
 }
 
 // The current positioning of an active sound.
@@ -126,6 +124,10 @@ pub struct Model {
     pub realtime_source_latency: Ms,
     /// The soundscape's deterministic source of randomness.
     seed: Seed,
+    /// How long the soundscape has been actively playing (in an un-paused state).
+    ///
+    /// This is updated upon each `Tick`.
+    playback_duration: time::Duration,
     /// All installations within the exhibition.
     installations: Installations,
     /// Constraints for collections of sources.
@@ -376,6 +378,70 @@ impl Model {
         }
     }
 
+    /// Updates the given source and all related sounds for the given new set of audio source
+    /// movement constraints.
+    pub fn update_source_movement(
+        &mut self,
+        source_id: &audio::source::Id,
+        movement: &audio::source::Movement,
+    ) {
+        // First, update the source at the given `Id`.
+        let clone = movement.clone();
+        self.update_source(source_id, |source| source.movement = clone);
+
+        // Now update all active sounds that use this source.
+        let Model {
+            seed,
+            ref playback_duration,
+            ref sources,
+            ref speakers,
+            ref installations,
+            ref mut active_sounds,
+            ..
+        } = *self;
+
+        // Collect the necessary data for generating a `Movement` instance from the constraints.
+        let mut installation_speakers = InstallationSpeakers::default();
+        update_installation_speakers(speakers, &mut installation_speakers);
+        let mut installation_areas = InstallationAreas::default();
+        update_installation_areas(speakers, &installation_speakers, &mut installation_areas);
+        let mut target_sounds_per_installation = TargetSoundsPerInstallation::default();
+        update_target_sounds_per_installation(
+            seed,
+            playback_duration,
+            installations,
+            &mut target_sounds_per_installation,
+        );
+        let active_sound_positions = active_sound_positions(active_sounds);
+
+        // Collect a map of all new movements.
+        for (sound_id, sound) in active_sound_positions {
+            // Only update sounds that use this source.
+            if sound.source_id != *source_id {
+                continue;
+            }
+
+            // Find the installation assigned to this sound.
+            match closest_assigned_installation(&sound, sources, &installation_areas) {
+                None => continue,
+                Some(installation) => {
+                    // Generate the movement.
+                    let movement = generate_movement(
+                        *source_id,
+                        sources,
+                        installation,
+                        installations,
+                        &installation_areas,
+                        &target_sounds_per_installation,
+                        &active_sounds,
+                    );
+                    // Update the sound.
+                    active_sounds.get_mut(&sound_id).unwrap().movement = movement;
+                },
+            }
+        }
+    }
+
     /// Remove a source from the inner hashmap.
     pub fn remove_source(&mut self, id: &audio::source::Id) -> Option<Source> {
         self.active_sounds
@@ -386,6 +452,27 @@ impl Model {
     /// Remove an active sound from the hashmap.
     pub fn remove_active_sound(&mut self, id: &audio::sound::Id) -> Option<ActiveSound> {
         self.active_sounds.remove(id)
+    }
+
+    /// Update the state of all active sounds spawned via the source with the given `Id`.
+    ///
+    /// Returns the number of active sounds that were updated.
+    pub fn update_active_sounds_with_source<F>(
+        &mut self,
+        source_id: audio::source::Id,
+        mut update: F,
+    ) -> usize
+    where
+        F: FnMut(&audio::sound::Id, &mut ActiveSound),
+    {
+        let mut count = 0;
+        for (id, sound) in self.active_sounds.iter_mut() {
+            if sound.handle.source_id() == source_id {
+                update(&id, sound);
+                count += 1;
+            }
+        }
+        count
     }
 }
 
@@ -495,6 +582,7 @@ pub fn spawn(
 
     // The model maintaining state between messages.
     let realtime_source_latency = audio::DEFAULT_REALTIME_SOURCE_LATENCY;
+    let playback_duration = time::Duration::from_secs(0);
     let installations = Default::default();
     let groups = Default::default();
     let sources = Default::default();
@@ -507,6 +595,7 @@ pub fn spawn(
     let model = Model {
         realtime_source_latency,
         seed,
+        playback_duration,
         installations,
         groups,
         sources,
@@ -707,27 +796,92 @@ fn agent_installation_data(
         .collect()
 }
 
-// Called each time the soundscape thread receives a tick.
-fn tick(model: &mut Model, tick: Tick) {
-    let Model {
-        realtime_source_latency,
-        seed,
-        ref installations,
-        ref groups,
-        ref speakers,
-        ref sources,
-        ref mut groups_last_used,
-        ref mut sources_last_used,
-        ref mut active_sounds,
-        ref mut installation_speakers,
-        ref mut installation_areas,
-        ref mut sound_id_gen,
-        ref audio_input_stream,
-        ref audio_output_stream,
-        ..
-    } = *model;
+// Generate a movement for some source within some given installation.
+fn generate_movement(
+    source_id: audio::source::Id,
+    sources: &Sources,
+    installation: Installation,
+    installations: &Installations,
+    installation_areas: &InstallationAreas,
+    target_sounds_per_installation: &TargetSoundsPerInstallation,
+    active_sounds: &ActiveSounds,
+) -> Movement {
+    match sources[&source_id].movement {
+        audio::source::Movement::Fixed(ref pos) => {
+            let area = installation_areas
+                .get(&installation)
+                .expect("no area for the given installation");
+            let point = pt2(area.centroid.x + pos.x, area.centroid.y + pos.y);
+            let radians = pos.radians;
+            let position = audio::sound::Position { point, radians };
+            Movement::Fixed(position)
+        },
+        audio::source::Movement::Generative(ref gen) => match *gen {
+            audio::source::movement::Generative::Agent(ref agent) => {
+                let mut rng = nannou::rand::thread_rng();
+                let r = &agent.max_speed;
+                let max_speed = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
+                let r = &agent.max_force;
+                let max_force = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
+                let active_sound_positions = active_sound_positions(active_sounds);
+                let installation_data = agent_installation_data(
+                    source_id,
+                    sources,
+                    installations,
+                    installation_areas,
+                    &target_sounds_per_installation,
+                    &active_sound_positions,
+                );
+                let agent = movement::Agent::generate(
+                    rng,
+                    installation,
+                    &installation_data,
+                    max_speed,
+                    max_force,
+                );
+                let generative = movement::Generative::Agent(agent);
+                let movement = Movement::Generative(generative);
+                movement
+            },
 
-    // Update the map from installations to speakers.
+            audio::source::movement::Generative::Ngon(ref ngon) => {
+                let mut rng = nannou::rand::thread_rng();
+                let r = &ngon.vertices;
+                let vertices = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
+                let r = &ngon.nth;
+                let nth = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
+                let r = &ngon.speed;
+                let speed = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
+                let bounding_rect = &installation_areas[&installation].bounding_rect;
+                let ngon = movement::Ngon::new(
+                    vertices,
+                    nth,
+                    ngon.normalised_dimensions,
+                    ngon.radians_offset,
+                    speed,
+                    bounding_rect,
+                );
+                let generative = movement::Generative::Ngon(ngon);
+                let movement = Movement::Generative(generative);
+                movement
+            }
+        },
+    }
+}
+
+// A unique, constant seed associated with the installation.
+fn installation_seed(installation: &Installation) -> [u32; 4] {
+    // Convert the installation to its integer representation.
+    let u = installation.to_u32();
+    let seed = [u; 4];
+    seed
+}
+
+// Update the map from installations to speakers.
+fn update_installation_speakers(
+    speakers: &Speakers,
+    installation_speakers: &mut InstallationSpeakers,
+) {
     for speakers in installation_speakers.values_mut() {
         speakers.clear();
     }
@@ -739,10 +893,16 @@ fn tick(model: &mut Model, tick: Tick) {
                 .push(id);
         }
     }
+}
 
-    // Create the map from installations to their areas.
-    //
-    // An installations `Area` is determined via the assigned speaker locations.
+// Update the map from installations to their areas.
+//
+// An installations `Area` is determined via the assigned speaker locations.
+fn update_installation_areas(
+    speakers: &Speakers,
+    installation_speakers: &InstallationSpeakers,
+    installation_areas: &mut InstallationAreas,
+) {
     installation_areas.clear();
     for (&installation, installation_speakers) in installation_speakers {
         let speaker_points = || installation_speakers.iter().map(|id| speakers[id].point);
@@ -760,60 +920,129 @@ fn tick(model: &mut Model, tick: Tick) {
         };
         installation_areas.insert(installation, area);
     }
+}
 
-    // A unique, constant seed associated with the installation.
-    fn installation_seed(installation: &Installation) -> [u32; 4] {
-        // Convert the installation to its integer representation.
-        let u = installation.to_u32();
-        let seed = [u; 4];
-        seed
+// Determine the target number of sounds for the given installation.
+//
+// We can determine this in a purely functional manner by using the playback duration as the phase
+// for a noise_walk signal.
+fn installation_target_sounds(
+    seed: Seed,
+    playback_duration: &time::Duration,
+    installation: &Installation,
+    constraints: &installation::Soundscape,
+) -> usize {
+    let playback_secs = duration_to_secs(playback_duration);
+    // Update the target number of sounds very slowly. Say, once every 5 minutes.
+    let hr_secs = 1.0 * 60.0 * 60.0;
+    let hz = 1.0 / hr_secs;
+    // Offset the phase using the `Installation` as a unique seed.
+    let mut noise_walk_seed = utils::add_seeds(&seed, &installation_seed(&installation));
+    if noise_walk_seed == [0, 0, 0, 0] {
+        noise_walk_seed[0] = 1;
     }
+    let mut rng = XorShiftRng::from_seed(noise_walk_seed);
+    let phase_offset: f64 = rng.gen();
+    let phase = phase_offset + playback_secs * hz;
+    let amp = noise_walk(phase);
+    let normalised_amp = amp * 0.5 + 0.5;
+    let range = &constraints.simultaneous_sounds;
+    let range_diff = range.max - range.min;
+    (range.min as f64 + normalised_amp * range_diff as f64) as usize
+}
+
+// Determine the target number of sounds per installation.
+//
+// We can determine this in a purely functional manner by using the playback duration as the phase
+// for a noise_walk signal.
+fn update_target_sounds_per_installation(
+    seed: Seed,
+    playback_duration: &time::Duration,
+    installations: &Installations,
+    target_sounds_per_installation: &mut TargetSoundsPerInstallation,
+) {
+    target_sounds_per_installation.clear();
+    for (installation, constraints) in installations {
+        let target_num_sounds = installation_target_sounds(
+            seed,
+            playback_duration,
+            installation,
+            constraints,
+        );
+        target_sounds_per_installation.insert(*installation, target_num_sounds);
+    }
+}
+
+// Called each time the soundscape thread receives a tick.
+fn tick(model: &mut Model, tick: Tick) {
+    let Model {
+        realtime_source_latency,
+        seed,
+        ref mut playback_duration,
+        ref installations,
+        ref groups,
+        ref speakers,
+        ref sources,
+        ref mut groups_last_used,
+        ref mut sources_last_used,
+        ref mut active_sounds,
+        ref mut installation_speakers,
+        ref mut installation_areas,
+        ref mut sound_id_gen,
+        ref audio_input_stream,
+        ref audio_output_stream,
+        ..
+    } = *model;
+
+    // Update the playback duration so far.
+    *playback_duration = tick.playback_duration;
+
+    // Update the map from installations to speakers.
+    update_installation_speakers(speakers, installation_speakers);
+
+    // Create the map from installations to their areas.
+    //
+    // An installations `Area` is determined via the assigned speaker locations.
+    update_installation_areas(speakers, installation_speakers, installation_areas);
 
     // Determine the target number of sounds per installation.
     //
     // We can determine this in a purely functional manner by using the playback duration as the
     // phase for a noise_walk signal.
     let mut target_sounds_per_installation: TargetSoundsPerInstallation = HashMap::default();
-    for (&installation, constraints) in installations {
-        let target_num_sounds = {
-            let playback_secs = duration_to_secs(&tick.playback_duration);
-            // Update the target number of sounds very slowly. Say, once every 5 minutes.
-            let hr_secs = 1.0 * 60.0 * 60.0;
-            let hz = 1.0 / hr_secs;
-            // Offset the phase using the `Installation` as a unique seed.
-            let mut noise_walk_seed = utils::add_seeds(&seed, &installation_seed(&installation));
-            if noise_walk_seed == [0, 0, 0, 0] {
-                noise_walk_seed[0] = 1;
-            }
-            let mut rng = XorShiftRng::from_seed(noise_walk_seed);
-            let phase_offset: f64 = rng.gen();
-            let phase = phase_offset + playback_secs * hz;
-            let amp = noise_walk(phase);
-            let normalised_amp = amp * 0.5 + 0.5;
-            let range = &constraints.simultaneous_sounds;
-            let range_diff = range.max - range.min;
-            (range.min as f64 + normalised_amp * range_diff as f64) as usize
-        };
-        target_sounds_per_installation.insert(installation, target_num_sounds);
-    }
+    update_target_sounds_per_installation(
+        seed,
+        &tick.playback_duration,
+        installations,
+        &mut target_sounds_per_installation,
+    );
 
-    // TODO: Update the movement of each active sound.
+    // Update the movement of each active sound.
     {
         let mut rng = nannou::rand::thread_rng();
         let active_sound_positions = active_sound_positions(active_sounds);
         for (&sound_id, sound) in active_sounds.iter_mut() {
+            let initial_installation_area = installation_areas.get(&sound.initial_installation);
             match sound.movement {
-                Movement::Agent(ref mut agent) => {
-                    let source_id = sound.handle.source_id();
-                    let installation_data = agent_installation_data(
-                        source_id,
-                        sources,
-                        installations,
-                        installation_areas,
-                        &target_sounds_per_installation,
-                        &active_sound_positions,
-                    );
-                    agent.update(&mut rng, &tick.since_last_tick, &installation_data);
+                Movement::Fixed(_) => (),
+                Movement::Generative(ref mut generative) => match *generative {
+                    movement::Generative::Agent(ref mut agent) => {
+                        let source_id = sound.handle.source_id();
+                        let installation_data = agent_installation_data(
+                            source_id,
+                            sources,
+                            installations,
+                            installation_areas,
+                            &target_sounds_per_installation,
+                            &active_sound_positions,
+                        );
+                        agent.update(&mut rng, &tick.since_last_tick, &installation_data);
+                    },
+                    movement::Generative::Ngon(ref mut ngon) => {
+                        if let Some(area) = initial_installation_area {
+                            ngon.update(&tick.since_last_tick, &area.bounding_rect);
+                        }
+                    },
                 },
             }
 
@@ -1211,10 +1440,21 @@ fn tick(model: &mut Model, tick: Tick) {
                     // This is not a continuous preview (this is only used for GUI sounds).
                     let continuous_preview = false;
 
-                    // Spawn the sound from this source now.
-                    let sound_id = sound_id_gen.generate_next();
-                    let source_id = source.id;
+                    // Choose a movement type based on the source's assigned options.
+                    let movement = generate_movement(
+                        source.id,
+                        &sources,
+                        *installation,
+                        installations,
+                        installation_areas,
+                        &target_sounds_per_installation,
+                        &active_sounds,
+                    );
+
+                    // Spawn the sound from this source
                     let audio_source = sources[&source.id].to_audio_source();
+                    let source_id = source.id;
+                    let sound_id = sound_id_gen.generate_next();
                     let sound = audio::sound::spawn_from_source(
                         sound_id,
                         source_id,
@@ -1233,32 +1473,9 @@ fn tick(model: &mut Model, tick: Tick) {
                     groups_last_used.insert(available_groups[group_index].id, tick.instant);
                     sources_last_used.insert(source_id, tick.instant);
 
-                    // TODO: Choose a movement type based on the source's assigned options.
-                    let agent = {
-                        let active_sound_positions = active_sound_positions(active_sounds);
-                        let installation_data = agent_installation_data(
-                            source.id,
-                            sources,
-                            installations,
-                            installation_areas,
-                            &target_sounds_per_installation,
-                            &active_sound_positions,
-                        );
-                        // TODO: Generate the max speed in metres per second from GUI constraints.
-                        let max_speed = 2.0 + 3.0 * rng.gen::<f64>();
-                        let max_force = 0.04 + 0.06 * rng.gen::<f64>();
-                        movement::Agent::generate(
-                            rng,
-                            *installation,
-                            &installation_data,
-                            max_speed,
-                            max_force,
-                        )
-                    };
-                    let movement = Movement::Agent(agent);
-
                     // Create the active sound for out use.
                     let active_sound = ActiveSound {
+                        initial_installation: *installation,
                         handle: sound,
                         movement,
                     };

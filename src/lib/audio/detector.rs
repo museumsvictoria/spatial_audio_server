@@ -24,6 +24,9 @@ type PeakDetector = sample::envelope::Detector<FrameType, Peak>;
 // The type of FFT used for analysis.
 pub type Fft = super::fft::Fft<[Complex<f32>; FFT_WINDOW_LEN]>;
 
+// The FFT planner type.
+pub type FftPlanner = super::fft::Planner;
+
 // RMS is monitored for visualisation, so we want a window size roughly the duration of one frame.
 //
 // A new visual frame is displayed roughly 60 times per second compared to 44_100 audio frames.
@@ -36,7 +39,7 @@ const PEAK_ATTACK_FRAMES: f32 = WINDOW_SIZE as f32 / 8.0;
 const PEAK_RELEASE_FRAMES: f32 = WINDOW_SIZE as f32 / 8.0;
 
 /// The length of the window used for performing the FFT.
-pub const FFT_WINDOW_LEN: usize = 1024;
+pub const FFT_WINDOW_LEN: usize = 512;
 
 /// The step between each frequency bin is equal to `samplerate / 2 * windowlength`.
 pub const FFT_BIN_STEP_HZ: f64 = audio::SAMPLE_RATE / (2.0 * FFT_WINDOW_LEN as f64);
@@ -105,7 +108,12 @@ impl FftDetector {
     }
 
     /// Calculate the FFT for all samples currently in the current ring buffer.
-    pub fn calc_fft(&self, fft: &mut Fft, freq_amps: &mut [f32]) {
-        fft.process(self.fft_samples.iter().cloned(), freq_amps);
+    pub fn calc_fft(
+        &self,
+        fft_planner: &mut FftPlanner,
+        fft: &mut Fft,
+        freq_amps: &mut [f32],
+    ) {
+        fft.process(fft_planner, self.fft_samples.iter().cloned(), freq_amps);
     }
 }

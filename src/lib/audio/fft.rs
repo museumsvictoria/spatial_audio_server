@@ -9,6 +9,9 @@ pub struct Fft<S> {
     output_window: S,
 }
 
+/// The FFT planner type used within the audio server.
+pub type Planner = FftPlanner<f32>;
+
 /// Slice types that may be used as buffers within the `Fft`.
 pub trait Slice {
     type Element;
@@ -45,11 +48,17 @@ where
     /// Perform an FFT on the given channel samples.
     ///
     /// **Panics** if the length of the given buffer differs from the inner buffers.
-    pub fn process<I>(&mut self, channel_samples: I, freq_amplitudes: &mut [f32])
+    pub fn process<I>(
+        &mut self,
+        planner: &mut Planner,
+        channel_samples: I,
+        freq_amplitudes: &mut [f32],
+    )
     where
         I: IntoIterator<Item = f32>,
     {
         process(
+            planner,
             channel_samples,
             self.input_window.slice_mut(),
             self.output_window.slice_mut(),
@@ -60,12 +69,14 @@ where
 
 /// Perform an FFT on the given channel samples.
 ///
+/// - `planner` is re-used to shared data between FFT calculations.
 /// - `channel_samples` is the PCM audio data.
 /// - `input_window` is the buffer for preparing the PCM data as complex numbers.
 /// - `output_window` is the buffer to which the FFT result is written.
 /// - `frequency_amplitudes_2` is the result amplitude^2 of each frequency bin. The step between
 /// each frequency bin is equal to `samplerate / 2 * windowlength`.
 pub fn process<I>(
+    planner: &mut Planner,
     channel_samples: I,
     input_window: &mut [Complex<f32>],
     output_window: &mut [Complex<f32>],
@@ -91,8 +102,6 @@ pub fn process<I>(
     assert_eq!(count, input_window.len());
 
     // Perform the fourier transform.
-    let inverse = false;
-    let mut planner = FftPlanner::new(inverse);
     let fft = planner.plan_fft(input_window.len());
     fft.process(input_window, output_window);
 
