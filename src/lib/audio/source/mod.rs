@@ -154,8 +154,8 @@ pub struct Soundscape {
 
 /// Items related to the movement of a source's associated sounds within a soundscape.
 pub mod movement {
-    use audio::sound::Position;
-    use nannou::math::Vector2;
+    use nannou::math::{Point2, Vector2};
+    use nannou::prelude::PI_F64;
     use utils::Range;
 
     /// The number of movement options.
@@ -165,21 +165,34 @@ pub mod movement {
     pub const NUM_GENERATIVE_OPTIONS: usize = 1;
 
     /// The absolute maximum speed of an agent.
-    pub const MAX_SPEED: f64 = 10.0;
+    pub const MAX_SPEED: f64 = 20.0;
 
     /// The absolute maximum force that may be applied to an agent's movement.
     pub const MAX_FORCE: f64 = 1.0;
 
     /// The maximum number of vertices in an Ngon.
-    pub const MAX_VERTICES: usize = 100;
+    pub const MAX_VERTICES: usize = 50;
+
+    /// The maximum allowed radians offset for rotating a Ngon.
+    pub const MAX_RADIANS_OFFSET: f64 = 2.0 * PI_F64;
+
+    /// The amount of skew applied to the perception of the max speed constraints.
+    pub const MAX_SPEED_SKEW: f32 = 0.25;
+
+    /// The amount of skew applied to the perception of the max speed constraints.
+    pub const MAX_FORCE_SKEW: f32 = 0.25;
 
     /// The skew applied to the perception of Ngon vertices, whether GUI or generative.
-    pub const VERTICES_SKEW: f32 = 0.25;
+    pub const VERTICES_SKEW: f32 = 0.5;
 
-    /// Whether a source may assigned to fixed or generative movement.
+    /// The skew applied to the perception of Ngon "nth" vertices.
+    pub const NTH_SKEW: f32 = 0.75;
+
+    /// Whether a source may assigned to normalised fixed position or generative movement.
     #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
     pub enum Movement {
-        Fixed(Position),
+        /// The position normalised to the constraints of the installation.
+        Fixed(Point2<f64>),
         Generative(Generative),
     }
 
@@ -215,7 +228,8 @@ pub mod movement {
         /// `1.0` means all points will extend to the bounds of the installation area.
         pub normalised_dimensions: Vector2<f64>,
         /// Some rotation that is applied to the Ngon's points around the centre.
-        pub radians_offset: f64,
+        #[serde(default = "super::default::radians_offset")]
+        pub radians_offset: Range<f64>,
         /// The rate at which the path is being travelled in metres per second.
         pub speed: Range<f64>,
     }
@@ -588,7 +602,6 @@ pub mod skew {
 }
 
 pub mod default {
-    use audio::sound::Position;
     use metres::Metres;
     use nannou::math::{Point2, Vector2};
     use super::{movement, Movement};
@@ -608,13 +621,7 @@ pub mod default {
     };
     pub const ATTACK_DURATION: Range<Ms> = Range { min: Ms(0.0), max: Ms(0.0) };
     pub const RELEASE_DURATION: Range<Ms> = Range { min: Ms(0.0), max: Ms(0.0) };
-    pub const FIXED: Position = Position {
-        point: Point2 {
-            x: Metres(0.0),
-            y: Metres(0.0),
-        },
-        radians: 0.0,
-    };
+    pub const FIXED: Point2<f64> = Point2 { x: 0.5, y: 0.5 };
     pub const MAX_SPEED: Range<f64> = Range { min: 1.0, max: 5.0 };
     pub const MAX_FORCE: Range<f64> = Range { min: 0.04, max: 0.06 };
     pub const AGENT: movement::Agent = movement::Agent {
@@ -629,7 +636,10 @@ pub mod default {
         x: NORMALISED_WIDTH,
         y: NORMALISED_HEIGHT,
     };
-    pub const RADIANS_OFFSET: f64 = ::std::f64::consts::PI * 0.5;
+    pub const RADIANS_OFFSET: Range<f64> = Range {
+        min: ::std::f64::consts::PI * 0.5,
+        max: ::std::f64::consts::PI * 0.5,
+    };
     pub const SPEED: Range<f64> = Range { min: 1.0, max: 5.0 };
     pub const NGON: movement::Ngon = movement::Ngon {
         vertices: VERTICES,
@@ -675,6 +685,10 @@ pub mod default {
 
     pub fn movement() -> Movement {
         MOVEMENT
+    }
+
+    pub fn radians_offset() -> Range<f64> {
+        RADIANS_OFFSET
     }
 }
 

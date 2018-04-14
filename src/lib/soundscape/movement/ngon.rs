@@ -161,13 +161,29 @@ impl Ngon {
             let vec = start.to_vec().lerp(end.to_vec(), state.position.lerp);
             let point = pt2(vec.x, vec.y);
             let distance = point.distance(end).abs();
+
+            // If there's no distance to travel, make sure the point is up to date with the
+            // installation bounds and return.
+            if travel_distance == 0.0 || distance == 0.0 {
+                state.sound_position.point = pt2::to_metres(point);
+                return;
+            }
+
             if travel_distance < distance {
                 let start_to_end = end - start;
-                let travel = start_to_end.normalize() * travel_distance;
+                let start_to_end_distance = start_to_end.magnitude();
+                let travel = if start_to_end_distance > 0.0 {
+                    start_to_end.normalize() * travel_distance
+                } else {
+                    vec2(0.0, 0.0)
+                };
                 let new_point = point + travel;
                 let new_distance = new_point.distance(end).abs();
-                let start_to_end_distance = start_to_end.magnitude();
-                let new_lerp = (start_to_end_distance - new_distance) / start_to_end_distance;
+                let new_lerp = if start_to_end_distance > 0.0 {
+                    (start_to_end_distance - new_distance) / start_to_end_distance
+                } else {
+                    0.0
+                };
                 let new_point = pt2::to_metres(new_point);
                 break (new_point, new_lerp);
             }
