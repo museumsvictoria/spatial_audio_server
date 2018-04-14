@@ -47,11 +47,12 @@ pub struct Sound {
 }
 
 /// The location and orientation or a **Sound** within an exhibition.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Position {
     /// The location within the exhibition within metres.
     pub point: Point2<Metres>,
     /// The orientation of the sound.
+    #[serde(default)]
     pub radians: f32,
 }
 

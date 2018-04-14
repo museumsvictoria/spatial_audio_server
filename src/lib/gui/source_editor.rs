@@ -263,13 +263,17 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         PAD + ITEM_HEIGHT * 2.0 + PAD + INSTALLATION_LIST_H + PAD;
     const SLIDER_H: Scalar = ITEM_HEIGHT;
     const SOUNDSCAPE_GROUP_LIST_H: Scalar = ITEM_HEIGHT * 3.0;
+    const BUTTON_H: Scalar = ITEM_HEIGHT;
     const SOUNDSCAPE_CANVAS_H: Scalar = PAD + TEXT_PAD + PAD
         + TEXT_PAD + PAD + SLIDER_H + PAD
         + TEXT_PAD + PAD + SLIDER_H + PAD
         + TEXT_PAD + PAD + SLIDER_H + PAD
         + TEXT_PAD + PAD + SLIDER_H + PAD
         + TEXT_PAD + PAD + SLIDER_H + PAD
-        + TEXT_PAD + PAD * 3.5 + SOUNDSCAPE_GROUP_LIST_H + PAD;
+        + TEXT_PAD + PAD * 3.5 + SOUNDSCAPE_GROUP_LIST_H + PAD
+        + TEXT_PAD + PAD * 2.0 + BUTTON_H + PAD + BUTTON_H + PAD
+        + TEXT_PAD + PAD * 2.0 + SLIDER_H + PAD
+        + TEXT_PAD + PAD * 2.0 + SLIDER_H + PAD;
     const LOOP_TOGGLE_H: Scalar = ITEM_HEIGHT;
     const PLAYBACK_MODE_H: Scalar = ITEM_HEIGHT;
     const WAV_CANVAS_H: Scalar =
@@ -1412,6 +1416,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 playback_duration,
                 attack_duration,
                 release_duration,
+                movement,
             } = soundscape;
 
             // A canvas on which installation selection widgets are instantiated.
@@ -1953,6 +1958,293 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
             if let Some(scrollbar) = scrollbar {
                 scrollbar.set(ui);
+            }
+
+            /////////////////////////
+            // Soundscape Movement //
+            /////////////////////////
+
+            widget::Text::new("Movement")
+                .mid_left_of(ids.source_editor_selected_soundscape_canvas)
+                .down(PAD * 2.0)
+                .font_size(SMALL_FONT_SIZE)
+                .set(ids.source_editor_selected_soundscape_movement_text, ui);
+
+            // A rightward flowing list for the movement kinds.
+            let canvas_kid_area = ui.kid_area_of(ids.source_editor_selected_soundscape_canvas).unwrap();
+            let n_items = audio::source::Movement::VARIANT_COUNT;
+            let item_w = canvas_kid_area.w() / n_items as Scalar;
+            let (mut events, _scrollbar) = widget::ListSelect::single(n_items)
+                .flow_right()
+                .down(PAD * 2.0)
+                .align_left()
+                .w(canvas_kid_area.w())
+                .h(BUTTON_H)
+                .item_size(item_w)
+                .set(ids.source_editor_selected_soundscape_movement_mode_list, ui);
+            let selected_index = movement.to_index();
+            let is_selected = |i| i == selected_index;
+            while let Some(event) = events.next(ui, &is_selected) {
+                use nannou::ui::widget::list_select::Event;
+                match event {
+                    Event::Item(item) => {
+                        let index = item.i;
+                        let selected = is_selected(index);
+                        let color = if selected { color::BLUE } else { color::DARK_CHARCOAL };
+                        let label = audio::source::Movement::label_from_index(index);
+                        let button = widget::Button::new()
+                            .label(&label)
+                            .label_font_size(SMALL_FONT_SIZE)
+                            .color(color);
+
+                        // If the button was clicked.
+                        for _click in item.set(button, ui) {
+                            let movement = match audio::source::Movement::from_index(index) {
+                                None => continue,
+                                Some(m) => m,
+                            };
+
+                            // Update local copy.
+                            let source_id = sources[i].id;
+                            let soundscape = sources[i].audio.role
+                                .as_mut()
+                                .expect("no role was assigned")
+                                .soundscape_mut()
+                                .expect("role was not soundscape");
+                            soundscape.movement = movement.clone();
+
+                            // Update the soundsape thread copy.
+                            channels
+                                .soundscape
+                                .send(move |soundscape| {
+                                    // Update the source and all associated active sounds.
+                                    soundscape.update_source_movement(&source_id, &movement);
+                                })
+                                .expect("could not update movement field on soundscape thread");
+                        }
+                    },
+                    _ => (),
+                }
+            }
+
+            // Depending on the selected movement, display the relevant widgets.
+            let generative = match movement {
+                audio::source::Movement::Fixed(position) => {
+                    // TODO: Fixed movement widgets.
+                    return area.id;
+                },
+                audio::source::Movement::Generative(generative) => generative,
+            };
+
+            ////////////////////////////////////
+            // Generative Soundscape Movement //
+            ////////////////////////////////////
+
+            // A rightward flowing list for the generative kinds.
+            let n_items = audio::source::movement::Generative::VARIANT_COUNT;
+            let item_w = canvas_kid_area.w() / n_items as Scalar;
+            let (mut events, _scrollbar) = widget::ListSelect::single(n_items)
+                .flow_right()
+                .down_from(ids.source_editor_selected_soundscape_movement_mode_list, PAD)
+                .align_left_of(ids.source_editor_selected_soundscape_movement_mode_list)
+                .w(canvas_kid_area.w())
+                .h(BUTTON_H)
+                .item_size(item_w)
+                .set(ids.source_editor_selected_soundscape_movement_generative_list, ui);
+            let selected_index = generative.to_index();
+            let is_selected = |i| i == selected_index;
+            while let Some(event) = events.next(ui, &is_selected) {
+                use nannou::ui::widget::list_select::Event;
+                match event {
+                    Event::Item(item) => {
+                        let index = item.i;
+                        let selected = is_selected(index);
+                        let color = if selected { color::BLUE } else { color::DARK_CHARCOAL };
+                        let label = audio::source::movement::Generative::label_from_index(index);
+                        let button = widget::Button::new()
+                            .label(&label)
+                            .label_font_size(SMALL_FONT_SIZE)
+                            .color(color);
+
+                        // If the button was clicked.
+                        for _click in item.set(button, ui) {
+                            let gen = match audio::source::movement::Generative::from_index(index) {
+                                None => continue,
+                                Some(m) => m,
+                            };
+
+                            // Update local copy.
+                            let source_id = sources[i].id;
+                            let soundscape = sources[i].audio.role
+                                .as_mut()
+                                .expect("no role was assigned")
+                                .soundscape_mut()
+                                .expect("role was not soundscape");
+                            let movement = audio::source::Movement::Generative(gen);
+                            soundscape.movement = movement.clone();
+
+                            // Update the soundsape thread copy.
+                            channels
+                                .soundscape
+                                .send(move |soundscape| {
+                                    // Update the source and all active sounds that use the given source.
+                                    soundscape.update_source_movement(&source_id, &movement);
+                                })
+                                .expect("could not update movement field on soundscape thread");
+                        }
+                    },
+                    _ => (),
+                }
+            }
+
+            // Depending on the selected generative movement, display the relevant widgets.
+            match generative {
+                audio::source::movement::Generative::Agent(mut agent) => {
+                    ///////////////
+                    // Max Speed //
+                    ///////////////
+
+                    widget::Text::new("Max Speed")
+                        .mid_left_of(ids.source_editor_selected_soundscape_canvas)
+                        .down(PAD * 2.0)
+                        .font_size(SMALL_FONT_SIZE)
+                        .set(ids.source_editor_selected_soundscape_movement_max_speed_text, ui);
+
+                    let min = agent.max_speed.min;
+                    let max = agent.max_speed.max;
+                    let total_min = 0.0;
+                    let total_max = audio::source::movement::MAX_SPEED;
+                    let label = format!("{:.2} to {:.2} metres per second", min, max);
+                    for (edge, value) in range_slider(min, max, total_min, total_max)
+                        .skew(0.5)
+                        .align_left()
+                        .label(&label)
+                        .down(PAD * 2.0)
+                        .set(ids.source_editor_selected_soundscape_movement_max_speed_slider, ui)
+                    {
+                        match edge {
+                            widget::range_slider::Edge::Start => agent.max_speed.min = value,
+                            widget::range_slider::Edge::End => agent.max_speed.max = value,
+                        }
+
+                        // Update local copy.
+                        let soundscape = sources[i].audio.role
+                            .as_mut()
+                            .expect("no role was assigned")
+                            .soundscape_mut()
+                            .expect("role was not soundscape");
+                        let generative = audio::source::movement::Generative::Agent(agent.clone());
+                        let movement = audio::source::Movement::Generative(generative);
+                        soundscape.movement = movement.clone();
+
+                        // Update the soundsape thread copy.
+                        let new_max_speed = agent.max_speed;
+                        channels
+                            .soundscape
+                            .send(move |soundscape| {
+                                // Update all active sounds.
+                                soundscape.update_active_sounds_with_source(source_id, |_, sound| {
+                                    let gen = match sound.movement {
+                                        soundscape::Movement::Generative(ref mut gen) => gen,
+                                        _ => return,
+                                    };
+                                    let agent = match *gen {
+                                        soundscape::movement::Generative::Agent(ref mut agent) => agent,
+                                        _ => return,
+                                    };
+                                    agent.max_speed = new_max_speed.clamp(agent.max_speed);
+                                });
+
+                                // Update the source.
+                                soundscape.update_source(&source_id, |source| {
+                                    let gen = match source.movement {
+                                        audio::source::Movement::Generative(ref mut gen) => gen,
+                                        _ => return,
+                                    };
+                                    let agent = match *gen {
+                                        audio::source::movement::Generative::Agent(ref mut agent) => agent,
+                                        _ => return,
+                                    };
+                                    agent.max_speed = new_max_speed;
+                                });
+                            })
+                            .ok();
+                    }
+
+                    ///////////////
+                    // Max Force //
+                    ///////////////
+
+                    widget::Text::new("Max Force")
+                        .mid_left_of(ids.source_editor_selected_soundscape_canvas)
+                        .down(PAD * 2.0)
+                        .font_size(SMALL_FONT_SIZE)
+                        .set(ids.source_editor_selected_soundscape_movement_max_force_text, ui);
+
+                    let min = agent.max_force.min;
+                    let max = agent.max_force.max;
+                    let total_min = 0.0;
+                    let total_max = audio::source::movement::MAX_FORCE;
+                    let label = format!("{:.2} to {:.2} metres per second squared", min, max);
+                    for (edge, value) in range_slider(min, max, total_min, total_max)
+                        .skew(0.25)
+                        .align_left()
+                        .label(&label)
+                        .down(PAD * 2.0)
+                        .set(ids.source_editor_selected_soundscape_movement_max_force_slider, ui)
+                    {
+                        match edge {
+                            widget::range_slider::Edge::Start => agent.max_force.min = value,
+                            widget::range_slider::Edge::End => agent.max_force.max = value,
+                        }
+
+                        // Update local copy.
+                        let soundscape = sources[i].audio.role
+                            .as_mut()
+                            .expect("no role was assigned")
+                            .soundscape_mut()
+                            .expect("role was not soundscape");
+                        let generative = audio::source::movement::Generative::Agent(agent.clone());
+                        let movement = audio::source::Movement::Generative(generative);
+                        soundscape.movement = movement.clone();
+
+                        // Update the soundsape thread copy.
+                        let new_max_force = agent.max_force;
+                        channels
+                            .soundscape
+                            .send(move |soundscape| {
+                                // Update all active sounds.
+                                soundscape.update_active_sounds_with_source(source_id, |_, sound| {
+                                    let gen = match sound.movement {
+                                        soundscape::Movement::Generative(ref mut gen) => gen,
+                                        _ => return,
+                                    };
+                                    let agent = match *gen {
+                                        soundscape::movement::Generative::Agent(ref mut agent) => agent,
+                                        _ => return,
+                                    };
+                                    agent.max_force = new_max_force.clamp(agent.max_force);
+                                });
+
+                                // Update the source.
+                                soundscape.update_source(&source_id, |source| {
+                                    let gen = match source.movement {
+                                        audio::source::Movement::Generative(ref mut gen) => gen,
+                                        _ => return,
+                                    };
+                                    let agent = match *gen {
+                                        audio::source::movement::Generative::Agent(ref mut agent) => agent,
+                                        _ => return,
+                                    };
+                                    agent.max_force = new_max_force;
+                                });
+                            })
+                            .ok();
+                    }
+
+                },
+                audio::source::movement::Generative::Ngon(ngon) => {
+                },
             }
         },
 

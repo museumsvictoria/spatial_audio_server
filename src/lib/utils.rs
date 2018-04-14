@@ -30,6 +30,22 @@ pub struct Range<T> {
     pub max: T,
 }
 
+impl<T> Range<T> {
+    /// Clamp the given value to the range.
+    pub fn clamp(&self, value: T) -> T
+    where
+        T: Clone + PartialOrd,
+    {
+        if value < self.min {
+            self.min.clone()
+        } else if value > self.max {
+            self.max.clone()
+        } else {
+            value
+        }
+    }
+}
+
 pub enum HumanReadableTime {
     Ms,
     Secs,

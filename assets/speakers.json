@@ -74,8 +74,8 @@
     {
       "audio": {
         "point": {
-          "x": 25.21269113366472,
-          "y": 22.398232501328129
+          "x": 25.376088027667217,
+          "y": 22.55355982939041
         },
         "channel": 5,
         "installations": [
@@ -92,7 +92,9 @@
           "y": 19.750314116379874
         },
         "channel": 6,
-        "installations": []
+        "installations": [
+          "Cacophony"
+        ]
       },
       "name": "S_ch7",
       "id": 6
@@ -104,7 +106,9 @@
           "y": 19.7739123971561
         },
         "channel": 7,
-        "installations": []
+        "installations": [
+          "Cacophony"
+        ]
       },
       "name": "S_ch8",
       "id": 7

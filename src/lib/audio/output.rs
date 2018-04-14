@@ -100,6 +100,8 @@ pub struct Model {
     dbap_speakers: Vec<dbap::Speaker>,
     /// A buffer to re-use for storing the gain for each speaker produced by DBAP.
     dbap_speaker_gains: Vec<f32>,
+    /// The FFT planner used to prepare the FFT calculations and share data between them.
+    fft_planner: fft::Planner,
     /// The FFT to re-use by each of the `Detector`s.
     fft: Fft,
     /// A buffer for retrieving the frequency amplitudes from the `fft`.
@@ -156,6 +158,8 @@ impl Model {
         let in_window = [Complex::<f32>::zero(); FFT_WINDOW_LEN];
         let out_window = [Complex::<f32>::zero(); FFT_WINDOW_LEN];
         let fft = Fft::new(in_window, out_window);
+        let inverse = false;
+        let fft_planner = fft::Planner::new(inverse);
 
         // A buffer for retrieving the frequency amplitudes from the `fft`.
         let fft_frequency_amplitudes_2 = Box::new([0.0; FFT_WINDOW_LEN / 2]);
@@ -185,6 +189,7 @@ impl Model {
             dbap_speakers,
             dbap_speaker_gains,
             fft,
+            fft_planner,
             fft_frequency_amplitudes_2,
         }
     }
@@ -332,6 +337,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref osc_output_msg_tx,
             ref soundscape_tx,
             ref mut fft,
+            ref mut fft_planner,
             ref mut fft_frequency_amplitudes_2,
         } = model;
 
@@ -478,7 +484,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
             // The current env and fft detector states.
             let (rms, peak) = env_detector.current();
-            fft_detector.calc_fft(fft, &mut fft_frequency_amplitudes_2[..]);
+            fft_detector.calc_fft(fft_planner, fft, &mut fft_frequency_amplitudes_2[..]);
             let (l_2, m_2, h_2) = fft::lmh(&fft_frequency_amplitudes_2[..]);
             let mut fft_8_bins_2 = [0.0; 8];
             fft::mel_bins(&fft_frequency_amplitudes_2[..], &mut fft_8_bins_2);
