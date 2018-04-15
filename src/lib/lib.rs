@@ -52,9 +52,6 @@ struct Model {
 
 // Initialise the state of the application.
 fn model(app: &App) -> Model {
-    // Don't keep looping, just wait for events.
-    app.set_loop_mode(LoopMode::wait(3));
-
     // Find the assets directory.
     let assets = app.assets_path()
         .expect("could not find assets directory");
@@ -168,7 +165,7 @@ fn model(app: &App) -> Model {
 }
 
 // Update the application in accordance with the given event.
-fn event(app: &App, mut model: Model, event: Event) -> Model {
+fn event(_app: &App, mut model: Model, event: Event) -> Model {
     match event {
         Event::WindowEvent {
             simple: Some(_event),
@@ -176,14 +173,6 @@ fn event(app: &App, mut model: Model, event: Event) -> Model {
         } => {}
         Event::Update(_update) => {
             model.gui.update();
-
-            // If there are active sounds playing we should loop at a consistent rate for
-            // visualisation. Otherwise, only update on interactions.
-            if model.gui.is_animating() {
-                app.set_loop_mode(LoopMode::rate_fps(60.0));
-            } else {
-                app.set_loop_mode(LoopMode::wait(3));
-            }
         }
         _ => (),
     }
