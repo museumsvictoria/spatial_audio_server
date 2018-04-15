@@ -87,7 +87,6 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
     // The canvas on which the log will be placed.
     let canvas = widget::Canvas::new()
-        .scroll_kids()
         .pad(0.0)
         .h(speaker_editor_canvas_h);
     area.set(canvas, gui);
