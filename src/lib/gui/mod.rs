@@ -99,12 +99,17 @@ pub struct State {
     speaker_editor: SpeakerEditor,
     source_editor: SourceEditor,
     soundscape_editor: SoundscapeEditor,
-    max_input_channels: usize,
+    audio_channels: AudioChannels,
     // Menu states.
     side_menu_is_open: bool,
     osc_in_log_is_open: bool,
     osc_out_log_is_open: bool,
     interaction_log_is_open: bool,
+}
+
+struct AudioChannels {
+    input: usize,
+    output: usize,
 }
 
 fn master_path(assets: &Path) -> PathBuf {
@@ -146,7 +151,8 @@ impl Model {
         window_id: WindowId,
         channels: Channels,
         sound_id_gen: audio::sound::IdGenerator,
-        max_input_channels: usize,
+        audio_input_channels: usize,
+        audio_output_channels: usize,
     ) -> Self {
         let mut ui = app.new_ui(window_id)
             .with_theme(theme::construct())
@@ -175,7 +181,11 @@ impl Model {
         let images = Images { floorplan };
 
         // Initialise the GUI state.
-        let state = State::new(assets, config, &channels, max_input_channels);
+        let audio_channels = AudioChannels {
+            input: audio_input_channels,
+            output: audio_output_channels,
+        };
+        let state = State::new(assets, config, &channels, audio_channels);
 
         // Initialise the audio monitor.
         let active_sounds = HashMap::new();
@@ -356,11 +366,11 @@ impl Model {
 impl State {
     /// Initialise the `State` and send any loaded speakers and sources to the audio and composer
     /// threads.
-    pub fn new(
+    fn new(
         assets: &Path,
         config: Config,
         channels: &Channels,
-        max_input_channels: usize,
+        audio_channels: AudioChannels,
     ) -> Self {
         // Load the master parameters.
         let params = utils::load_from_json_or_default(&master_path(assets));
@@ -557,7 +567,7 @@ impl State {
             osc_in_log,
             osc_out_log,
             interaction_log,
-            max_input_channels,
+            audio_channels,
             side_menu_is_open: true,
             osc_in_log_is_open: false,
             osc_out_log_is_open: false,
@@ -1406,6 +1416,7 @@ fn set_widgets(gui: &mut Gui) {
         for i in 0..state.speaker_editor.speakers.len() {
             let widget_id = ids.floorplan_speakers[i];
             let speaker_id = state.speaker_editor.speakers[i].id;
+            let channel = state.speaker_editor.speakers[i].audio.channel;
             let rms = match audio_monitor.speakers.get(&speaker_id) {
                 Some(levels) => levels.rms,
                 _ => 0.0,
@@ -1470,7 +1481,11 @@ fn set_widgets(gui: &mut Gui) {
             let color = if Some(i) == state.speaker_editor.selected {
                 color::BLUE
             } else {
-                color::DARK_RED
+                if channel < state.audio_channels.output {
+                    color::DARK_RED
+                } else {
+                    color::DARK_RED.with_luminance(0.15)
+                }
             };
             let color = match ui.widget_input(widget_id).mouse() {
                 Some(mouse) => if mouse.buttons.left().is_down() {
@@ -1685,7 +1700,11 @@ fn set_widgets(gui: &mut Gui) {
                     state.master.params.dbap_rolloff_db,
                     &mut speakers_in_proximity,
                 );
-                for &(amp_scaler, speaker_index) in &speakers_in_proximity {
+                let output_channels = state.audio_channels.output;
+                for &(amp_scaler, speaker_index) in speakers_in_proximity.iter() {
+                    if output_channels <= speaker_index {
+                        continue;
+                    }
                     const MAX_THICKNESS: Scalar = 16.0;
                     let amp = channel_amp * amp_scaler;
                     let thickness = amp as Scalar * MAX_THICKNESS;
