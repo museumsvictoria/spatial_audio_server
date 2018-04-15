@@ -170,8 +170,8 @@ impl<'a> Widget for Sound<'a> {
                 .parent(id)
                 .set(line_id, ui);
 
-            let radius_amp = radius * amp as f64;
-            let channel_radius = radius * 0.75 + radius_amp;
+            let radius_amp = radius * (amp as f64) * 1.2;
+            let channel_radius = radius * 0.6 + radius_amp;
             widget::Circle::fill(channel_radius)
                 .x_y(ch_x, ch_y)
                 .color(color)
