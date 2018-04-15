@@ -1070,6 +1070,7 @@ widget_ids! {
         floorplan_canvas,
         floorplan,
         floorplan_speakers[],
+        floorplan_speaker_labels[],
         floorplan_sounds[],
         floorplan_channel_to_speaker_lines[],
     }
@@ -1412,9 +1413,14 @@ fn set_widgets(gui: &mut Gui) {
             let id_gen = &mut ui.widget_id_generator();
             ids.floorplan_speakers.resize(num_speakers, id_gen);
         }
+        if ids.floorplan_speaker_labels.len() < num_speakers {
+            let id_gen = &mut ui.widget_id_generator();
+            ids.floorplan_speaker_labels.resize(num_speakers, id_gen);
+        }
 
         for i in 0..state.speaker_editor.speakers.len() {
             let widget_id = ids.floorplan_speakers[i];
+            let label_widget_id = ids.floorplan_speaker_labels[i];
             let speaker_id = state.speaker_editor.speakers[i].id;
             let channel = state.speaker_editor.speakers[i].audio.channel;
             let rms = match audio_monitor.speakers.get(&speaker_id) {
@@ -1505,6 +1511,15 @@ fn set_widgets(gui: &mut Gui) {
                 .parent(ids.floorplan)
                 .color(color)
                 .set(widget_id, ui);
+
+            // Write the channel number on the speaker.
+            let label = format!("{}", channel);
+            let font_size = (radius * 0.75) as ui::FontSize;
+            widget::Text::new(&label)
+                .x_y(x, y)
+                .font_size(font_size)
+                .graphics_for(widget_id)
+                .set(label_widget_id, ui);
         }
     }
 
