@@ -751,15 +751,18 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 None => {
                     let sound_id = sound_id_gen.generate_next();
                     preview.current = Some((new_mode, sound_id));
+
                     // Set the preview position to the centre of the camera if not yet set.
                     if preview.point.is_none() {
                         preview.point = Some(camera.position);
                     }
+
                     // Send the selected source to the audio thread for playback.
                     let should_cycle = match new_mode {
                         SourcePreviewMode::OneShot => false,
                         SourcePreviewMode::Continuous => true,
                     };
+
                     // No attack or release for previews.
                     let attack_duration = Samples(0);
                     let release_duration = Samples(0);
@@ -768,10 +771,16 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         point: preview.point.unwrap(),
                         radians: 0.0,
                     };
+
+                    // When previewing sounds, remove the role so they play back through all
+                    // speakers.
+                    let mut audio = source.audio.clone();
+                    audio.role = None;
+
                     let _handle = audio::sound::spawn_from_source(
                         sound_id,
                         source.id,
-                        &source.audio,
+                        &audio,
                         position,
                         attack_duration,
                         release_duration,
