@@ -101,7 +101,6 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
     // The canvas on which the soundscape editor will be placed.
     let canvas = widget::Canvas::new()
-        .scroll_kids()
         .pad(PAD)
         .h(soundscape_editor_canvas_h);
     area.set(canvas, ui);

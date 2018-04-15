@@ -1085,6 +1085,7 @@ pub fn collapsible_area(
     widget::CollapsibleArea::new(is_open, text)
         .w_of(side_menu_id)
         .h(ITEM_HEIGHT)
+        .parent(side_menu_id)
 }
 
 // Begin building a basic info text block.
