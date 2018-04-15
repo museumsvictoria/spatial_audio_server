@@ -16,6 +16,7 @@ path = "src/lib/lib.rs"
 conrod = { git = "https://github.com/mitchmindtree/conrod", branch = "winit_glium_update", features = ["winit", "glium"] }
 conrod_derive = "0.1"
 custom_derive = "0.1"
+fxhash = "0.2"
 hound = "3.3"
 mindtree_utils = "0.4"
 newtype_derive = "0.1"
