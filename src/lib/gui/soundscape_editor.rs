@@ -3,12 +3,12 @@
 //! - Play/Pause toggle for the soundscape.
 //! - Groups panel for creating/removing soundscape source groups.
 
+use fxhash::FxHashMap;
 use gui::{collapsible_area, hz_label, Gui, State};
 use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
 use nannou::ui;
 use nannou::ui::prelude::*;
 use soundscape;
-use std::collections::HashMap;
 use std::ops;
 use time_calc::Ms;
 use utils;
@@ -16,7 +16,7 @@ use utils;
 /// GUI state related to the soundscape editor area.
 pub struct SoundscapeEditor {
     pub is_open: bool,
-    pub groups: HashMap<soundscape::group::Id, Group>,
+    pub groups: FxHashMap<soundscape::group::Id, Group>,
     pub next_group_id: soundscape::group::Id,
     pub selected: Option<Selected>,
 }
@@ -31,7 +31,7 @@ pub struct Group {
 /// JSON friendly representation of the soundscape editor GUI state.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Stored {
-    pub groups: HashMap<soundscape::group::Id, Group>,
+    pub groups: FxHashMap<soundscape::group::Id, Group>,
     pub next_group_id: soundscape::group::Id,
 }
 

@@ -1,3 +1,4 @@
+use fxhash::FxHashMap;
 use gui::{self, collapsible_area, Channels, Gui};
 use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
 use installation::{self, ComputerId, Installation};
@@ -6,7 +7,6 @@ use nannou::osc::Connected;
 use nannou::ui;
 use nannou::ui::prelude::*;
 use osc;
-use std::collections::HashMap;
 use std::{io, net, ops};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -17,8 +17,8 @@ pub struct Address {
     pub osc_addr: String,
 }
 
-pub type AddressMap = HashMap<ComputerId, Address>;
-pub type ComputerMap = HashMap<Installation, AddressMap>;
+pub type AddressMap = FxHashMap<ComputerId, Address>;
+pub type ComputerMap = FxHashMap<Installation, AddressMap>;
 
 pub struct InstallationEditor {
     pub is_open: bool,
@@ -29,7 +29,7 @@ pub struct InstallationEditor {
 /// State to be serialized/deserialized.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct State {
-    pub installations: HashMap<Installation, installation::Soundscape>,
+    pub installations: FxHashMap<Installation, installation::Soundscape>,
     pub computer_map: ComputerMap,
 }
 

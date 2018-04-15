@@ -1,8 +1,8 @@
 use audio::{input, output, source, Source, SAMPLE_RATE};
+use fxhash::FxHashSet;
 use installation::Installation;
 use metres::Metres;
 use nannou::math::Point2;
-use std::collections::HashSet;
 use std::ops;
 use std::sync::{mpsc, Arc, Mutex};
 use std::sync::atomic::{self, AtomicBool};
@@ -425,7 +425,7 @@ impl Sound {
 #[derive(Debug)]
 pub enum Installations {
     All,
-    Set(HashSet<Installation>),
+    Set(FxHashSet<Installation>),
 }
 
 impl From<Option<source::Role>> for Installations {

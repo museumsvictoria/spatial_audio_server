@@ -1,9 +1,9 @@
 use audio;
+use fxhash::FxHashMap;
 use installation::Installation;
 use metres::Metres;
 use nannou::prelude::*;
 use nannou::rand::Rng;
-use std::collections::HashMap;
 use std::{cmp, time};
 use utils::{self, duration_to_secs, pt2, vt2};
 
@@ -49,7 +49,7 @@ pub struct InstallationData {
 }
 
 /// A map of installation data relevant to the agent.
-pub type InstallationDataMap = HashMap<Installation, InstallationData>;
+pub type InstallationDataMap = FxHashMap<Installation, InstallationData>;
 
 impl Agent {
     /// Generate a new agent starting in the given installation area.

@@ -1,8 +1,8 @@
+use fxhash::FxHashMap;
 use installation::{ComputerId, Installation};
 use nannou::osc;
 use nannou::osc::Type::{Float, Int};
 use std;
-use std::collections::HashMap;
 use std::iter::once;
 use std::sync::mpsc;
 
@@ -87,8 +87,8 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
     }
 
     // Each installation gets its own map of ComputerId -> Target.
-    type TargetMap = HashMap<ComputerId, Target>;
-    let mut osc_txs: HashMap<Installation, TargetMap> = HashMap::new();
+    type TargetMap = FxHashMap<ComputerId, Target>;
+    let mut osc_txs: FxHashMap<Installation, TargetMap> = Default::default();
 
     // Update channel.
     let (update_tx, update_rx) = mpsc::channel();
@@ -118,8 +118,8 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
         .unwrap();
 
     // A map containing the latest data received in terms of messages.
-    let mut last_received = HashMap::new();
-    let mut last_sent = HashMap::new();
+    let mut last_received = FxHashMap::default();
+    let mut last_sent = FxHashMap::default();
     for update in update_rx {
         match update {
             Update::Msg(msg) => match msg {
@@ -132,7 +132,7 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
                     OscTarget::Add(installation, computer, osc_tx, osc_addr) => {
                         osc_txs
                             .entry(installation)
-                            .or_insert_with(HashMap::default)
+                            .or_insert_with(FxHashMap::default)
                             .insert(computer, Target { osc_tx, osc_addr });
                     }
                     OscTarget::Remove(installation, computer) => {

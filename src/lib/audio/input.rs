@@ -4,9 +4,9 @@
 
 use audio::MAX_CHANNELS;
 use audio::source;
+use fxhash::FxHashMap;
 use nannou;
 use nannou::audio::Buffer;
-use std::collections::HashMap;
 use std::sync::{mpsc, Arc};
 use std::sync::atomic::{self, AtomicBool};
 
@@ -16,11 +16,11 @@ pub type Stream = nannou::audio::Stream<Model>;
 /// The state stored on each device's input audio stream.
 pub struct Model {
     // All sources that currently exist.
-    pub sources: HashMap<source::Id, source::Realtime>,
+    pub sources: FxHashMap<source::Id, source::Realtime>,
     // A map from channels to the sources that request audio from them them.
-    channel_targets: HashMap<usize, Vec<source::Id>>,
+    channel_targets: FxHashMap<usize, Vec<source::Id>>,
     // The currently active sounds using the realtime source with the given source ID.
-    pub active_sounds: HashMap<source::Id, Vec<ActiveSound>>,
+    pub active_sounds: FxHashMap<source::Id, Vec<ActiveSound>>,
 }
 
 /// The duration of an active sound's playback.
@@ -50,11 +50,11 @@ impl Model {
     /// This pre-allocates all possibly required memory for all of the model's buffers in order to
     /// avoid unexpected dynamic allocation within on the audio thread.
     pub fn new() -> Self {
-        let sources = HashMap::with_capacity(1024);
+        let sources = Default::default();
         let channel_targets = (0..MAX_CHANNELS)
             .map(|i| (i, Vec::with_capacity(1024)))
             .collect();
-        let active_sounds = HashMap::with_capacity(1024);
+        let active_sounds = Default::default();
         Model {
             sources,
             channel_targets,
