@@ -1619,12 +1619,21 @@ fn set_widgets(gui: &mut Gui) {
                     let channel_radians = source.audio.channel_radians;
                     let channel_count = source.audio.channel_count();
                     let position = active_sound.position;
+                    let id = source.id;
+                    let soloed = &state.source_editor.soloed;
+                    let color = if source.audio.muted || (!soloed.is_empty() && !soloed.contains(&id)) {
+                        color::LIGHT_CHARCOAL
+                    } else if soloed.contains(&id) {
+                        color::YELLOW
+                    } else {
+                        color::DARK_BLUE
+                    };
                     (
                         spread,
                         channel_radians,
                         channel_count,
                         position,
-                        color::DARK_BLUE,
+                        color,
                     )
                 }
             };
