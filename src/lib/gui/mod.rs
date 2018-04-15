@@ -1,5 +1,6 @@
 use audio;
 use config::Config;
+use fxhash::FxHashMap;
 use interaction::Interaction;
 use metres::Metres;
 use nannou;
@@ -11,7 +12,7 @@ use osc;
 use osc::input::Log as OscInputLog;
 use osc::output::Log as OscOutputLog;
 use soundscape::{self, Soundscape};
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::ops::{Deref, DerefMut};
 use std::sync::mpsc;
@@ -55,7 +56,7 @@ const SOUNDSCAPE_FILE_STEM: &'static str = "soundscape";
 // The name of the directory where the WAVs are stored.
 const AUDIO_DIRECTORY_NAME: &'static str = "audio";
 
-type ActiveSoundMap = HashMap<audio::sound::Id, ActiveSound>;
+type ActiveSoundMap = FxHashMap<audio::sound::Id, ActiveSound>;
 
 pub struct Model {
     pub ui: Ui,
@@ -188,8 +189,8 @@ impl Model {
         let state = State::new(assets, config, &channels, audio_channels);
 
         // Initialise the audio monitor.
-        let active_sounds = HashMap::new();
-        let speakers = HashMap::new();
+        let active_sounds = Default::default();
+        let speakers = Default::default();
         let audio_monitor = AudioMonitor {
             active_sounds,
             speakers,
@@ -805,7 +806,7 @@ impl<T> Deref for Log<T> {
 // A structure for monitoring the state of the audio thread for visualisation.
 struct AudioMonitor {
     active_sounds: ActiveSoundMap,
-    speakers: HashMap<audio::speaker::Id, ChannelLevels>,
+    speakers: FxHashMap<audio::speaker::Id, ChannelLevels>,
 }
 
 // The state of an active sound.

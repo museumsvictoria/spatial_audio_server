@@ -1,4 +1,5 @@
 use audio;
+use fxhash::{FxHashMap, FxHashSet};
 use installation::{self, Installation};
 use metres::Metres;
 use mindtree_utils::noise_walk;
@@ -6,7 +7,6 @@ use nannou;
 use nannou::prelude::*;
 use nannou::rand::{Rng, SeedableRng, XorShiftRng};
 use std::cmp;
-use std::collections::{HashMap, HashSet};
 use std::ops;
 use std::sync::atomic::AtomicBool;
 use std::sync::{atomic, mpsc, Arc, Mutex};
@@ -24,18 +24,18 @@ pub mod movement;
 
 const TICK_RATE_MS: u64 = 16;
 
-type Installations = HashMap<Installation, installation::Soundscape>;
-type Groups = HashMap<group::Id, Group>;
-type Sources = HashMap<audio::source::Id, Source>;
-type Speakers = HashMap<audio::speaker::Id, Speaker>;
-type GroupsLastUsed = HashMap<group::Id, time::Instant>;
-type SourcesLastUsed = HashMap<audio::source::Id, time::Instant>;
-type InstallationAreas = HashMap<Installation, movement::Area>;
-type InstallationSpeakers = HashMap<Installation, Vec<audio::speaker::Id>>;
-type ActiveSounds = HashMap<audio::sound::Id, ActiveSound>;
-type ActiveSoundPositions = HashMap<audio::sound::Id, ActiveSoundPosition>;
-type ActiveSoundsPerInstallation = HashMap<Installation, Vec<audio::sound::Id>>;
-type TargetSoundsPerInstallation = HashMap<Installation, usize>;
+type Installations = FxHashMap<Installation, installation::Soundscape>;
+type Groups = FxHashMap<group::Id, Group>;
+type Sources = FxHashMap<audio::source::Id, Source>;
+type Speakers = FxHashMap<audio::speaker::Id, Speaker>;
+type GroupsLastUsed = FxHashMap<group::Id, time::Instant>;
+type SourcesLastUsed = FxHashMap<audio::source::Id, time::Instant>;
+type InstallationAreas = FxHashMap<Installation, movement::Area>;
+type InstallationSpeakers = FxHashMap<Installation, Vec<audio::speaker::Id>>;
+type ActiveSounds = FxHashMap<audio::sound::Id, ActiveSound>;
+type ActiveSoundPositions = FxHashMap<audio::sound::Id, ActiveSoundPosition>;
+type ActiveSoundsPerInstallation = FxHashMap<Installation, Vec<audio::sound::Id>>;
+type TargetSoundsPerInstallation = FxHashMap<Installation, usize>;
 
 /// The kinds of messages received by the soundscape thread.
 pub enum Message {
@@ -85,7 +85,7 @@ pub struct Speaker {
     /// The position of the speaker in metres.
     pub point: Point2<Metres>,
     /// All installations assigned to the speaker.
-    pub installations: HashSet<Installation>,
+    pub installations: FxHashSet<Installation>,
 }
 
 /// Properties of an audio source that are relevant to the soundscape thread.
@@ -1016,7 +1016,7 @@ fn tick(model: &mut Model, tick: Tick) {
     //
     // We can determine this in a purely functional manner by using the playback duration as the
     // phase for a noise_walk signal.
-    let mut target_sounds_per_installation: TargetSoundsPerInstallation = HashMap::default();
+    let mut target_sounds_per_installation: TargetSoundsPerInstallation = Default::default();
     update_target_sounds_per_installation(
         seed,
         &tick.playback_duration,

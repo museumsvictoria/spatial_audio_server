@@ -7,6 +7,7 @@ use audio::{DISTANCE_BLUR, PROXIMITY_LIMIT_2, Sound, Speaker, MAX_CHANNELS};
 use audio::detector::{EnvDetector, Fft, FftDetector, FFT_WINDOW_LEN};
 use audio::{dbap, source, sound, speaker};
 use audio::fft;
+use fxhash::{FxHashMap, FxHashSet};
 use gui;
 use installation::{self, Installation};
 use metres::Metres;
@@ -18,7 +19,6 @@ use rustfft::num_complex::Complex;
 use rustfft::num_traits::Zero;
 use soundscape;
 use std;
-use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use utils;
 
@@ -75,13 +75,13 @@ pub struct Model {
     /// The DBAP rolloff decibel amount, used to attenuate speaker gains over distances.
     pub dbap_rolloff_db: f64,
     /// The set of sources that are currently soloed. If not empty, only these sounds should play.
-    pub soloed: HashSet<source::Id>,
+    pub soloed: FxHashSet<source::Id>,
     /// A map from audio sound IDs to the audio sounds themselves.
-    sounds: HashMap<sound::Id, ActiveSound>,
+    sounds: FxHashMap<sound::Id, ActiveSound>,
     /// A map from speaker IDs to the speakers themselves.
-    speakers: HashMap<speaker::Id, ActiveSpeaker>,
+    speakers: FxHashMap<speaker::Id, ActiveSpeaker>,
     // /// A map from a speaker's assigned channel to the ID of the speaker.
-    // channel_to_speaker: HashMap<usize, speaker::Id>,
+    // channel_to_speaker: FxHashMap<usize, speaker::Id>,
     /// A buffer for collecting the speakers within proximity of the sound's position.
     unmixed_samples: Vec<f32>,
     /// A buffer for collecting sounds that have been removed due to completing.
@@ -93,7 +93,7 @@ pub struct Model {
     /// A handle to the soundscape thread - for notifying when a sound is complete.
     soundscape_tx: mpsc::Sender<soundscape::Message>,
     /// An analysis per installation to re-use for sending to the OSC output thread.
-    installation_analyses: HashMap<Installation, Vec<SpeakerAnalysis>>,
+    installation_analyses: FxHashMap<Installation, Vec<SpeakerAnalysis>>,
     /// A buffer to re-use for DBAP speaker calculations.
     ///
     /// The index of the speaker is its channel.
@@ -131,10 +131,10 @@ impl Model {
         let soloed = Default::default();
 
         // A map from audio sound IDs to the audio sounds themselves.
-        let sounds = HashMap::with_capacity(1024);
+        let sounds = Default::default();
 
         // A map from speaker IDs to the speakers themselves.
-        let speakers = HashMap::with_capacity(MAX_CHANNELS);
+        let speakers = Default::default();
 
         // A buffer for collecting frames from `Sound`s that have not yet been mixed and written.
         let unmixed_samples = vec![0.0; 1024];

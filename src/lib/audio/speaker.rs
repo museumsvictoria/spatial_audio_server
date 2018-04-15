@@ -1,8 +1,8 @@
 use audio;
+use fxhash::FxHashSet;
 use installation::Installation;
 use metres::Metres;
 use nannou::math::Point2;
-use std::collections::HashSet;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct Id(pub u64);
@@ -18,13 +18,13 @@ pub struct Speaker {
     pub channel: usize,
     // Installations assigned to this speaker.
     #[serde(default)]
-    pub installations: HashSet<Installation>,
+    pub installations: FxHashSet<Installation>,
 }
 
 /// Calculate a speaker's DBAP weight taking into consideration its assigned installations.
 pub fn dbap_weight(
     sound_installations: &audio::sound::Installations,
-    speaker_installations: &HashSet<Installation>,
+    speaker_installations: &FxHashSet<Installation>,
 ) -> f64
 {
     match *sound_installations {

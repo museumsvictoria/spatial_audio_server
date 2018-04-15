@@ -7,6 +7,7 @@ extern crate conrod;
 extern crate conrod_derive;
 #[macro_use]
 extern crate custom_derive;
+extern crate fxhash;
 extern crate hound; // wav loading
 extern crate nannou;
 #[macro_use]

@@ -1,6 +1,7 @@
 use audio;
 use audio::source::Role;
 use audio::source::wav::Playback;
+use fxhash::FxHashSet;
 use gui::{collapsible_area, duration_label, hz_label, Gui, State};
 use gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
 use installation::{self, Installation};
@@ -10,7 +11,6 @@ use nannou::ui;
 use nannou::ui::prelude::*;
 use soundscape;
 use std;
-use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::mem;
 use std::ops;
@@ -23,7 +23,7 @@ pub struct SourceEditor {
     pub is_open: bool,
     pub sources: Vec<Source>,
     // The tracks that currently have solo enabled.
-    pub soloed: HashSet<audio::source::Id>,
+    pub soloed: FxHashSet<audio::source::Id>,
     // The index of the selected source.
     pub selected: Option<usize>,
     // The next ID to be used for a new source.
@@ -58,7 +58,7 @@ pub struct StoredSources {
     #[serde(default = "first_source_id")]
     pub next_id: audio::source::Id,
     #[serde(default)]
-    pub soloed: HashSet<audio::source::Id>,
+    pub soloed: FxHashSet<audio::source::Id>,
 }
 
 pub fn first_source_id() -> audio::source::Id {

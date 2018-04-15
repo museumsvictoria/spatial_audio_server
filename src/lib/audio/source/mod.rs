@@ -1,9 +1,9 @@
+use fxhash::FxHashSet;
 use installation::Installation;
 use metres::Metres;
 use nannou::math::map_range;
 use nannou::rand::Rng;
 use soundscape;
-use std::collections::HashSet;
 use std::ops;
 use time_calc::{Ms, Samples};
 use utils::{self, Range};
@@ -135,9 +135,9 @@ pub enum Role {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Soundscape {
     #[serde(default)]
-    pub installations: HashSet<Installation>,
+    pub installations: FxHashSet<Installation>,
     #[serde(default)]
-    pub groups: HashSet<soundscape::group::Id>,
+    pub groups: FxHashSet<soundscape::group::Id>,
     #[serde(default = "default::occurrence_rate")]
     pub occurrence_rate: Range<Ms>,
     #[serde(default = "default::simultaneous_sounds")]
