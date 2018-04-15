@@ -535,7 +535,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         .align_left()
         .label(&label)
         .down(PAD * 2.0)
-        .set(ids.soundscape_editor_simultaneous_sounds_slider, ui)
+        .set(ids.installation_editor_soundscape_simultaneous_sounds_slider, ui)
     {
         let num = value as usize;
 
