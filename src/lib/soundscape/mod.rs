@@ -950,7 +950,8 @@ fn installation_target_sounds(
     let mut rng = XorShiftRng::from_seed(noise_walk_seed);
     let phase_offset: f64 = rng.gen();
     let phase = phase_offset + playback_secs * hz;
-    let amp = noise_walk(phase);
+    // Amplify the noise_walk slightly so that it occasionally reaches min and max.
+    let amp = (noise_walk(phase) * 1.5).min(1.0).max(-1.0);
     let normalised_amp = amp * 0.5 + 0.5;
     let range = &constraints.simultaneous_sounds;
     let range_diff = range.max - range.min;
