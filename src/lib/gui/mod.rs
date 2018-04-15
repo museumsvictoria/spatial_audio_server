@@ -1730,7 +1730,7 @@ fn set_widgets(gui: &mut Gui) {
                         continue;
                     }
                     const MAX_THICKNESS: Scalar = 16.0;
-                    let amp = channel_amp * amp_scaler;
+                    let amp = (channel_amp * amp_scaler).powf(0.75);
                     let thickness = amp as Scalar * MAX_THICKNESS;
                     let speaker_point_m = speakers[speaker_index].audio.point;
                     let (s_x, s_y) = position_metres_to_gui(speaker_point_m, &state.camera);
@@ -1744,7 +1744,7 @@ fn set_widgets(gui: &mut Gui) {
 
                     let line_id = ids.floorplan_channel_to_speaker_lines[line_index];
                     widget::Line::abs([ch_x, ch_y], [s_x, s_y])
-                        .color(line_color.alpha(amp_scaler))
+                        .color(line_color.alpha(amp_scaler.powf(0.75)))
                         .depth(1.0)
                         .thickness(thickness)
                         .parent(ids.floorplan)
