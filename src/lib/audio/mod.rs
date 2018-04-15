@@ -22,7 +22,10 @@ pub const PROXIMITY_LIMIT: Metres = Metres(5.0);
 pub const PROXIMITY_LIMIT_2: Metres = Metres(PROXIMITY_LIMIT.0 * PROXIMITY_LIMIT.0);
 
 /// The maximum number of audio channels.
+#[cfg(not(feature = "test_with_stereo"))]
 pub const MAX_CHANNELS: usize = 128;
+#[cfg(feature = "test_with_stereo")]
+pub const MAX_CHANNELS: usize = 2;
 
 /// The desired sample rate of the output stream.
 pub const SAMPLE_RATE: f64 = 44_100.0;

@@ -94,18 +94,14 @@ fn model(app: &App) -> Model {
     // Initialise the audio input model and create the input stream.
     let input_device = app.audio.default_input_device()
         .expect("no default input device available on the system");
-    let max_supported_input_channels = if cfg!(feature = "test_with_stereo") {
-        std::cmp::min(input_device.max_supported_input_channels(), 2)
-    } else {
-        input_device.max_supported_input_channels()
-    };
-    let max_supported_input_channels = std::cmp::min(max_supported_input_channels, 2);
+    let max_supported_input_channels = input_device.max_supported_input_channels();
+    let audio_input_channels = std::cmp::min(max_supported_input_channels, audio::MAX_CHANNELS);
     let audio_input_model = audio::input::Model::new();
     let audio_input_stream = app.audio
         .new_input_stream(audio_input_model, audio::input::capture)
         .sample_rate(audio::SAMPLE_RATE as u32)
         .frames_per_buffer(audio::FRAMES_PER_BUFFER)
-        .channels(max_supported_input_channels)
+        .channels(audio_input_channels)
         .device(input_device)
         .build()
         .expect("failed to build audio input stream");
@@ -113,11 +109,8 @@ fn model(app: &App) -> Model {
     // Initialise the audio output model and create the output stream.
     let output_device = app.audio.default_output_device()
         .expect("no default output device available on the system");
-    let max_supported_output_channels = if cfg!(feature = "test_with_stereo") {
-        std::cmp::min(output_device.max_supported_output_channels(), 2)
-    } else {
-        output_device.max_supported_output_channels()
-    };
+    let max_supported_output_channels = output_device.max_supported_output_channels();
+    let audio_output_channels = std::cmp::min(max_supported_output_channels, audio::MAX_CHANNELS);
     let audio_output_model = audio::output::Model::new(
         audio_monitor_tx,
         osc_out_msg_tx.clone(),
@@ -127,10 +120,7 @@ fn model(app: &App) -> Model {
         .new_output_stream(audio_output_model, audio::output::render)
         .sample_rate(audio::SAMPLE_RATE as u32)
         .frames_per_buffer(audio::FRAMES_PER_BUFFER)
-        .channels(std::cmp::min(
-            max_supported_output_channels,
-            audio::MAX_CHANNELS,
-        ))
+        .channels(audio_output_channels)
         .device(output_device)
         .build()
         .expect("failed to build audio output stream");
