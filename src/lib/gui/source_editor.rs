@@ -564,7 +564,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         state:
             &mut State {
                 ref camera,
-                max_input_channels,
+                ref audio_channels,
                 ref master,
                 source_editor:
                     SourceEditor {
@@ -1092,7 +1092,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             }
 
             // End channel index (to the right).
-            let mut end_channel_indices = realtime.channels.start..max_input_channels;
+            let mut end_channel_indices = realtime.channels.start..audio_channels.input;
             let end_channel_labels = end_channel_indices
                 .clone()
                 .map(|ch| format!("End Channel: {}", ch))

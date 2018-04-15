@@ -154,7 +154,8 @@ fn model(app: &App) -> Model {
         window,
         gui_channels,
         sound_id_gen,
-        max_supported_input_channels,
+        audio_input_channels,
+        audio_output_channels,
     );
 
     Model {
