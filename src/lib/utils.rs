@@ -86,13 +86,15 @@ where
 /// Convert the given interval in milliseconds to a rate in hz.
 pub fn ms_interval_to_hz(ms: Ms) -> f64 {
     let secs_interval = ms.ms() / SEC_MS;
-    1.0 / secs_interval
+    let hz = 1.0 / secs_interval;
+    hz
 }
 
 /// Convert the given rate in hz to an interval in milliseconds.
 pub fn hz_to_ms_interval(hz: f64) -> Ms {
     let secs_interval = 1.0 / hz;
-    Ms(secs_interval * SEC_MS)
+    let ms = Ms(secs_interval * SEC_MS);
+    ms
 }
 
 /// Given a value in hz, produce a more readable "times per second".
