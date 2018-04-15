@@ -610,7 +610,7 @@ pub mod default {
 
     pub const SPREAD: Metres = Metres(2.5);
     // Rotate the channel radians 90deg so that stereo channels are to the side by default.
-    pub const CHANNEL_RADIANS: f32 = ::std::f32::consts::PI * 0.25;
+    pub const CHANNEL_RADIANS: f32 = ::std::f32::consts::PI * 0.5;
     pub const VOLUME: f32 = 0.6;
     pub const OCCURRENCE_RATE: Range<Ms> = Range { min: Ms(500.0), max: Ms(HR_MS as _) };
     pub const SIMULTANEOUS_SOUNDS: Range<usize> = Range { min: 0, max: 1 };
