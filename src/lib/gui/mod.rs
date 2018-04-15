@@ -1759,6 +1759,7 @@ fn set_widgets(gui: &mut Gui) {
             let (x, y) = position_metres_to_gui(position.point, &state.camera);
             let radians = position.radians as _;
             custom_widget::Sound::new(channel_amps, spread, radians, channel_radians as _)
+                //.progress(0.66)
                 .color(color)
                 .x_y(x, y)
                 .w_h(side, side)
