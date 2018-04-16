@@ -1,7 +1,7 @@
 //! A visual representation of a `Sound` for displaying over the floorplan.
 
 use metres::Metres;
-use nannou::ui::{self, Color};
+use nannou::ui::Color;
 use nannou::ui::prelude::*;
 use std;
 use utils;
