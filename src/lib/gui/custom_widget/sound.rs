@@ -1,7 +1,7 @@
 //! A visual representation of a `Sound` for displaying over the floorplan.
 
 use metres::Metres;
-use nannou::ui::Color;
+use nannou::ui::{self, Color};
 use nannou::ui::prelude::*;
 use std;
 use utils;
@@ -20,6 +20,8 @@ pub struct Sound<'a> {
     radians: f64,
     // The rotation offset for the channels around the sound's centre.
     channel_radians: f64,
+    // The normalised playback progress through the sound.
+    progress: Option<f64>,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, WidgetStyle)]
@@ -31,6 +33,7 @@ pub struct Style {
 widget_ids! {
     struct Ids {
         circle,
+        progress,
         triangle,
         channel_lines[],
         channel_circles[],
@@ -61,7 +64,14 @@ impl<'a> Sound<'a> {
             spread,
             radians,
             channel_radians,
+            progress: None,
         }
+    }
+
+    /// The normalised progress through the sound's playback.
+    pub fn progress(mut self, progress: f64) -> Self {
+        self.progress = Some(progress);
+        self
     }
 }
 
@@ -81,6 +91,8 @@ impl<'a> Widget for Sound<'a> {
     }
 
     fn update(self, args: widget::UpdateArgs<Self>) -> Self::Event {
+        use std::f64::consts::PI;
+
         let widget::UpdateArgs {
             id,
             state,
@@ -94,13 +106,13 @@ impl<'a> Widget for Sound<'a> {
             spread,
             radians,
             channel_radians,
+            progress,
             ..
         } = self;
 
         let (x, y, w, _) = rect.x_y_w_h();
         let radius = w / 2.0;
 
-        // The circle of the sound's source position.
         let color = style.color(&ui.theme);
         let color = match ui.widget_input(id).mouse() {
             Some(mouse) => if mouse.buttons.left().is_down() {
@@ -110,7 +122,23 @@ impl<'a> Widget for Sound<'a> {
             },
             None => color,
         };
-        widget::Circle::fill(radius)
+
+        // The circle used as a progress bar for the sound.
+        if let Some(progress) = progress {
+            let section = -progress * PI * 2.0;
+            widget::Circle::fill(radius)
+                .section(section)
+                .offset_radians(PI * 0.5)
+                .x_y(x, y)
+                .color(color.clicked())
+                .graphics_for(id)
+                .parent(id)
+                .set(state.ids.progress, ui);
+        }
+
+        // The circle of the sound's source position.
+        let inner_radius = radius * 0.75;
+        widget::Circle::fill(inner_radius)
             .x_y(x, y)
             .color(color)
             .graphics_for(id)

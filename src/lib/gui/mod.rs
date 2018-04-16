@@ -113,6 +113,127 @@ struct AudioChannels {
     output: usize,
 }
 
+pub struct Channels {
+    pub osc_in_log_rx: mpsc::Receiver<OscInputLog>,
+    pub osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
+    pub osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
+    pub interaction_rx: mpsc::Receiver<Interaction>,
+    pub soundscape: Soundscape,
+    /// A handle for communicating with the audio input stream.
+    pub audio_input: audio::input::Stream,
+    /// A handle for communicating with the audio output stream.
+    pub audio_output: audio::output::Stream,
+    pub audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Image {
+    id: ui::image::Id,
+    width: Scalar,
+    height: Scalar,
+}
+
+#[derive(Debug)]
+struct Images {
+    floorplan: Image,
+}
+
+#[derive(Debug)]
+struct Fonts {
+    notosans_regular: text::font::Id,
+}
+
+// A 2D camera used to navigate around the floorplan visualisation.
+#[derive(Debug)]
+struct Camera {
+    // The number of floorplan pixels per metre.
+    floorplan_pixels_per_metre: f64,
+    // The position of the camera over the floorplan.
+    //
+    // [0.0, 0.0] - the centre of the floorplan.
+    position: Point2<Metres>,
+    // The higher the zoom, the closer the floorplan appears.
+    //
+    // The zoom can be multiplied by a distance in metres to get the equivalent distance as a GUI
+    // scalar value.
+    //
+    // 1.0 - Original resolution.
+    // 0.5 - 50% view.
+    zoom: Scalar,
+}
+
+struct Log<T> {
+    // Newest to oldest is stored front to back respectively.
+    deque: VecDeque<T>,
+    // The index of the oldest message currently stored in the deque.
+    start_index: usize,
+    // The max number of messages stored in the log at one time.
+    limit: usize,
+}
+
+type InteractionLog = Log<Interaction>;
+
+// A structure for monitoring the state of the audio thread for visualisation.
+struct AudioMonitor {
+    active_sounds: ActiveSoundMap,
+    speakers: FxHashMap<audio::speaker::Id, ChannelLevels>,
+}
+
+// The state of an active sound.
+struct ActiveSound {
+    source_id: audio::source::Id,
+    position: audio::sound::Position,
+    channels: Vec<ChannelLevels>,
+    // The normalised progress through the playback of the sound.
+    normalised_progress: Option<f64>,
+}
+
+// The detected levels for a single channel.
+#[derive(Default)]
+struct ChannelLevels {
+    rms: f32,
+    peak: f32,
+}
+
+/// A message sent from the audio thread with some audio levels.
+pub enum AudioMonitorMessage {
+    Master { peak: f32 },
+    ActiveSound(audio::sound::Id, ActiveSoundMessage),
+    Speaker(audio::speaker::Id, SpeakerMessage),
+}
+
+/// A message related to an active sound.
+pub enum ActiveSoundMessage {
+    Start {
+        normalised_progress: Option<f64>,
+        source_id: audio::source::Id,
+        position: audio::sound::Position,
+        channels: usize,
+    },
+    Update {
+        normalised_progress: Option<f64>,
+        source_id: audio::source::Id,
+        position: audio::sound::Position,
+        channels: usize,
+    },
+    UpdateChannel {
+        index: usize,
+        rms: f32,
+        peak: f32,
+    },
+    End {
+        sound: audio::output::ActiveSound,
+    },
+}
+
+/// A message related to a speaker.
+#[derive(Debug)]
+pub enum SpeakerMessage {
+    Add,
+    Update { rms: f32, peak: f32 },
+    Remove,
+}
+
 fn master_path(assets: &Path) -> PathBuf {
     assets
         .join(Path::new(MASTER_FILE_STEM))
@@ -252,16 +373,30 @@ impl Model {
                         source_id,
                         position,
                         channels,
+                        normalised_progress,
                     } => {
-                        let active_sound = ActiveSound::new(source_id, position, channels);
+                        let active_sound = ActiveSound::new(
+                            source_id,
+                            position,
+                            channels,
+                            normalised_progress,
+                        );
                         audio_monitor.active_sounds.insert(id, active_sound);
                     }
-                    ActiveSoundMessage::Update { source_id, position, channels } => {
-                        audio_monitor
+                    ActiveSoundMessage::Update {
+                        source_id,
+                        position,
+                        channels,
+                        normalised_progress,
+                    } => {
+                        let active_sound = audio_monitor
                             .active_sounds
                             .entry(id)
-                            .or_insert_with(|| ActiveSound::new(source_id, position, channels))
-                            .position = position;
+                            .or_insert_with(|| {
+                                ActiveSound::new(source_id, position, channels, normalised_progress)
+                            });
+                        active_sound.position = position;
+                        active_sound.normalised_progress = normalised_progress;
                     }
                     ActiveSoundMessage::UpdateChannel { index, rms, peak } => {
                         if let Some(active_sound) = audio_monitor.active_sounds.get_mut(&id) {
@@ -577,19 +712,6 @@ impl State {
     }
 }
 
-pub struct Channels {
-    pub osc_in_log_rx: mpsc::Receiver<OscInputLog>,
-    pub osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
-    pub osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
-    pub interaction_rx: mpsc::Receiver<Interaction>,
-    pub soundscape: Soundscape,
-    /// A handle for communicating with the audio input stream.
-    pub audio_input: audio::input::Stream,
-    /// A handle for communicating with the audio output stream.
-    pub audio_output: audio::output::Stream,
-    pub audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
-}
-
 impl Channels {
     /// Initialise the GUI communication channels.
     pub fn new(
@@ -628,42 +750,6 @@ impl<'a> DerefMut for Gui<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Image {
-    id: ui::image::Id,
-    width: Scalar,
-    height: Scalar,
-}
-
-#[derive(Debug)]
-struct Images {
-    floorplan: Image,
-}
-
-#[derive(Debug)]
-struct Fonts {
-    notosans_regular: text::font::Id,
-}
-
-// A 2D camera used to navigate around the floorplan visualisation.
-#[derive(Debug)]
-struct Camera {
-    // The number of floorplan pixels per metre.
-    floorplan_pixels_per_metre: f64,
-    // The position of the camera over the floorplan.
-    //
-    // [0.0, 0.0] - the centre of the floorplan.
-    position: Point2<Metres>,
-    // The higher the zoom, the closer the floorplan appears.
-    //
-    // The zoom can be multiplied by a distance in metres to get the equivalent distance as a GUI
-    // scalar value.
-    //
-    // 1.0 - Original resolution.
-    // 0.5 - 50% view.
-    zoom: Scalar,
-}
-
 impl Camera {
     /// Convert from metres to the GUI scalar value.
     fn metres_to_scalar(&self, Metres(metres): Metres) -> Scalar {
@@ -675,17 +761,6 @@ impl Camera {
         Metres((scalar / self.zoom) / self.floorplan_pixels_per_metre)
     }
 }
-
-struct Log<T> {
-    // Newest to oldest is stored front to back respectively.
-    deque: VecDeque<T>,
-    // The index of the oldest message currently stored in the deque.
-    start_index: usize,
-    // The max number of messages stored in the log at one time.
-    limit: usize,
-}
-
-type InteractionLog = Log<Interaction>;
 
 impl<T> Log<T> {
     // Construct an OscLog that stores the given max number of messages.
@@ -803,71 +878,20 @@ impl<T> Deref for Log<T> {
     }
 }
 
-// A structure for monitoring the state of the audio thread for visualisation.
-struct AudioMonitor {
-    active_sounds: ActiveSoundMap,
-    speakers: FxHashMap<audio::speaker::Id, ChannelLevels>,
-}
-
-// The state of an active sound.
-struct ActiveSound {
-    source_id: audio::source::Id,
-    position: audio::sound::Position,
-    channels: Vec<ChannelLevels>,
-}
-
 impl ActiveSound {
-    fn new(source_id: audio::source::Id, pos: audio::sound::Position, channels: usize) -> Self {
+    fn new(
+        source_id: audio::source::Id,
+        pos: audio::sound::Position,
+        channels: usize,
+        normalised_progress: Option<f64>,
+    ) -> Self {
         ActiveSound {
             source_id,
             position: pos,
             channels: (0..channels).map(|_| ChannelLevels::default()).collect(),
+            normalised_progress,
         }
     }
-}
-
-// The detected levels for a single channel.
-#[derive(Default)]
-struct ChannelLevels {
-    rms: f32,
-    peak: f32,
-}
-
-/// A message sent from the audio thread with some audio levels.
-pub enum AudioMonitorMessage {
-    Master { peak: f32 },
-    ActiveSound(audio::sound::Id, ActiveSoundMessage),
-    Speaker(audio::speaker::Id, SpeakerMessage),
-}
-
-/// A message related to an active sound.
-pub enum ActiveSoundMessage {
-    Start {
-        source_id: audio::source::Id,
-        position: audio::sound::Position,
-        channels: usize,
-    },
-    Update {
-        source_id: audio::source::Id,
-        position: audio::sound::Position,
-        channels: usize,
-    },
-    UpdateChannel {
-        index: usize,
-        rms: f32,
-        peak: f32,
-    },
-    End {
-        sound: audio::output::ActiveSound,
-    },
-}
-
-/// A message related to a speaker.
-#[derive(Debug)]
-pub enum SpeakerMessage {
-    Add,
-    Update { rms: f32, peak: f32 },
-    Remove,
 }
 
 /// The directory in which all fonts are stored.
@@ -1626,7 +1650,7 @@ fn set_widgets(gui: &mut Gui) {
                     let color = if source.audio.muted || (!soloed.is_empty() && !soloed.contains(&id)) {
                         color::LIGHT_CHARCOAL
                     } else if soloed.contains(&id) {
-                        color::YELLOW
+                        color::DARK_YELLOW
                     } else {
                         color::DARK_BLUE
                     };
@@ -1759,6 +1783,7 @@ fn set_widgets(gui: &mut Gui) {
             let (x, y) = position_metres_to_gui(position.point, &state.camera);
             let radians = position.radians as _;
             custom_widget::Sound::new(channel_amps, spread, radians, channel_radians as _)
+                .and_then(active_sound.normalised_progress, |w, p| w.progress(p))
                 .color(color)
                 .x_y(x, y)
                 .w_h(side, side)
