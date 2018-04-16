@@ -125,20 +125,20 @@ impl<'a> Widget for Sound<'a> {
 
         // The circle used as a progress bar for the sound.
         if let Some(progress) = progress {
-            let progress_thickness = radius * 0.25;
             let section = -progress * PI * 2.0;
-            widget::Circle::fill(radius + progress_thickness)
+            widget::Circle::fill(radius)
                 .section(section)
                 .offset_radians(PI * 0.5)
                 .x_y(x, y)
-                .color(ui::color::LIGHT_BLUE)
+                .color(color.clicked())
                 .graphics_for(id)
                 .parent(id)
                 .set(state.ids.progress, ui);
         }
 
         // The circle of the sound's source position.
-        widget::Circle::fill(radius)
+        let inner_radius = radius * 0.75;
+        widget::Circle::fill(inner_radius)
             .x_y(x, y)
             .color(color)
             .graphics_for(id)

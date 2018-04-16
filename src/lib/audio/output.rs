@@ -19,7 +19,9 @@ use rustfft::num_complex::Complex;
 use rustfft::num_traits::Zero;
 use soundscape;
 use std;
+use std::ops::Deref;
 use std::sync::mpsc;
+use time_calc::Samples;
 use utils;
 
 /// Simplified type alias for the nannou audio output stream used by the audio server.
@@ -29,6 +31,7 @@ pub type Stream = nannou::audio::Stream<Model>;
 pub struct ActiveSound {
     sound: Sound,
     channel_detectors: Box<[EnvDetector]>,
+    total_duration_frames: Option<Samples>,
 }
 
 pub struct ActiveSpeaker {
@@ -44,16 +47,39 @@ impl ActiveSound {
             .map(|_| EnvDetector::new())
             .collect::<Vec<_>>()
             .into_boxed_slice();
+        let total_duration_frames = sound.signal.remaining_frames();
         ActiveSound {
             sound,
             channel_detectors,
+            total_duration_frames,
         }
+    }
+
+    /// The normalised progress through playback.
+    pub fn normalised_progress(&self) -> Option<f64> {
+        let remaining_duration = self.signal.remaining_frames();
+        let total_duration = self.total_duration_frames;
+        let normalised_progress = match (remaining_duration, total_duration) {
+            (Some(Samples(remaining)), Some(Samples(total))) => {
+                let current_frame = total - remaining;
+                Some(current_frame as f64 / total as f64)
+            },
+            _ => None,
+        };
+        normalised_progress
     }
 }
 
 impl From<Sound> for ActiveSound {
     fn from(sound: Sound) -> Self {
         ActiveSound::new(sound)
+    }
+}
+
+impl Deref for ActiveSound {
+    type Target = Sound;
+    fn deref(&self) -> &Self::Target {
+        &self.sound
     }
 }
 
@@ -247,13 +273,15 @@ impl Model {
 
     /// Inserts the sound and sends an `Start` active sound message to the GUI.
     pub fn insert_sound(&mut self, id: sound::Id, sound: ActiveSound) -> Option<ActiveSound> {
-        let position = sound.sound.position;
-        let channels = sound.sound.channels;
-        let source_id = sound.sound.source_id();
+        let position = sound.position;
+        let channels = sound.channels;
+        let source_id = sound.source_id();
+        let normalised_progress = sound.normalised_progress();
         let sound_msg = gui::ActiveSoundMessage::Start {
             source_id,
             position,
             channels,
+            normalised_progress,
         };
         let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
         self.gui_audio_monitor_msg_tx.try_send(msg).ok();
@@ -348,19 +376,27 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
         // For each sound, request `buffer.len()` number of frames and sum them onto the
         // relevant output channels.
-        for (&sound_id, active_sound) in sounds.iter_mut() {
-            let ActiveSound {
-                ref mut sound,
-                ref mut channel_detectors,
-            } = *active_sound;
+        for (&sound_id, sound) in sounds.iter_mut() {
 
             // Update the GUI with the position of the sound.
             let source_id = sound.source_id();
             let position = sound.position;
             let channels = sound.channels;
-            let update = gui::ActiveSoundMessage::Update { source_id, position, channels };
+            let normalised_progress = sound.normalised_progress();
+            let update = gui::ActiveSoundMessage::Update {
+                source_id,
+                position,
+                channels,
+                normalised_progress,
+            };
             let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, update);
             gui_audio_monitor_msg_tx.try_send(msg).ok();
+
+            let ActiveSound {
+                ref mut sound,
+                ref mut channel_detectors,
+                ..
+            } = *sound;
 
             // Don't play or request samples if paused.
             if !sound.shared.is_playing() {

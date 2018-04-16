@@ -421,11 +421,11 @@ impl Signal {
         self
     }
 
-    // The minimum number of frames between `self.remaining_frames` and
-    // `self.kind.remaining_frames()` if any.
-    //
-    // This returns `None` if the `Signal` has know end.
-    fn remaining_frames(&self) -> Option<Samples> {
+    /// The minimum number of frames between `self.remaining_frames` and
+    /// `self.kind.remaining_frames()` if any.
+    ///
+    /// This returns `None` if the `Signal` has know end.
+    pub fn remaining_frames(&self) -> Option<Samples> {
         let remaining_frames = self.duration.as_ref().map(Duration::remaining_frames);
         let kind_remaining_frames = self.kind.remaining_frames();
         match (remaining_frames, kind_remaining_frames) {
