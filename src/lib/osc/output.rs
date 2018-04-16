@@ -1,5 +1,5 @@
 use fxhash::FxHashMap;
-use installation::{ComputerId, Installation};
+use installation;
 use nannou::osc;
 use nannou::osc::Type::{Float, Int};
 use std;
@@ -8,19 +8,19 @@ use std::sync::mpsc;
 
 /// Messages that can be received by the `osc::output` thread.
 pub enum Message {
-    Audio(Installation, AudioFrameData),
+    Audio(installation::Id, AudioFrameData),
     Osc(OscTarget),
 }
 
 /// Add or remove an OSC target for a given installation.
 pub enum OscTarget {
     Add(
-        Installation,
-        ComputerId,
+        installation::Id,
+        installation::computer::Id,
         osc::Sender<osc::Connected>,
         String,
     ),
-    Remove(Installation, ComputerId),
+    Remove(installation::Id, installation::computer::Id),
 }
 
 /// Data related to a single frame of audio.
@@ -51,8 +51,8 @@ pub struct Speaker {
 /// The log of a sent message.
 #[derive(Debug)]
 pub struct Log {
-    pub installation: Installation,
-    pub computer: ComputerId,
+    pub installation: installation::Id,
+    pub computer: installation::computer::Id,
     pub addr: std::net::SocketAddr,
     pub msg: osc::Message,
     pub error: Option<osc::CommunicationError>,
@@ -86,9 +86,9 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
         SendOsc,
     }
 
-    // Each installation gets its own map of ComputerId -> Target.
-    type TargetMap = FxHashMap<ComputerId, Target>;
-    let mut osc_txs: FxHashMap<Installation, TargetMap> = Default::default();
+    // Each installation gets its own map of installation::computer::Id -> Target.
+    type TargetMap = FxHashMap<installation::computer::Id, Target>;
+    let mut osc_txs: FxHashMap<installation::Id, TargetMap> = Default::default();
 
     // Update channel.
     let (update_tx, update_rx) = mpsc::channel();

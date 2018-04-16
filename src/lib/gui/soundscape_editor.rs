@@ -15,24 +15,7 @@ use utils;
 
 /// GUI state related to the soundscape editor area.
 pub struct SoundscapeEditor {
-    pub is_open: bool,
-    pub groups: FxHashMap<soundscape::group::Id, Group>,
-    pub next_group_id: soundscape::group::Id,
     pub selected: Option<Selected>,
-}
-
-/// State related to a single soundscape group required by the GUI.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Group {
-    pub group: soundscape::Group,
-    pub name: soundscape::group::Name,
-}
-
-/// JSON friendly representation of the soundscape editor GUI state.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Stored {
-    pub groups: FxHashMap<soundscape::group::Id, Group>,
-    pub next_group_id: soundscape::group::Id,
 }
 
 /// The currently selected group.
@@ -41,21 +24,12 @@ pub struct Selected {
     id: soundscape::group::Id,
 }
 
-impl ops::Deref for Group {
-    type Target = soundscape::Group;
-    fn deref(&self) -> &Self::Target {
-        &self.group
-    }
-}
-
-impl ops::DerefMut for Group {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.group
-    }
-}
-
 /// Sets all widgets in the soundscape area and returns the `Id` of the last area.
-pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
+pub fn set(
+    last_area_id: widget::Id,
+    gui: &mut Gui,
+    project: &mut Project,
+) -> widget::Id {
     let &mut Gui {
         ref mut ui,
         ref ids,

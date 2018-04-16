@@ -1,6 +1,6 @@
 use audio::{input, output, source, Source, SAMPLE_RATE};
 use fxhash::FxHashSet;
-use installation::Installation;
+use installation;
 use metres::Metres;
 use nannou::math::Point2;
 use std::ops;
@@ -425,7 +425,7 @@ impl Sound {
 #[derive(Debug)]
 pub enum Installations {
     All,
-    Set(FxHashSet<Installation>),
+    Set(FxHashSet<installation::Id>),
 }
 
 impl From<Option<source::Role>> for Installations {

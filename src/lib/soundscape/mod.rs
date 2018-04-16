@@ -1,6 +1,6 @@
 use audio;
 use fxhash::{FxHashMap, FxHashSet};
-use installation::{self, Installation};
+use installation;
 use metres::Metres;
 use mindtree_utils::noise_walk;
 use nannou;
@@ -24,18 +24,18 @@ pub mod movement;
 
 const TICK_RATE_MS: u64 = 16;
 
-type Installations = FxHashMap<Installation, installation::Soundscape>;
+type Installations = FxHashMap<installation::Id, installation::Soundscape>;
 type Groups = FxHashMap<group::Id, Group>;
 type Sources = FxHashMap<audio::source::Id, Source>;
 type Speakers = FxHashMap<audio::speaker::Id, Speaker>;
 type GroupsLastUsed = FxHashMap<group::Id, time::Instant>;
 type SourcesLastUsed = FxHashMap<audio::source::Id, time::Instant>;
-type InstallationAreas = FxHashMap<Installation, movement::Area>;
-type InstallationSpeakers = FxHashMap<Installation, Vec<audio::speaker::Id>>;
+type InstallationAreas = FxHashMap<installation::Id, movement::Area>;
+type InstallationSpeakers = FxHashMap<installation::Id, Vec<audio::speaker::Id>>;
 type ActiveSounds = FxHashMap<audio::sound::Id, ActiveSound>;
 type ActiveSoundPositions = FxHashMap<audio::sound::Id, ActiveSoundPosition>;
-type ActiveSoundsPerInstallation = FxHashMap<Installation, Vec<audio::sound::Id>>;
-type TargetSoundsPerInstallation = FxHashMap<Installation, usize>;
+type ActiveSoundsPerInstallation = FxHashMap<installation::Id, Vec<audio::sound::Id>>;
+type TargetSoundsPerInstallation = FxHashMap<installation::Id, usize>;
 
 /// The kinds of messages received by the soundscape thread.
 pub enum Message {
@@ -85,7 +85,7 @@ pub struct Speaker {
     /// The position of the speaker in metres.
     pub point: Point2<Metres>,
     /// All installations assigned to the speaker.
-    pub installations: FxHashSet<Installation>,
+    pub installations: FxHashSet<installation::Id>,
 }
 
 /// Properties of an audio source that are relevant to the soundscape thread.
@@ -103,7 +103,7 @@ pub struct Source {
 /// Represents a currently active sound spawned by the soundscape thread.
 pub struct ActiveSound {
     /// The installation for which this sound was initially spawned.
-    pub initial_installation: Installation,
+    pub initial_installation: installation::Id,
     /// State related to active sound's assigned movement.
     pub movement: Movement,
     /// The handle associated with this sound.
@@ -283,7 +283,7 @@ impl Model {
     /// Insert a new installation.
     pub fn insert_installation(
         &mut self,
-        installation: Installation,
+        installation: installation::Id,
         state: installation::Soundscape,
     ) -> Option<installation::Soundscape> {
         self.installations.insert(installation, state)
@@ -292,7 +292,7 @@ impl Model {
     /// Update the given installation's state.
     ///
     /// Returns `false` if the installation was not there.
-    pub fn update_installation<F>(&mut self, installation: &Installation, update: F) -> bool
+    pub fn update_installation<F>(&mut self, installation: &installation::Id, update: F) -> bool
     where
         F: FnOnce(&mut installation::Soundscape),
     {
@@ -673,7 +673,7 @@ fn closest_assigned_installation(
     sound: &ActiveSoundPosition,
     sources: &Sources,
     installation_areas: &InstallationAreas,
-) -> Option<Installation>
+) -> Option<installation::Id>
 {
     if let Some(source) = sources.get(&sound.source_id) {
         let sound_point = Point2 {
@@ -800,7 +800,7 @@ fn agent_installation_data(
 fn generate_movement(
     source_id: audio::source::Id,
     sources: &Sources,
-    installation: Installation,
+    installation: installation::Id,
     installations: &Installations,
     installation_areas: &InstallationAreas,
     target_sounds_per_installation: &TargetSoundsPerInstallation,
@@ -876,7 +876,7 @@ fn generate_movement(
 }
 
 // A unique, constant seed associated with the installation.
-fn installation_seed(installation: &Installation) -> [u32; 4] {
+fn installation_seed(installation: &installation::Id) -> [u32; 4] {
     // Convert the installation to its integer representation.
     let u = installation.to_u32();
     let seed = [u; 4];
@@ -935,14 +935,14 @@ fn update_installation_areas(
 fn installation_target_sounds(
     seed: Seed,
     playback_duration: &time::Duration,
-    installation: &Installation,
+    installation: &installation::Id,
     constraints: &installation::Soundscape,
 ) -> usize {
     let playback_secs = duration_to_secs(playback_duration);
     // Update the target number of sounds very slowly. Say, once every 5 minutes.
     let hr_secs = 1.0 * 60.0 * 60.0;
     let hz = 1.0 / hr_secs;
-    // Offset the phase using the `Installation` as a unique seed.
+    // Offset the phase using the `installation::Id` as a unique seed.
     let mut noise_walk_seed = utils::add_seeds(&seed, &installation_seed(&installation));
     if noise_walk_seed == [0, 0, 0, 0] {
         noise_walk_seed[0] = 1;

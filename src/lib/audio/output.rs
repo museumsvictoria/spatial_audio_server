@@ -9,7 +9,7 @@ use audio::{dbap, source, sound, speaker};
 use audio::fft;
 use fxhash::{FxHashMap, FxHashSet};
 use gui;
-use installation::{self, Installation};
+use installation;
 use metres::Metres;
 use nannou;
 use nannou::audio::Buffer;
@@ -119,7 +119,7 @@ pub struct Model {
     /// A handle to the soundscape thread - for notifying when a sound is complete.
     soundscape_tx: mpsc::Sender<soundscape::Message>,
     /// An analysis per installation to re-use for sending to the OSC output thread.
-    installation_analyses: FxHashMap<Installation, Vec<SpeakerAnalysis>>,
+    installation_analyses: FxHashMap<installation::Id, Vec<SpeakerAnalysis>>,
     /// A buffer to re-use for DBAP speaker calculations.
     ///
     /// The index of the speaker is its channel.
@@ -256,7 +256,7 @@ impl Model {
     }
 
     /// Inserts the installation into the speaker with the given `speaker::Id`.
-    pub fn insert_speaker_installation(&mut self, id: speaker::Id, inst: Installation) -> bool {
+    pub fn insert_speaker_installation(&mut self, id: speaker::Id, inst: installation::Id) -> bool {
         self.speakers
             .get_mut(&id)
             .map(|active| active.speaker.installations.insert(inst))
@@ -264,7 +264,7 @@ impl Model {
     }
 
     /// Removes the installation from the speaker with the given `speaker::Id`.
-    pub fn remove_speaker_installation(&mut self, id: speaker::Id, inst: &Installation) -> bool {
+    pub fn remove_speaker_installation(&mut self, id: speaker::Id, inst: &installation::Id) -> bool {
         self.speakers
             .get_mut(&id)
             .map(|active| active.speaker.installations.remove(inst))

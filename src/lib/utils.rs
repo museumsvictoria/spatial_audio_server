@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::Path;
 use std::time;
 use time_calc::Ms;
+use toml;
 
 pub const SEC_MS: f64 = 1_000.0;
 pub const MIN_MS: f64 = SEC_MS * 60.0;
@@ -141,33 +142,45 @@ pub fn duration_to_secs(d: &time::Duration) -> f64 {
 
 /// Errors that might occur when saving a file.
 #[derive(Debug)]
-pub enum FileError {
+pub enum FileError<E> {
     Io(io::Error),
-    Json(serde_json::Error),
+    Format(E),
 }
 
-impl From<io::Error> for FileError {
+impl<E> From<io::Error> for FileError<E> {
     fn from(err: io::Error) -> Self {
         FileError::Io(err)
     }
 }
 
-impl From<serde_json::Error> for FileError {
+impl From<serde_json::Error> for FileError<serde_json::Error> {
     fn from(err: serde_json::Error) -> Self {
-        FileError::Json(err)
+        FileError::Format(err)
     }
 }
 
-impl Error for FileError {
+impl From<toml::de::Error> for FileError<toml::de::Error> {
+    fn from(err: toml::de::Error) -> Self {
+        FileError::Format(err)
+    }
+}
+
+impl<E> Error for FileError<E>
+where
+    E: Error,
+{
     fn description(&self) -> &str {
         match *self {
             FileError::Io(ref err) => err.description(),
-            FileError::Json(ref err) => err.description(),
+            FileError::Format(ref err) => err.description(),
         }
     }
 }
 
-impl fmt::Display for FileError {
+impl<E> fmt::Display for FileError<E>
+where
+    E: Error,
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.description())
     }
@@ -205,8 +218,18 @@ pub fn safe_file_save(path: &Path, content: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+/// A generic function for safely saving a serializable type to a TOML file.
+pub fn save_to_toml<T>(toml_path: &Path, t: &T) -> Result<(), FileError<toml::ser::Error>>
+where
+    T: serde::Serialize,
+{
+    let string = toml::to_string_pretty(t).expect("could not serialize type to toml");
+    safe_file_save(toml_path, string.as_bytes())?;
+    Ok(())
+}
+
 /// A generic function for safely saving a serializable type to a JSON file.
-pub fn save_to_json<T>(json_path: &Path, t: &T) -> Result<(), FileError>
+pub fn save_to_json<T>(json_path: &Path, t: &T) -> Result<(), FileError<serde_json::Error>>
 where
     T: serde::Serialize,
 {
@@ -226,8 +249,31 @@ where
         .unwrap_or_else(|err| panic!("failed to save file \"{}\": {}", json_path.display(), err))
 }
 
+/// A generic funtion for loading a type from a TOML file.
+pub fn load_from_toml<'a, T>(toml_path: &Path) -> Result<T, FileError<toml::de::Error>>
+where
+    T: for<'de> serde::Deserialize<'de>,
+{
+    let mut file = fs::File::open(&path)?;
+    let mut contents = Vec::new();
+    io::Read::read_to_end(&mut file, &mut contents)?;
+    let toml_str = std::str::from_utf8(&contents[..]).unwrap();
+    let value = toml::from_str(toml_str)?;
+    Ok(value)
+}
+
+/// A generic function for loading a type from a toml file.
+///
+/// If deserialization of file loading fails, a `Default` instance will be returned.
+pub fn load_from_toml_or_default<'a, T>(toml_path: &Path) -> T
+where
+    T: for<'de> serde::Deserialize<'de> + Default,
+{
+    load_from_toml(toml_path).unwrap_or_else(|_| Default::default())
+}
+
 /// A generic funtion for loading a type from a JSON file.
-pub fn load_from_json<'a, T>(json_path: &Path) -> Result<T, FileError>
+pub fn load_from_json<'a, T>(json_path: &Path) -> Result<T, FileError<serde_json::Error>>
 where
     T: for<'de> serde::Deserialize<'de>,
 {

@@ -1,4 +1,5 @@
 use audio;
+use camera;
 use config::Config;
 use fxhash::FxHashMap;
 use interaction::Interaction;
@@ -11,6 +12,7 @@ use nannou::ui::prelude::*;
 use osc;
 use osc::input::Log as OscInputLog;
 use osc::output::Log as OscOutputLog;
+use project::{self, Project};
 use soundscape::{self, Soundscape};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -19,12 +21,10 @@ use std::sync::mpsc;
 use time_calc::Ms;
 use utils::{self, HumanReadableTime, SEC_MS, MIN_MS, HR_MS};
 
-
 use self::installation_editor::InstallationEditor;
-use self::master::Master;
 use self::soundscape_editor::SoundscapeEditor;
-use self::source_editor::{SourceEditor, SourcePreview, SourcePreviewMode, StoredSources};
-use self::speaker_editor::{Speaker, SpeakerEditor, StoredSpeakers};
+use self::source_editor::{SourceEditor, SourcePreviewMode};
+use self::speaker_editor::SpeakerEditor;
 
 mod custom_widget;
 pub mod installation_editor;
@@ -38,44 +38,36 @@ pub mod soundscape_editor;
 pub mod speaker_editor;
 mod theme;
 
-// The name of the file where the master control values are saved.
-const MASTER_FILE_STEM: &'static str = "master";
-
-// The name of the file where the installation OSC mappings are saved.
-const INSTALLATIONS_FILE_STEM: &'static str = "installations";
-
-// The name of the file where the speaker layout is saved.
-const SPEAKERS_FILE_STEM: &'static str = "speakers";
-
-// The name of the file where the list of sources is stored.
-const SOURCES_FILE_STEM: &'static str = "sources";
-
-// The name of the file where the list of sources is stored.
-const SOUNDSCAPE_FILE_STEM: &'static str = "soundscape";
-
-// The name of the directory where the WAVs are stored.
-const AUDIO_DIRECTORY_NAME: &'static str = "audio";
-
 type ActiveSoundMap = FxHashMap<audio::sound::Id, ActiveSound>;
 
+/// The structure of the GUI.
+///
+/// This is the primary state stored on the main thread.
 pub struct Model {
+    /// The nannou UI state.
     pub ui: Ui,
+    /// All images used within the GUI.
     images: Images,
-    fonts: Fonts,
-    state: State,
+    /// A unique ID for each widget.
     ids: Ids,
-    pub channels: Channels,
+    /// Channels for communication with the various threads running on the audio server.
+    channels: Channels,
+    /// The runtime state of the model.
+    state: State,
+    /// The currently selected project.
+    project: Option<(Project, ProjectState)>,
+    /// A unique ID generator to use when spawning new sounds.
     sound_id_gen: audio::sound::IdGenerator,
+    /// The latest received audio state.
     audio_monitor: AudioMonitor,
+    /// The path to the assets directory path at the time the App started running.
     assets: PathBuf,
 }
 
-/// A convenience wrapper that borrows the GUI state necessary for instantiating the widgets.
+/// A convenience wrapper that borrows the GUI state necessary for instantiating widgets.
 pub struct Gui<'a> {
     ui: UiCell<'a>,
-    /// The images used throughout the GUI.
     images: &'a Images,
-    fonts: &'a Fonts,
     ids: &'a mut Ids,
     state: &'a mut State,
     audio_monitor: &'a AudioMonitor,
@@ -83,45 +75,62 @@ pub struct Gui<'a> {
     sound_id_gen: &'a audio::sound::IdGenerator,
 }
 
-pub struct State {
-    // The loaded config file.
-    config: Config,
-    // The camera over the 2D floorplan.
-    camera: Camera,
-    // Master control values for the exhibition.
+/// GUI state related to a single project.
+#[derive(Default)]
+pub struct ProjectState {
+    /// Master control values for the exhibition.
     master: Master,
-    // A log of the most recently received OSC messages for testing/debugging/monitoring.
-    osc_in_log: Log<OscInputLog>,
-    // A log of the most recently sent OSC messages for testing/debugging/monitoring.
-    osc_out_log: Log<OscOutputLog>,
-    // A log of the most recently received Interactions for testing/debugging/monitoring.
-    interaction_log: InteractionLog,
+    /// Runtime state related to the installation editor GUI panel.
     installation_editor: InstallationEditor,
-    speaker_editor: SpeakerEditor,
-    source_editor: SourceEditor,
+    /// Runtime state related to the source editor GUI panel.
     soundscape_editor: SoundscapeEditor,
-    audio_channels: AudioChannels,
-    // Menu states.
-    side_menu_is_open: bool,
-    osc_in_log_is_open: bool,
-    osc_out_log_is_open: bool,
-    interaction_log_is_open: bool,
+    /// Runtime state related to the speaker editor GUI panel.
+    speaker_editor: SpeakerEditor,
+    /// Runtime state related to the source editor GUI panel.
+    source_editor: SourceEditor,
 }
 
+/// State available to the GUI during widget instantiation.
+pub struct State {
+    /// The number of input and output channels available on the default input and output devices.
+    audio_channels: AudioChannels,
+    /// A log of the most recently received OSC messages for testing/debugging/monitoring.
+    osc_in_log: Log<OscInputLog>,
+    /// A log of the most recently sent OSC messages for testing/debugging/monitoring.
+    osc_out_log: Log<OscOutputLog>,
+    /// A log of the most recently received Interactions for testing/debugging/monitoring.
+    interaction_log: InteractionLog,
+    /// Whether or not each of the collapsible areas are open within the sidebar.
+    is_open: IsOpen,
+}
+
+/// The state of each collapsible area in the sidebar.
+#[derive(Default)]
+struct IsOpen {
+    master: bool,
+    soundscape_editor: bool,
+    speaker_editor: bool,
+    source_editor: bool,
+    side_menu: bool,
+    osc_in_log: bool,
+    osc_out_log: bool,
+    interaction_log: bool,
+}
+
+/// The number of audio input and output channels available on the input and output devices.
 struct AudioChannels {
     input: usize,
     output: usize,
 }
 
+/// Channels for communication with the various threads running on the audio server.
 pub struct Channels {
     pub osc_in_log_rx: mpsc::Receiver<OscInputLog>,
     pub osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
     pub osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
     pub interaction_rx: mpsc::Receiver<Interaction>,
     pub soundscape: Soundscape,
-    /// A handle for communicating with the audio input stream.
     pub audio_input: audio::input::Stream,
-    /// A handle for communicating with the audio output stream.
     pub audio_output: audio::output::Stream,
     pub audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
 }
@@ -138,30 +147,6 @@ struct Images {
     floorplan: Image,
 }
 
-#[derive(Debug)]
-struct Fonts {
-    notosans_regular: text::font::Id,
-}
-
-// A 2D camera used to navigate around the floorplan visualisation.
-#[derive(Debug)]
-struct Camera {
-    // The number of floorplan pixels per metre.
-    floorplan_pixels_per_metre: f64,
-    // The position of the camera over the floorplan.
-    //
-    // [0.0, 0.0] - the centre of the floorplan.
-    position: Point2<Metres>,
-    // The higher the zoom, the closer the floorplan appears.
-    //
-    // The zoom can be multiplied by a distance in metres to get the equivalent distance as a GUI
-    // scalar value.
-    //
-    // 1.0 - Original resolution.
-    // 0.5 - 50% view.
-    zoom: Scalar,
-}
-
 struct Log<T> {
     // Newest to oldest is stored front to back respectively.
     deque: VecDeque<T>,
@@ -175,6 +160,7 @@ type InteractionLog = Log<Interaction>;
 
 // A structure for monitoring the state of the audio thread for visualisation.
 struct AudioMonitor {
+    master_peak: f32,
     active_sounds: ActiveSoundMap,
     speakers: FxHashMap<audio::speaker::Id, ChannelLevels>,
 }
@@ -276,6 +262,7 @@ impl Model {
         audio_input_channels: usize,
         audio_output_channels: usize,
     ) -> Self {
+        // Load a Nannou UI.
         let mut ui = app.new_ui(window_id)
             .with_theme(theme::construct())
             .build()
@@ -286,12 +273,11 @@ impl Model {
 
         // Load and insert the fonts to be used.
         let font_path = fonts_directory(assets).join("NotoSans/NotoSans-Regular.ttf");
-        let notosans_regular = ui.fonts_mut()
+        ui.fonts_mut()
             .insert_from_file(&font_path)
             .unwrap_or_else(|err| {
                 panic!("failed to load font \"{}\": {}", font_path.display(), err)
             });
-        let fonts = Fonts { notosans_regular };
 
         // Load and insert the images to be used.
         let floorplan_path = images_directory(assets).join("floorplan.png");
@@ -302,28 +288,35 @@ impl Model {
         );
         let images = Images { floorplan };
 
+        // If there's a default project, attempt to load it.
+        let mut project_tuple = None;
+        let project_directory = project::projects_directory(&assets)
+            .join(config.selected_project_slug);
+        if project_directory.exists() && project_directory.is_dir() {
+            let project = Project::load(&assets, project_directory, &config.project_default, &channels);
+            let state = Default::default();
+            project_tuple = Some((project, state));
+        }
+
         // Initialise the GUI state.
-        let audio_channels = AudioChannels {
-            input: audio_input_channels,
-            output: audio_output_channels,
-        };
-        let state = State::new(assets, config, &channels, audio_channels);
+        let input = audio_input_channels;
+        let output = audio_output_channels;
+        let audio_channels = AudioChannels { input, output };
+        let state = State::new(config, audio_channels);
 
         // Initialise the audio monitor.
+        let master_peak = 0.0;
         let active_sounds = Default::default();
         let speakers = Default::default();
-        let audio_monitor = AudioMonitor {
-            active_sounds,
-            speakers,
-        };
+        let audio_monitor = AudioMonitor { master_peak, active_sounds, speakers };
 
         Model {
             ui,
             images,
-            fonts,
             state,
             ids,
             channels,
+            project: project_tuple,
             sound_id_gen,
             assets: assets.into(),
             audio_monitor,
@@ -341,7 +334,6 @@ impl Model {
             ref mut state,
             ref mut audio_monitor,
             ref images,
-            ref fonts,
             ref channels,
             ref sound_id_gen,
             ..
@@ -366,7 +358,7 @@ impl Model {
         for msg in channels.audio_monitor_msg_rx.try_iter() {
             match msg {
                 AudioMonitorMessage::Master { peak } => {
-                    state.master.peak = peak;
+                    audio_monitor.master_peak = peak;
                 },
                 AudioMonitorMessage::ActiveSound(id, msg) => match msg {
                     ActiveSoundMessage::Start {
@@ -439,56 +431,12 @@ impl Model {
             ui,
             ids,
             images,
-            fonts,
             state,
             channels,
             sound_id_gen,
             audio_monitor,
         };
         set_widgets(&mut gui);
-    }
-
-    /// Save the speaker configuration and audio sources on exit.
-    pub fn exit(self) {
-        // Destructure the GUI state for serializing.
-        let Model {
-            state:
-                State {
-                    master,
-                    installation_editor: InstallationEditor { state: installations, .. },
-                    speaker_editor:
-                        SpeakerEditor {
-                            speakers,
-                            next_id: next_speaker_id,
-                            ..
-                        },
-                    soundscape_editor:
-                        SoundscapeEditor {
-                            groups,
-                            next_group_id,
-                            ..
-                        },
-                    source_editor:
-                        SourceEditor {
-                            sources,
-                            next_id: next_source_id,
-                            soloed,
-                            ..
-                        },
-                    ..
-                },
-            assets,
-            ..
-        } = self;
-
-        utils::save_to_json_or_panic(&master_path(&assets), &master.params);
-        utils::save_to_json_or_panic(&installations_path(&assets), &installations);
-        let stored_speakers = StoredSpeakers { speakers, next_id: next_speaker_id };
-        utils::save_to_json_or_panic(&speakers_path(&assets), &stored_speakers);
-        let stored_soundscape = soundscape_editor::Stored { groups, next_group_id };
-        utils::save_to_json_or_panic(&soundscape_path(&assets), &stored_soundscape);
-        let stored_sources = StoredSources { sources, next_id: next_source_id, soloed };
-        utils::save_to_json_or_panic(&sources_path(&assets), &stored_sources);
     }
 
     /// Whether or not the GUI currently contains representations of active sounds.
@@ -502,212 +450,17 @@ impl Model {
 impl State {
     /// Initialise the `State` and send any loaded speakers and sources to the audio and composer
     /// threads.
-    fn new(
-        assets: &Path,
-        config: Config,
-        channels: &Channels,
-        audio_channels: AudioChannels,
-    ) -> Self {
-        // Load the master parameters.
-        let params = utils::load_from_json_or_default(&master_path(assets));
-        let master = Master::from_params(params);
-
-        // Send the loaded volume and rolloff to the audio output thread.
-        let master_volume = master.params.volume;
-        let dbap_rolloff_db = master.params.dbap_rolloff_db;
-        channels
-            .audio_output
-            .send(move |audio| {
-                audio.master_volume = master_volume;
-                audio.dbap_rolloff_db = dbap_rolloff_db;
-            })
-            .expect("failed to send loaded master volume and dbap rolloff");
-
-        // Send the latency to the soundscape thread.
-        let realtime_source_latency = master.params.realtime_source_latency;
-        channels
-            .soundscape
-            .send(move |soundscape| {
-                soundscape.realtime_source_latency = realtime_source_latency;
-            })
-            .expect("failed to send loaded realtime source latency");
-
-        // Load the stored isntallation editor state.
-        let inst_state: installation_editor::State =
-            utils::load_from_json_or_default(&installations_path(assets));
-
-        // Send the loaded installation-related soundscape state to the soundscape thread.
-        for (&inst, soundscape) in &inst_state.installations {
-            let clone = soundscape.clone();
-            channels
-                .soundscape
-                .send(move |soundscape| {
-                    soundscape.insert_installation(inst, clone);
-                })
-                .expect("failed to send loaded installation soundscape state");
-        }
-
-        // Send the loaded OSC installation targets to the osc output thread.
-        for (&inst, computers) in &inst_state.computer_map {
-            for (&computer, addr) in computers {
-                let osc_tx = nannou::osc::sender()
-                    .expect("failed to create OSC sender")
-                    .connect(&addr.socket)
-                    .expect("failed to connect OSC sender");
-                let osc_addr = addr.osc_addr.clone();
-                let add = osc::output::OscTarget::Add(inst, computer, osc_tx, osc_addr);
-                let msg = osc::output::Message::Osc(add);
-                channels
-                    .osc_out_msg_tx
-                    .send(msg)
-                    .expect("failed to send loaded OSC target");
-            }
-        }
-
-        let installation_editor = InstallationEditor {
-            is_open: false,
-            selected: None,
-            state: inst_state,
-        };
-
-        // Load the existing speaker layout configuration if there is one.
-        let StoredSpeakers { speakers, next_id } = StoredSpeakers::load(&speakers_path(assets));
-
-        // Send the loaded speakers to the audio and soundscape threads.
-        for speaker in &speakers {
-            let speaker_id = speaker.id;
-
-            // Audio output thread.
-            let speaker_clone = speaker.audio.clone();
-            channels
-                .audio_output
-                .send(move |audio| {
-                    audio.insert_speaker(speaker_id, speaker_clone);
-                })
-                .ok();
-
-            // Soundscape thread.
-            let soundscape_speaker = soundscape::Speaker::from_audio_speaker(&speaker.audio);
-            channels
-                .soundscape
-                .send(move |soundscape| {
-                    soundscape.insert_speaker(speaker_id, soundscape_speaker);
-                })
-                .ok();
-        }
-
-        let speaker_editor = SpeakerEditor {
-            is_open: false,
-            selected: None,
-            speakers,
-            next_id,
-        };
-
-        // Load the existing groups.
-        let stored = utils::load_from_json_or_default(&soundscape_path(assets));
-        let soundscape_editor::Stored { groups, next_group_id } = stored;
-
-        // Send the loaded groups to the soundscape thread.
-        for (&id, group) in &groups {
-            let group = group.group.clone();
-            channels
-                .soundscape
-                .send(move |soundscape| {
-                    soundscape.insert_group(id, group);
-                })
-                .ok();
-        }
-
-        let soundscape_editor = SoundscapeEditor {
-            is_open: false,
-            groups,
-            next_group_id,
-            selected: None,
-        };
-
-        // Load the existing sound sources if there are some.
-        let audio_path = assets.join(Path::new(AUDIO_DIRECTORY_NAME));
-        let stored_sources = StoredSources::load(&sources_path(assets), &audio_path);
-        let StoredSources { sources, next_id, soloed } = stored_sources;
-
-        // Send the realtime sources to the input thread.
-        for source in &sources {
-            if let audio::source::Kind::Realtime(ref realtime) = source.audio.kind {
-                let id = source.id;
-                let realtime = realtime.clone();
-                channels
-                    .audio_input
-                    .send(move |audio| {
-                        audio.sources.insert(id, realtime);
-                    })
-                    .ok();
-            }
-        }
-
-        // Send the loaded soundscape sources to the soundscape thread.
-        for source in &sources {
-            if let Some(soundscape_source) = soundscape::Source::from_audio_source(&source.audio) {
-                let id = source.id;
-                channels.soundscape.send(move |soundscape| {
-                    soundscape.insert_source(id, soundscape_source);
-                }).expect("soundscape was closed");
-            }
-        }
-
-        // Send the set of soloed sources to the audio thread.
-        let clone = soloed.clone();
-        channels
-            .audio_output
-            .send(move |audio| {
-                audio.soloed = clone;
-            })
-            .ok();
-
-        let preview = SourcePreview {
-            current: None,
-            point: None,
-        };
-
-        let source_editor = SourceEditor {
-            is_open: false,
-            selected: None,
-            soloed,
-            next_id,
-            sources,
-            preview,
-        };
-
-        let camera = Camera {
-            floorplan_pixels_per_metre: config.floorplan_pixels_per_metre,
-            position: Point2 {
-                x: Metres(0.0),
-                y: Metres(0.0),
-            },
-            zoom: 0.0,
-        };
-
+    fn new(config: &project::Config, audio_channels: AudioChannels) -> Self {
         let osc_in_log = Log::with_limit(config.osc_input_log_limit);
         let osc_out_log = Log::with_limit(config.osc_output_log_limit);
         let interaction_log = Log::with_limit(config.interaction_log_limit);
-
-        // State that is specific to the GUI itself.
+        let is_open = Default::default();
         State {
-            config,
-            // TODO: Possibly load camera from file.
-            camera,
-            master,
-            installation_editor,
-            speaker_editor,
-            soundscape_editor,
-            source_editor,
             osc_in_log,
             osc_out_log,
             interaction_log,
             audio_channels,
-            side_menu_is_open: true,
-            osc_in_log_is_open: false,
-            osc_out_log_is_open: false,
-            interaction_log_is_open: false,
+            is_open,
         }
     }
 }
@@ -747,6 +500,19 @@ impl<'a> Deref for Gui<'a> {
 impl<'a> DerefMut for Gui<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.ui
+    }
+}
+
+impl Deref for Camera {
+    type Target = camera::Camera;
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl DerefMut for Camera {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
     }
 }
 
@@ -1174,21 +940,30 @@ pub const SMALL_FONT_SIZE: FontSize = 12;
 pub const DARK_A: ui::Color = ui::Color::Rgba(0.1, 0.13, 0.15, 1.0);
 
 // Set the widgets in the side menu.
-fn set_side_menu_widgets(gui: &mut Gui) {
-    // Installation Editor - for editing installation-specific data.
-    let last_area_id = master::set(gui);
+fn set_side_menu_widgets(
+    gui: &mut Gui,
+    project: &mut (Project, ProjectState),
+) {
+    // The panel for selecting, adding and removing projects.
+    let mut last_area_id = unimplemented!(); // project_editor::set
 
-    // Installation Editor - for editing installation-specific data.
-    let last_area_id = installation_editor::set(last_area_id, gui);
+    // Many of the sidebar widgets can only be displayed if a project is selected.
+    if let (ref mut project, ref mut project_state) = *project {
+        // Installation Editor - for editing installation-specific data.
+        last_area_id = master::set(gui, project);
 
-    // Speaker Editor - for adding, editing and removing speakers.
-    let last_area_id = speaker_editor::set(last_area_id, gui);
+        // Installation Editor - for editing installation-specific data.
+        last_area_id = installation_editor::set(last_area_id, gui, project, project_state);
 
-    // Soundscape Editor - for playing/pausing and adding, editing and removing groups.
-    let last_area_id = soundscape_editor::set(last_area_id, gui);
+        // Speaker Editor - for adding, editing and removing speakers.
+        last_area_id = speaker_editor::set(last_area_id, gui, project, project_state);
 
-    // For adding, changing and removing audio sources.
-    let last_area_id = source_editor::set(last_area_id, gui);
+        // Soundscape Editor - for playing/pausing and adding, editing and removing groups.
+        last_area_id = soundscape_editor::set(last_area_id, gui, project, project_state);
+
+        // For adding, changing and removing audio sources.
+        last_area_id = source_editor::set(last_area_id, gui, project, project_state);
+    }
 
     // The log of received OSC messages.
     let last_area_id = osc_in_log::set(last_area_id, gui);

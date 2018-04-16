@@ -1,6 +1,6 @@
 use audio;
 use fxhash::FxHashMap;
-use installation::Installation;
+use installation;
 use metres::Metres;
 use nannou::prelude::*;
 use nannou::rand::Rng;
@@ -49,13 +49,13 @@ pub struct InstallationData {
 }
 
 /// A map of installation data relevant to the agent.
-pub type InstallationDataMap = FxHashMap<Installation, InstallationData>;
+pub type InstallationDataMap = FxHashMap<installation::Id, InstallationData>;
 
 impl Agent {
     /// Generate a new agent starting in the given installation area.
     pub fn generate<R>(
         mut rng: R,
-        start_installation: Installation,
+        start_installation: installation::Id,
         installations: &InstallationDataMap,
         max_speed: f64,
         max_force: f64,
@@ -178,7 +178,7 @@ fn should_pick_new_target(
 fn closest_installation(
     p: Point,
     installations: &InstallationDataMap,
-) -> Option<(&Installation, &InstallationData)> {
+) -> Option<(&installation::Id, &InstallationData)> {
     let mut iter = installations.iter();
     iter.next()
         .map(|first| {

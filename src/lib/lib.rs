@@ -18,22 +18,28 @@ extern crate serde; // serialization
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
+extern crate slug;
 extern crate time_calc;
 extern crate toml;
 extern crate utils as mindtree_utils;
 extern crate walkdir;
 
+use config::Config;
 use nannou::prelude::*;
 use soundscape::Soundscape;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
 
 mod audio;
+mod camera;
 mod config;
 mod gui;
 mod installation;
 mod interaction;
+mod master;
 mod metres;
+mod project;
 mod osc;
 mod soundscape;
 mod utils;
@@ -48,7 +54,16 @@ pub fn run() {
 struct Model {
     gui: gui::Model,
     soundscape: Soundscape,
+    config: Config,
     audio_monitor: thread::JoinHandle<()>,
+}
+
+// The path to the server's config file.
+fn config_path<P>(assets: P) -> PathBuf
+where
+    P: AsRef<Path>,
+{
+    assets.as_ref().join("config.toml")
 }
 
 // Initialise the state of the application.
@@ -58,18 +73,8 @@ fn model(app: &App) -> Model {
         .expect("could not find assets directory");
 
     // Load the configuration struct.
-    let config_path = assets.join("config.toml");
-    let config = config::load(&config_path)
-        .unwrap_or_else(|err| panic!("could not load {}: {}", config_path.display(), err));
-
-    // Create a window.
-    let window = app.new_window()
-        .with_title("Audio Server")
-        .with_dimensions(config.window_width, config.window_height)
-        .with_vsync(true)
-        .with_multisampling(4)
-        .build()
-        .expect("failed to create window");
+    let config_path = config_path(&assets);
+    let config: Config = utils::load_from_toml_or_default(&config_path);
 
     // Spawn the OSC input thread.
     let osc_receiver = nannou::osc::receiver(config.osc_input_port)
@@ -137,6 +142,15 @@ fn model(app: &App) -> Model {
         sound_id_gen.clone(),
     );
 
+    // Create a window.
+    let window = app.new_window()
+        .with_title("Audio Server")
+        .with_dimensions(config.window_width, config.window_height)
+        .with_vsync(true)
+        .with_multisampling(4)
+        .build()
+        .expect("failed to create window");
+
     // Initalise the GUI model.
     let gui_channels = gui::Channels::new(
         osc_in_log_rx,
@@ -161,6 +175,7 @@ fn model(app: &App) -> Model {
 
     Model {
         soundscape,
+        config,
         gui,
         audio_monitor,
     }
@@ -191,12 +206,27 @@ fn view(app: &App, model: &Model, frame: Frame) -> Frame {
 fn exit(_app: &App, model: Model) {
     let Model {
         gui,
+        config,
         soundscape,
         audio_monitor,
         ..
     } = model;
 
-    gui.exit();
+    // Find the assets directory so we can save state before closing.
+    let assets = app.assets_path().expect("could not find assets directory");
+
+    // Save the top-level toml config.
+    let config_path = config_path(&assets);
+    if let Err(err) = utils::save_to_toml(&config_path, &config) {
+        eprintln!("failed to save \"assets/config.toml\" during exit: {}", err);
+    }
+
+    // Save the selected gui project if there is one.
+    if let Some(project) = gui.project {
+        if let Err(err) = project.save() {
+            eprintln!("failed to save selected project during exit: {}", err);
+        }
+    }
 
     // Wait for the audio monitoring thread to close
     //

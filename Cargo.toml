@@ -27,6 +27,7 @@ rustfft = "2.0"
 serde = { version = "1.0", features = ["rc"] }
 serde_derive = "1.0"
 serde_json = "1.0"
+slug = "0.1"
 time_calc = { version = "0.13", features = ["serde"] }
 toml = "0.4"
 walkdir = "2"

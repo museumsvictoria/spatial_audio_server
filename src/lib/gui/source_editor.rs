@@ -4,102 +4,56 @@ use audio::source::wav::Playback;
 use fxhash::FxHashSet;
 use gui::{collapsible_area, duration_label, hz_label, Gui, State};
 use gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
-use installation::{self, Installation};
+use installation;
 use metres::Metres;
 use nannou::prelude::*;
 use nannou::ui;
 use nannou::ui::prelude::*;
+use project::{self, Project};
 use soundscape;
-use std;
+use std::{self, cmp, mem, ops};
 use std::ffi::OsStr;
-use std::mem;
-use std::ops;
 use std::path::{Component, Path};
 use time_calc::{Ms, Samples};
 use utils;
 use walkdir::WalkDir;
 
+/// Runtime state related to the source editor GUI panel.
+#[derive(Debug, Default)]
 pub struct SourceEditor {
-    pub is_open: bool,
-    pub sources: Vec<Source>,
-    // The tracks that currently have solo enabled.
-    pub soloed: FxHashSet<audio::source::Id>,
-    // The index of the selected source.
+    /// The index of the selected source.
     pub selected: Option<usize>,
-    // The next ID to be used for a new source.
-    pub next_id: audio::source::Id,
+    /// The source currently being previewed via the source editor GUI.
     pub preview: SourcePreview,
 }
 
+/// A source currently being previewed.
+#[derive(Default)]
 pub struct SourcePreview {
     pub current: Option<(SourcePreviewMode, audio::sound::Id)>,
     pub point: Option<Point2<Metres>>,
 }
 
+/// The mode of source preview.
 #[derive(Copy, Clone, PartialEq)]
 pub enum SourcePreviewMode {
     OneShot,
     Continuous,
 }
 
-// A GUI view of an audio source.
-#[derive(Deserialize, Serialize)]
-pub struct Source {
-    pub name: String,
-    pub audio: audio::Source,
-    pub id: audio::source::Id,
-}
-
-// A data structure from which sources can be saved/loaded.
-#[derive(Deserialize, Serialize)]
-pub struct StoredSources {
-    #[serde(default)]
-    pub sources: Vec<Source>,
-    #[serde(default = "first_source_id")]
-    pub next_id: audio::source::Id,
-    #[serde(default)]
-    pub soloed: FxHashSet<audio::source::Id>,
-}
-
-pub fn first_source_id() -> audio::source::Id {
-    audio::source::Id::INITIAL
-}
-
-impl ops::Deref for Source {
-    type Target = audio::Source;
-    fn deref(&self) -> &Self::Target {
-        &self.audio
-    }
-}
-
-impl ops::DerefMut for Source {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.audio
+/// Sort sources by kind and then name when displaying in the list.
+fn source_display_order(a: &project::Source, b: &project::Source) -> cmp::Ordering {
+    match (&a.kind, &b.kind) {
+        (&audio::source::Kind::Wav(_), &audio::source::Kind::Realtime(_)) => {
+            cmp::Ordering::Less
+        }
+        _ => a.name.cmp(&b.name),
     }
 }
 
 const SOUNDSCAPE_COLOR: ui::Color = ui::color::DARK_RED;
 const INTERACTIVE_COLOR: ui::Color = ui::color::DARK_GREEN;
 const SCRIBBLES_COLOR: ui::Color = ui::color::DARK_PURPLE;
-
-impl SourceEditor {
-    // Returns the next unique source editor.
-    fn next_id(&mut self) -> audio::source::Id {
-        let next_id = self.next_id;
-        self.next_id = audio::source::Id(self.next_id.0.wrapping_add(1));
-        next_id
-    }
-}
-
-impl Default for StoredSources {
-    fn default() -> Self {
-        StoredSources {
-            sources: Vec::new(),
-            next_id: audio::source::Id::INITIAL,
-            soloed: Default::default(),
-        }
-    }
-}
 
 impl StoredSources {
     /// Load the audio sources from the given path.
@@ -1457,7 +1411,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .collect::<Vec<_>>();
             let installation_strs = installations_vec
                 .iter()
-                .map(Installation::display_str)
+                .map(installation::Id::display_str)
                 .collect::<Vec<_>>();
             for index in widget::DropDownList::new(&installation_strs, None)
                 .align_middle_x_of(ids.source_editor_selected_installations_canvas)

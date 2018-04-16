@@ -1,6 +1,6 @@
 use audio;
 use fxhash::FxHashSet;
-use installation::Installation;
+use installation;
 use metres::Metres;
 use nannou::math::Point2;
 
@@ -18,13 +18,13 @@ pub struct Speaker {
     pub channel: usize,
     // Installations assigned to this speaker.
     #[serde(default)]
-    pub installations: FxHashSet<Installation>,
+    pub installations: FxHashSet<installation::Id>,
 }
 
 /// Calculate a speaker's DBAP weight taking into consideration its assigned installations.
 pub fn dbap_weight(
     sound_installations: &audio::sound::Installations,
-    speaker_installations: &FxHashSet<Installation>,
+    speaker_installations: &FxHashSet<installation::Id>,
 ) -> f64
 {
     match *sound_installations {

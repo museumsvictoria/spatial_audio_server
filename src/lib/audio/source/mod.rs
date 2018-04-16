@@ -1,5 +1,5 @@
 use fxhash::FxHashSet;
-use installation::Installation;
+use installation;
 use metres::Metres;
 use nannou::math::map_range;
 use nannou::rand::Rng;
@@ -135,7 +135,7 @@ pub enum Role {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Soundscape {
     #[serde(default)]
-    pub installations: FxHashSet<Installation>,
+    pub installations: FxHashSet<installation::Id>,
     #[serde(default)]
     pub groups: FxHashSet<soundscape::group::Id>,
     #[serde(default = "default::occurrence_rate")]
