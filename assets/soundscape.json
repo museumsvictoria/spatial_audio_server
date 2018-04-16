@@ -1,6 +1,19 @@
 {
   "groups": {
-    "4": {
+    "0": {
+      "group": {
+        "occurrence_rate": {
+          "min": 63.35345410449991,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group A"
+    },
+    "5": {
       "group": {
         "occurrence_rate": {
           "min": 1.0,
@@ -11,7 +24,7 @@
           "max": 10
         }
       },
-      "name": "Group E"
+      "name": "Group F"
     },
     "2": {
       "group": {
@@ -25,6 +38,19 @@
         }
       },
       "name": "Group C"
+    },
+    "4": {
+      "group": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 3600000.0
+        },
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 10
+        }
+      },
+      "name": "Group E"
     },
     "1": {
       "group": {
@@ -51,32 +77,6 @@
         }
       },
       "name": "Group D"
-    },
-    "5": {
-      "group": {
-        "occurrence_rate": {
-          "min": 1.0,
-          "max": 3600000.0
-        },
-        "simultaneous_sounds": {
-          "min": 1,
-          "max": 10
-        }
-      },
-      "name": "Group F"
-    },
-    "0": {
-      "group": {
-        "occurrence_rate": {
-          "min": 63.35345410449991,
-          "max": 3600000.0
-        },
-        "simultaneous_sounds": {
-          "min": 1,
-          "max": 10
-        }
-      },
-      "name": "Group A"
     }
   },
   "next_group_id": 6
