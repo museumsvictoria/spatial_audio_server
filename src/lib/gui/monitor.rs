@@ -17,7 +17,7 @@ pub type Receiver = mpsc::Receiver<gui::AudioMonitorMessage>;
 pub type Spawned = (thread::JoinHandle<()>, Sender, Receiver);
 
 /// Spawn the intermediary monitoring thread and return the communication channels.
-pub fn spawn(proxy: nannou::app::Proxy) -> io::Result<Spawned> {
+pub fn spawn(_proxy: nannou::app::Proxy) -> io::Result<Spawned> {
     let (audio_tx, audio_rx) = mpsc::sync_channel(1024);
     let (gui_tx, gui_rx) = mpsc::sync_channel(1024);
 
@@ -39,10 +39,10 @@ pub fn spawn(proxy: nannou::app::Proxy) -> io::Result<Spawned> {
                 for msg in msgs.drain(..) {
                     match gui_tx.try_send(msg) {
                         Ok(_) => {
-                            if proxy.wakeup().is_err() {
-                                eprintln!("audio_monitor proxy could not wakeup app");
-                                break 'run;
-                            }
+                            // if proxy.wakeup().is_err() {
+                            //     eprintln!("audio_monitor proxy could not wakeup app");
+                            //     break 'run;
+                            // }
                         },
                         Err(mpsc::TrySendError::Disconnected(_)) => break 'run,
                         _ => (),
