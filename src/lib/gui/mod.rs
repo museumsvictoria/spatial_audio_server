@@ -1647,13 +1647,26 @@ fn set_widgets(gui: &mut Gui) {
                     let position = active_sound.position;
                     let id = source.id;
                     let soloed = &state.source_editor.soloed;
-                    let color = if source.audio.muted || (!soloed.is_empty() && !soloed.contains(&id)) {
+                    let mut color = if source.audio.muted || (!soloed.is_empty() && !soloed.contains(&id)) {
                         color::LIGHT_CHARCOAL
                     } else if soloed.contains(&id) {
                         color::DARK_YELLOW
                     } else {
                         color::DARK_BLUE
                     };
+
+                    // If the source editor is open and this sound is selected, highlight it.
+                    if state.source_editor.is_open {
+                        if let Some(i) = selected {
+                            if let Some(selected) = state.source_editor.sources.get(i) {
+                                if selected.id == source.id {
+                                    let luminance = color.luminance();
+                                    color = color.with_luminance(luminance.powf(0.5));
+                                }
+                            }
+                        }
+                    }
+
                     (
                         spread,
                         channel_radians,
