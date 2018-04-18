@@ -12,16 +12,14 @@ name = "audio_server"
 path = "src/lib/lib.rs"
 
 [dependencies]
-#conrod = { version = "0.58", features = ["winit", "glium"] }
-conrod = { git = "https://github.com/mitchmindtree/conrod", branch = "winit_glium_update", features = ["winit", "glium"] }
+conrod = { version = "0.59", features = ["winit", "glium"] }
 conrod_derive = "0.1"
 custom_derive = "0.1"
 fxhash = "0.2"
 hound = "3.3"
 mindtree_utils = "0.4"
 newtype_derive = "0.1"
-#nannou = "0.4"
-nannou = { git = "https://github.com/mitchmindtree/nannou", branch = "glium_conrod_update" }
+nannou = "0.5"
 pitch_calc = "0.11"
 rustfft = "2.0"
 serde = { version = "1.0", features = ["rc"] }
