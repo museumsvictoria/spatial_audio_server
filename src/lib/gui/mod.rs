@@ -951,7 +951,6 @@ pub fn duration_label(ms: &Ms) -> String {
     }
 }
 
-pub const PAD: Scalar = 6.0;
 pub const TEXT_PAD: Scalar = 20.0;
 pub const ITEM_HEIGHT: Scalar = 30.0;
 pub const SMALL_FONT_SIZE: FontSize = 12;
@@ -1359,7 +1358,7 @@ fn set_widgets(
                 .set(widget_id, ui);
 
             // Write the channel number on the speaker.
-            let label = format!("{}", channel);
+            let label = format!("{}", channel + 1);
             let font_size = (radius * 0.75) as ui::FontSize;
             widget::Text::new(&label)
                 .x_y(x, y)

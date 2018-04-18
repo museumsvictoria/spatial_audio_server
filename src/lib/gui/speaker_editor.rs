@@ -126,7 +126,7 @@ pub fn set(
                         let label = format!(
                             "{} - CH {} - ({}mx, {}my)",
                             speaker.name,
-                            speaker.channel,
+                            speaker.channel + 1,
                             (speaker.point.x.0 * 100.0).trunc() / 100.0,
                             (speaker.point.y.0 * 100.0).trunc() / 100.0
                         );
@@ -326,8 +326,8 @@ pub fn set(
                 .map(|id| &speakers[id])
                 .enumerate()
                 .find(|&(ix, ref s)| i != ix && s.audio.channel == ch)
-                .map(|(_ix, s)| format!("CH {} (swap with {})", ch, s.name))
-                .unwrap_or_else(|| format!("CH {}", ch))
+                .map(|(_ix, s)| format!("CH {} (swap with {})", ch + 1, s.name))
+                .unwrap_or_else(|| format!("CH {}", ch + 1))
         })
         .collect();
     let selected_channel = speakers[&id].audio.channel;

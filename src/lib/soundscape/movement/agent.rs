@@ -109,7 +109,6 @@ impl Agent {
             self.velocity,
             self.max_speed,
             self.max_force,
-            self.max_rotation,
         )
     }
 
@@ -316,7 +315,6 @@ fn seek_force(
     current_velocity: Vector,
     max_speed: f64,
     max_force: f64,
-    max_rotation: f64,
 ) -> Vector {
     let desired_velocity = desired_velocity(current_position, target_position);
     let desired_normalised = vt2::to_f64(desired_velocity).normalize();

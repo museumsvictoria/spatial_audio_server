@@ -4,6 +4,7 @@ use gui::{collapsible_area, Gui, ProjectState, State, TEXT_PAD, ITEM_HEIGHT, SMA
 use project::{self, Project};
 use nannou::ui;
 use nannou::ui::prelude::*;
+use osc;
 use slug::slugify;
 use std::fs;
 use std::path::Path;
@@ -119,7 +120,7 @@ pub fn set(
     {
         // If a project was already selected, attempt to save it before creating and loading the
         // new empty project.
-        if let Some((project, _)) = project.take() {
+        if let Some((ref project, _)) = *project {
             project.save(assets).expect("failed to save the project");
         }
     }
@@ -141,7 +142,7 @@ pub fn set(
 
     // If there are no projects, say so!
     if project_directories.is_empty() {
-        let text = format!("No Projects!\nPress the `+` button below.");
+        let text = format!("No Projects!\nPress the `ADD` button below.");
         widget::Text::new(&text)
             .padded_w_of(area.id, TEXT_PAD)
             .mid_top_with_margin_on(area.id, TEXT_PAD)
@@ -304,6 +305,26 @@ pub fn set(
             let loaded_project_state = ProjectState::default();
             project_editor.text_box_name = loaded_project.name.clone();
             *project = Some((loaded_project, loaded_project_state));
+
+        // Otherwise, just clear all the data.
+        } else {
+            // Clear all project state from audio, osc and soundscape thread models.
+            channels
+                .soundscape
+                .send(move |soundscape| soundscape.clear_project_specific_data())
+                .ok();
+            channels
+                .audio_input
+                .send(move |audio| audio.clear_project_specific_data())
+                .ok();
+            channels
+                .audio_output
+                .send(move |audio| audio.clear_project_specific_data())
+                .ok();
+            channels
+                .osc_out_msg_tx
+                .send(osc::output::Message::ClearProjectSpecificData)
+                .ok();
         }
     }
 

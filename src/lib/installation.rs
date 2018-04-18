@@ -16,6 +16,8 @@ pub const ALL: &'static [Id] = &[
     Id::TurbulentEncounters,
     Id::Cacophony,
     Id::WrappedInSpectrum,
+    Id::Turret1,
+    Id::Turret2,
 ];
 
 /// A unique identifier for referring to an installation.
@@ -28,6 +30,8 @@ pub enum Id {
     TurbulentEncounters = 4,
     Cacophony = 5,
     WrappedInSpectrum = 6,
+    Turret1 = 7,
+    Turret2 = 8,
 }
 
 /// An installation's computers.
@@ -70,6 +74,8 @@ impl Id {
             Id::TurbulentEncounters => "Turbulent Encounters",
             Id::Cacophony => "Cacophony",
             Id::WrappedInSpectrum => "Wrapped In Spectrum",
+            Id::Turret1 => "Turret 1",
+            Id::Turret2 => "Turret 2",
         }
     }
 
@@ -82,6 +88,8 @@ impl Id {
             Id::TurbulentEncounters => "turb",
             Id::Cacophony => "caco",
             Id::WrappedInSpectrum => "wrap",
+            Id::Turret1 => "tur1",
+            Id::Turret2 => "tur2",
         }
     }
 
@@ -98,6 +106,8 @@ impl Id {
             Id::TurbulentEncounters => 4,
             Id::Cacophony => 5,
             Id::WrappedInSpectrum => 6,
+            Id::Turret1 => 7,
+            Id::Turret2 => 8,
         }
     }
 
@@ -110,6 +120,8 @@ impl Id {
             Id::TurbulentEncounters => 1,
             Id::Cacophony => 1,
             Id::WrappedInSpectrum => 2,
+            Id::Turret1 => 0,
+            Id::Turret2 => 0,
         }
     }
 }

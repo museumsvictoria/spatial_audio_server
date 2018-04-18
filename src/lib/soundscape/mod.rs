@@ -482,6 +482,7 @@ impl Model {
         self.installations.clear();
         self.groups.clear();
         self.sources.clear();
+        self.speakers.clear();
         self.groups_last_used.clear();
         self.sources_last_used.clear();
         self.active_sounds.clear();
