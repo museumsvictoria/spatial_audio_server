@@ -10,34 +10,23 @@
 //! 3. Soundscape groups and constraints.
 //! 4. Seaker layout.
 //! 5. Audio source params and soundscape constraints.
-//!
-//! The directory hieararchy looks as follows:
-//!
-//! assets/
-//! |-audio/
-//! |-images/
-//! |-projects/
-//! | |-projects.toml
-//! | |-awesome-project/
-//! | |-foo-project/
-//! | |-sweeeet/
-//! |   |-audio/
-//! |   |-images/
-//! |-project-backups/
-//!
 
 use audio;
+use camera::Camera;
+use fxhash::{FxHashMap, FxHashSet};
 use gui;
 use installation::{self, Installation};
-use master::{self, Master};
+use master::Master;
 use nannou;
 use osc;
 use slug::slugify;
 use soundscape;
 use std::{cmp, fs, io};
+use std::ffi::OsStr;
 use std::ops::{Deref, DerefMut};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use utils;
+use walkdir::WalkDir;
 
 pub mod config;
 
@@ -56,7 +45,7 @@ const STATE_EXTENSION: &'static str = "json";
 const CONFIG_FILE_STEM: &'static str = "config";
 
 /// The extension used for serializing and deserializing project config.
-const CONFIG_EXTENSION: &'static str = "toml";
+const CONFIG_EXTENSION: &'static str = "json";
 
 /// The name of the directory where the WAVs are stored.
 const AUDIO_DIRECTORY_STEM: &'static str = "audio";
@@ -115,7 +104,7 @@ pub struct State {
 pub type Installations = FxHashMap<installation::Id, Installation>;
 
 /// A map of all soundscape groups within the exhibition for the project.
-pub type SoundscapeGroups = FxHashMap<soundscape::group::Id, Group>;
+pub type SoundscapeGroups = FxHashMap<soundscape::group::Id, SoundscapeGroup>;
 
 /// A map of all speakers within the exhibition for the project.
 pub type Speakers = FxHashMap<audio::speaker::Id, Speaker>;
@@ -164,33 +153,38 @@ pub struct Source {
     pub audio: audio::Source,
 }
 
+impl State {
+    fn default_from_name(name: String) -> Self {
+        let master = Default::default();
+        let installations = default_installations();
+        let soundscape_groups = Default::default();
+        let speakers = Default::default();
+        let sources = Default::default();
+        let camera = Default::default();
+        State {
+            name,
+            master,
+            installations,
+            soundscape_groups,
+            speakers,
+            sources,
+            camera,
+        }
+    }
+}
+
 impl Project {
-    /// Load the project from the given project directory path.
+    /// Construct the project from its `State` and `Config` parts.
     ///
-    /// If the project "config.toml" does not exist or is invalid, a default config will be used.
-    ///
-    /// **Panics** if the project "state.json" does not exist or is invalid. However, the method
-    /// will attempt to fall back to reasonable default for each field that cannot be deserialized.
-    pub fn load<A, P>(
-        assets_path: A,
-        project_directory_path: P,
-        default_config: &Config,
-        channels: &gui::Channels,
+    /// This is used internally within the `load` and `default` constructors.
+    fn from_config_and_state<P>(
+        assets: P,
+        config: Config,
+        mut state: State,
     ) -> Self
     where
-        A: AsRef<Path>,
         P: AsRef<Path>,
     {
-        // Load the configuration toml.
-        let config_path = project_config_path(&project_directory_path);
-        let config = utils::load_from_toml(&config_path)
-            .unwrap_or_else(|_| default_config.clone());
-
-        // Load the state json.
-        let state_path = project_state_path(project_directory_path);
-        let mut state = utils::load_from_json(&state)
-            .expect("failed to load project state");
-
         /////////////////////////////////////////////////////////////
         // Update the camera's "floorplan_pixels_per_metre" field. //
         /////////////////////////////////////////////////////////////
@@ -201,23 +195,46 @@ impl Project {
         // Load any sources that have not yet been loaded //
         ////////////////////////////////////////////////////
 
-        let assets = assets_path.as_ref();
+        let assets = assets.as_ref();
         let audio_path = assets.join(AUDIO_DIRECTORY_STEM);
         state.sources.remove_invalid_sources(&audio_path);
         state.sources.load_missing_sources(audio_path);
         state.sources.remove_invalid_soloed();
 
-        ////////////////////////////////////////////////////////////////
-        // Update the audio, OSC and soundscape threads as necessary. //
-        ////////////////////////////////////////////////////////////////
+        Project { config, state }
+    }
 
-        // TODO: Clear all project state from audio, osc and soundscape thread models.
-        unimplemented!();
+    /// This method clears the state on all threads and re-populates them with the state of the
+    /// `Project`. Specifically, this updates the audio input, audio output, osc output and
+    /// soundscape threads as necessary.
+    ///
+    /// This is particularly useful when creating or loading a new project to use as the main
+    /// project.
+    pub fn reset_and_sync_all_threads(&self, channels: &gui::Channels) {
+        // Clear all project state from audio, osc and soundscape thread models.
+        channels
+            .soundscape
+            .send(move |soundscape| soundscape.clear_project_specific_data())
+            .ok();
+        channels
+            .audio_input
+            .send(move |audio| audio.clear_project_specific_data())
+            .ok();
+        channels
+            .audio_output
+            .send(move |audio| audio.clear_project_specific_data())
+            .ok();
+        channels
+            .osc_out_msg_tx
+            .send(osc::output::Message::ClearProjectSpecificData)
+            .ok();
+
+        // TODO: Consider updating config stuff here?
 
         // Master to audio input and output.
-        let master_volume = state.master_volume;
-        let dbap_rolloff_db = state.dbap_rolloff_db;
-        let realtime_source_latency = state.realtime_source_latency;
+        let master_volume = self.master.volume;
+        let dbap_rolloff_db = self.master.dbap_rolloff_db;
+        let realtime_source_latency = self.master.realtime_source_latency;
         channels
             .audio_output
             .send(move |audio| {
@@ -233,7 +250,7 @@ impl Project {
             .expect("failed to send loaded realtime source latency");
 
         // Installations to soundscape and osc output.
-        for (id, installation) in state.installations.iter() {
+        for (&id, installation) in self.installations.iter() {
             let clone = installation.soundscape.clone();
             channels
                 .soundscape
@@ -241,7 +258,7 @@ impl Project {
                     soundscape.insert_installation(id, clone);
                 })
                 .expect("failed to send loaded installation soundscape state");
-            for (computer, addr) in installation.computers.iter() {
+            for (&computer, addr) in installation.computers.iter() {
                 let osc_tx = nannou::osc::sender()
                     .expect("failed to create OSC sender")
                     .connect(&addr.socket)
@@ -257,7 +274,7 @@ impl Project {
         }
 
         // Soundscape groups to the soundscape thread.
-        for (&id, group) in state.soundscape_groups.iter() {
+        for (&id, group) in self.soundscape_groups.iter() {
             let clone = group.soundscape.clone();
             channels
                 .soundscape
@@ -268,7 +285,7 @@ impl Project {
         }
 
         // Speakers to the soundscape and audio output threads.
-        for (&id, speaker) in state.speakers.iter() {
+        for (&id, speaker) in self.speakers.iter() {
             let clone = speaker.audio.clone();
             channels
                 .audio_output
@@ -286,7 +303,7 @@ impl Project {
         }
 
         // Sources to the audio input and soundscape threads.
-        for (&id, source) in state.sources.iter() {
+        for (&id, source) in self.sources.iter() {
             if let audio::source::Kind::Realtime(ref realtime) = source.kind {
                 let clone = realtime.clone();
                 channels
@@ -306,7 +323,80 @@ impl Project {
             }
         }
 
-        Project { config, state }
+
+    }
+
+    /// Create a new project with a unique, default name.
+    pub fn new<P>(assets: P, default_config: &Config) -> Self
+    where
+        P: AsRef<Path>,
+    {
+        // Get the projects directory.
+        let projects_directory = projects_directory(&assets);
+
+        // Create a unique default project name.
+        let mut name;
+        let mut i = 1;
+        loop {
+            name = format!("{} {}", default_project_name(), i);
+            let slug = slugify(&name);
+            let project_directory = projects_directory.join(slug);
+            if !project_directory.exists() {
+                break;
+            } else {
+                i += 1;
+            }
+        };
+
+        // Create the default state.
+        let config = default_config.clone();
+        let state = State::default_from_name(name);
+
+        Self::from_config_and_state(assets, config, state)
+    }
+
+    /// The same as `load`, but loads the project from the given slug rather than the full path.
+    ///
+    /// Returns `None` if there was no project for the given slug.
+    pub fn load_from_slug<P>(assets_path: P, slug: &str, default_config: &Config) -> Option<Self>
+    where
+        P: AsRef<Path>,
+    {
+        let projects_directory = projects_directory(&assets_path);
+        let project_directory = projects_directory.join(&slug);
+        if project_directory.exists() && project_directory.is_dir() {
+            Some(Self::load(assets_path, &project_directory, default_config))
+        } else {
+            None
+        }
+    }
+
+    /// Load the project from the given project directory path.
+    ///
+    /// If the project "config.json" does not exist or is invalid, a default config will be used.
+    ///
+    /// **Panics** if the project "state.json" does not exist or is invalid. However, the method
+    /// will attempt to fall back to reasonable default for each field that cannot be deserialized.
+    pub fn load<A, P>(
+        assets_path: A,
+        project_directory_path: P,
+        default_config: &Config,
+    ) -> Self
+    where
+        A: AsRef<Path>,
+        P: AsRef<Path>,
+    {
+        // Load the configuration json.
+        let config_path = project_config_path(&project_directory_path);
+        let config: Config = utils::load_from_json(&config_path)
+            .unwrap_or_else(|_| default_config.clone());
+
+        // Load the state json.
+        let state_path = project_state_path(project_directory_path);
+        let state: State = utils::load_from_json(&state_path)
+            .expect("failed to load project state");
+
+        Self::from_config_and_state(assets_path, config, state)
     }
 
     /// Save the project in its current state.
@@ -322,10 +412,10 @@ impl Project {
             fs::create_dir_all(&project_directory)?;
         }
 
-        // Save the configuration toml file.
+        // Save the configuration json file.
         let config_path = project_config_path(&project_directory);
-        if let Err(err) = utils::save_to_toml(&config_path, &self.config) {
-            eprintln!("failed to save project config.toml: {}", err);
+        if let Err(err) = utils::save_to_json(&config_path, &self.config) {
+            eprintln!("failed to save project config.json: {}", err);
         }
 
         // Save the state json file.
@@ -404,7 +494,7 @@ where
             // If so, check the path at the new location relative to the audio path.
             //
             // If we can find it, return the new absolute path.
-            let new_path: Option<std::path::PathBuf> = {
+            let new_path: Option<PathBuf> = {
                 let mut components = wav.path.components();
                 let audio_path_stem = audio_path.file_stem().and_then(|os_str| os_str.to_str());
                 components
@@ -515,9 +605,15 @@ where
             };
             let source = Source { name, audio };
             sources.map.insert(next_id, source);
-            next_id = audio::source::Id(id.0 + 1);
+            next_id = audio::source::Id(next_id.0 + 1);
         }
     }
+}
+
+/// Search for and return the next available group ID.
+pub fn next_soundscape_group_id(groups: &SoundscapeGroups) -> soundscape::group::Id {
+    let next_id = groups.keys().map(|id| id.0).fold(0, cmp::max) + 1;
+    soundscape::group::Id(next_id)
 }
 
 /// Given the map of speakers, produce the next available unique `Id`.
@@ -656,7 +752,7 @@ where
     projects_directory.join(directory_stem)
 }
 
-/// The file path for the "config.toml" file holding all human-friendly config for this project.
+/// The file path for the "config.json" file holding all human-friendly config for this project.
 pub fn project_config_path<P>(project_directory: P) -> PathBuf
 where
     P: AsRef<Path>,
@@ -690,5 +786,5 @@ where
         .filter(|p| p.is_dir())
         .filter(|p| p.join(STATE_FILE_STEM).with_extension(STATE_EXTENSION).exists())
         .collect();
-    Ok(path)
+    Ok(paths)
 }

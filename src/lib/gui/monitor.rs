@@ -9,24 +9,51 @@
 use gui;
 use nannou;
 use std::io;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
+use std::sync::atomic::{self, AtomicBool};
 use std::thread;
 
 pub type Sender = mpsc::SyncSender<gui::AudioMonitorMessage>;
 pub type Receiver = mpsc::Receiver<gui::AudioMonitorMessage>;
-pub type Spawned = (thread::JoinHandle<()>, Sender, Receiver);
+pub type Spawned = (Monitor, Sender, Receiver);
+
+/// A handle to the GUI monitoring thread.
+pub struct Monitor {
+    thread: thread::JoinHandle<()>,
+    is_closed: Arc<AtomicBool>,
+}
+
+impl Monitor {
+    /// Closes the monitoring thread.
+    pub fn close(&self) {
+        self.is_closed.store(true, atomic::Ordering::Relaxed);
+    }
+
+    /// Waits for the thread
+    pub fn join(self) -> thread::Result<()> {
+        self.close();
+        let Monitor { thread, .. } = self;
+        thread.join()
+    }
+}
 
 /// Spawn the intermediary monitoring thread and return the communication channels.
-pub fn spawn(_proxy: nannou::app::Proxy) -> io::Result<Spawned> {
+pub fn spawn(app_proxy: nannou::app::Proxy) -> io::Result<Spawned> {
     let (audio_tx, audio_rx) = mpsc::sync_channel(1024);
     let (gui_tx, gui_rx) = mpsc::sync_channel(1024);
+    let is_closed = Arc::new(AtomicBool::new(false));
+    let is_closed_2 = is_closed.clone();
 
-    let handle = thread::Builder::new()
+    let thread = thread::Builder::new()
         .name("gui_audio_monitor".into())
         .spawn(move || {
+            // TODO: Work out how to use this in a way that is not so expensive on Mac.
+            // Perhaps use some atomic bool flag which indicates whether or not the GUI needs
+            // waking up.
+            let _app_proxy = app_proxy;
             // Attempt to forward every message and wakeup the GUI when successful.
             let mut msgs = vec![];
-            'run: loop {
+            'run: while !is_closed_2.load(atomic::Ordering::Relaxed) {
                 // Receive all pending msgs.
                 msgs.extend(audio_rx.try_iter());
 
@@ -51,5 +78,6 @@ pub fn spawn(_proxy: nannou::app::Proxy) -> io::Result<Spawned> {
             }
         })?;
 
-    Ok((handle, audio_tx, gui_rx))
+    let monitor = Monitor { thread, is_closed };
+    Ok((monitor, audio_tx, gui_rx))
 }

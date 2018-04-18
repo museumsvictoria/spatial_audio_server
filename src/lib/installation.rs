@@ -4,7 +4,6 @@
 //! hard-coded and rather identified via dynamically generated unique IDs. Otherwise, most
 //! of the logic should remain the same.
 
-use fxhash::FxHashMap;
 use std::fmt;
 use utils::Range;
 
@@ -31,12 +30,14 @@ pub enum Id {
     WrappedInSpectrum = 6,
 }
 
+/// An installation's computers.
+pub type Computers = computer::Addresses;
+
 /// A single installation within the exhibition.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Installation {
     /// All computers within the exhibition.
-    #[serde(default = "computer::default_map")]
-    pub computers: computer::Addresses,
+    pub computers: Computers,
     /// Constraints related to the soundscape.
     pub soundscape: Soundscape,
 }
@@ -137,16 +138,16 @@ pub mod default {
             .map(|&id| {
                 let computers = (0..id.default_num_computers())
                     .map(|i| {
-                        let computer = Id(i);
+                        let computer = super::computer::Id(i);
                         let socket = "127.0.0.1:9002".parse().unwrap();
                         let osc_addr_base = id.default_osc_addr_str().to_string();
                         let osc_addr = format!("/{}/{}", osc_addr_base, i);
-                        let addr = Address { socket, osc_addr };
+                        let addr = super::computer::Address { socket, osc_addr };
                         (computer, addr)
                     })
                     .collect();
                 let soundscape = Default::default();
-                let installation = Installation { computers, soundscape };
+                let installation = super::Installation { computers, soundscape };
                 (id, installation)
             })
             .collect()

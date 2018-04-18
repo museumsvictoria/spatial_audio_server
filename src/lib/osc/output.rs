@@ -10,6 +10,7 @@ use std::sync::mpsc;
 pub enum Message {
     Audio(installation::Id, AudioFrameData),
     Osc(OscTarget),
+    ClearProjectSpecificData,
 }
 
 /// Add or remove an OSC target for a given installation.
@@ -123,6 +124,12 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
     for update in update_rx {
         match update {
             Update::Msg(msg) => match msg {
+                // Clear all project specific data.
+                Message::ClearProjectSpecificData => {
+                    last_received.clear();
+                    last_sent.clear();
+                    osc_txs.clear();
+                },
                 // Audio data received that is to be delivered to the given installation.
                 Message::Audio(installation, data) => {
                     last_received.insert(installation, data);
@@ -142,6 +149,7 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
                     }
                 },
             },
+
             Update::SendOsc => for (installation, data) in last_received.drain() {
                 let AudioFrameData {
                     avg_peak,

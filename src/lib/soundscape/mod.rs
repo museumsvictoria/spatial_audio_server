@@ -474,6 +474,18 @@ impl Model {
         }
         count
     }
+
+    /// Clear all data related to a specific audio server project.
+    ///
+    /// This is called when we switch between projects within the GUI.
+    pub fn clear_project_specific_data(&mut self) {
+        self.installations.clear();
+        self.groups.clear();
+        self.sources.clear();
+        self.groups_last_used.clear();
+        self.sources_last_used.clear();
+        self.active_sounds.clear();
+    }
 }
 
 impl UpdateFn {
@@ -826,6 +838,8 @@ fn generate_movement(
                 let max_speed = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
                 let r = &agent.max_force;
                 let max_force = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
+                let r = &agent.max_rotation;
+                let max_rotation = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
                 let active_sound_positions = active_sound_positions(active_sounds);
                 let installation_data = agent_installation_data(
                     source_id,
@@ -841,6 +855,7 @@ fn generate_movement(
                     &installation_data,
                     max_speed,
                     max_force,
+                    max_rotation,
                 );
                 let generative = movement::Generative::Agent(agent);
                 let movement = Movement::Generative(generative);

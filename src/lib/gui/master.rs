@@ -1,23 +1,26 @@
 //! A "Master" side-bar widget providing control over master volume and input latency.
 
-use audio;
-use gui::{collapsible_area, Gui, State, ProjectState};
+use gui::{collapsible_area, Gui};
 use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
+use project::{self, Project};
 use nannou::ui;
 use nannou::ui::prelude::*;
 use time_calc::Ms;
 
-pub fn set(gui: &mut Gui, project: &mut Project) -> widget::Id {
+pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> widget::Id {
     let Gui {
         ref mut ui,
         ref audio_monitor,
         ref ids,
         ref channels,
-        ref state,
+        ref mut state,
         ..
     } = *gui;
     let Project {
-        ref mut master,
+        state: project::State {
+            ref mut master,
+            ..
+        },
         ..
     } = *project;
 
@@ -31,7 +34,8 @@ pub fn set(gui: &mut Gui, project: &mut Project) -> widget::Id {
     // The collapsible area widget.
     let is_open = state.is_open.master;
     let (area, event) = collapsible_area(is_open, "Master", ids.side_menu)
-        .mid_top_of(ids.side_menu)
+        .down_from(last_area_id, 0.0)
+        .align_middle_x_of(last_area_id)
         .set(ids.master, ui);
     if let Some(event) = event {
         state.is_open.master = event.is_open();

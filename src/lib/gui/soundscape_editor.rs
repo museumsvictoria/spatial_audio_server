@@ -3,17 +3,17 @@
 //! - Play/Pause toggle for the soundscape.
 //! - Groups panel for creating/removing soundscape source groups.
 
-use fxhash::FxHashMap;
-use gui::{collapsible_area, hz_label, Gui, State};
+use gui::{collapsible_area, hz_label, Gui, ProjectState, State};
 use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
+use project::{self, Project};
 use nannou::ui;
 use nannou::ui::prelude::*;
 use soundscape;
-use std::ops;
 use time_calc::Ms;
 use utils;
 
 /// GUI state related to the soundscape editor area.
+#[derive(Default)]
 pub struct SoundscapeEditor {
     pub selected: Option<Selected>,
 }
@@ -29,18 +29,31 @@ pub fn set(
     last_area_id: widget::Id,
     gui: &mut Gui,
     project: &mut Project,
+    project_state: &mut ProjectState,
 ) -> widget::Id {
     let &mut Gui {
         ref mut ui,
         ref ids,
         channels,
-        state:
-            &mut State {
-                ref mut soundscape_editor,
-                ..
-            },
+        state: &mut State {
+            ref mut is_open,
+            ..
+        },
         ..
     } = gui;
+
+    let Project {
+        state: project::State {
+            ref mut soundscape_groups,
+            ..
+        },
+        ..
+    } = *project;
+
+    let ProjectState {
+        ref mut soundscape_editor,
+        ..
+    } = *project_state;
 
     // Constants to use as widget heights.
     const PAD: Scalar = 6.0;
@@ -58,13 +71,12 @@ pub fn set(
     let soundscape_editor_canvas_h = PAD + IS_PLAYING_H + PAD + GROUP_CANVAS_H + PAD + SELECTED_CANVAS_H + PAD;
 
     // The collapsible area.
-    let is_open = soundscape_editor.is_open;
-    let (area, event) = collapsible_area(is_open, "Soundscape Editor", ids.side_menu)
+    let (area, event) = collapsible_area(is_open.soundscape_editor, "Soundscape Editor", ids.side_menu)
         .align_middle_x_of(ids.side_menu)
         .down_from(last_area_id, 0.0)
         .set(ids.soundscape_editor, ui);
     if let Some(event) = event {
-        soundscape_editor.is_open = event.is_open();
+        is_open.soundscape_editor = event.is_open();
     }
 
     // If the area is open, get the area.
@@ -132,21 +144,19 @@ pub fn set(
         .set(ids.soundscape_editor_group_add, ui)
     {
         // Add a new group.
-        let id = soundscape_editor.next_group_id;
-        let next_id = id.0.checked_add(1).expect("the next group `Id` would overflow");
-        soundscape_editor.next_group_id = soundscape::group::Id(next_id);
         let name = "<unnamed>".to_string();
-        let group = soundscape::Group::default();
-        let group = Group {
-            name: soundscape::group::Name(name.clone()),
-            group,
+        let soundscape = soundscape::Group::default();
+        let group = project::SoundscapeGroup {
+            name: name.clone(),
+            soundscape,
         };
-        soundscape_editor.groups.insert(id, group);
+        let id = project::next_soundscape_group_id(soundscape_groups);
+        soundscape_groups.insert(id, group);
         soundscape_editor.selected = Some(Selected { id, name });
     }
 
     // If there are no groups, display some text for adding a group.
-    if soundscape_editor.groups.is_empty() {
+    if soundscape_groups.is_empty() {
         widget::Text::new("Add a group with the \"+\" button above!")
             .font_size(SMALL_FONT_SIZE)
             .align_middle_x_of(ids.soundscape_editor_group_canvas)
@@ -158,14 +168,13 @@ pub fn set(
     // Otherwise display the list of all groups that currently exist.
     //
     // First, collect all groups into alphabetical order.
-    let mut groups_vec: Vec<_> = soundscape_editor
-        .groups
+    let mut groups_vec: Vec<_> = soundscape_groups
         .iter()
-        .map(|(&id, group)| (id, group.name.0.clone()))
+        .map(|(&id, group)| (id, group.name.clone()))
         .collect();
     groups_vec.sort_by(|a, b| a.1.cmp(&b.1));
 
-    // The list widget.listing all groups in alphabetical order.
+    // A list of all groups in alphabetical order.
     let num_groups = groups_vec.len();
     let (mut events, scrollbar) = widget::ListSelect::single(num_groups)
         .down(0.0)
@@ -268,7 +277,7 @@ pub fn set(
         }
 
         // Remove the local copy from the map.
-        soundscape_editor.groups.remove(&id);
+        soundscape_groups.remove(&id);
 
         // Remove this group from any sources on the soundscape thread.
         channels.soundscape.send(move |soundscape| {
@@ -282,10 +291,10 @@ pub fn set(
 
     // Only continue if there is some selected group.
     let SoundscapeEditor {
-        ref mut groups,
         ref mut selected,
         ..
     } = *soundscape_editor;
+
     let selected = match selected.as_mut() {
         Some(selected) => selected,
         None => return area.id,
@@ -326,8 +335,8 @@ pub fn set(
             },
             // Only when enter is pressed do we update the actual name.
             Event::Enter => {
-                if let Some(group) = groups.get_mut(&selected.id) {
-                    group.name.0 = selected.name.clone();
+                if let Some(group) = soundscape_groups.get_mut(&selected.id) {
+                    group.name = selected.name.clone();
                 }
             },
         }
@@ -344,7 +353,7 @@ pub fn set(
         .set(ids.soundscape_editor_occurrence_rate_text, ui);
 
     // A range slider for constraining the occurrence rate.
-    let occurrence_rate = groups[&selected.id].occurrence_rate;
+    let occurrence_rate = soundscape_groups[&selected.id].occurrence_rate;
     let max_hz = utils::ms_interval_to_hz(occurrence_rate.min);
     let min_hz = utils::ms_interval_to_hz(occurrence_rate.max);
     let min_hz_label = hz_label(min_hz);
@@ -373,7 +382,7 @@ pub fn set(
 
         // Update the local copy.
         let new_rate = {
-            let group = groups.get_mut(&id).unwrap();
+            let group = soundscape_groups.get_mut(&id).unwrap();
             match edge {
                 widget::range_slider::Edge::Start => {
                     let ms = utils::hz_to_ms_interval(hz);
@@ -405,7 +414,7 @@ pub fn set(
         .font_size(SMALL_FONT_SIZE)
         .set(ids.soundscape_editor_simultaneous_sounds_text, ui);
 
-    let range = groups[&selected.id].simultaneous_sounds;
+    let range = soundscape_groups[&selected.id].simultaneous_sounds;
     let label = format!("{} to {} sounds at once", range.min, range.max);
     let total_min_num = 0.0;
     let total_max_num = 100.0;
@@ -423,7 +432,7 @@ pub fn set(
 
         // Update the local copy.
         let new_rate = {
-            let group = groups.get_mut(&id).unwrap();
+            let group = soundscape_groups.get_mut(&id).unwrap();
             match edge {
                 widget::range_slider::Edge::Start => {
                     group.simultaneous_sounds.min = num;

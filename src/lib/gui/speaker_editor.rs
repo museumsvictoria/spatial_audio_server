@@ -4,13 +4,11 @@ use gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
 use installation;
 use nannou::ui;
 use nannou::ui::prelude::*;
-use project::Project;
-use serde_json;
+use project::{self, Project};
 use soundscape;
-use std::fs::File;
-use std::path::Path;
 
 /// Runtime state related to the speaker editor GUI panel.
+#[derive(Default)]
 pub struct SpeakerEditor {
     /// The index of the selected speaker within the project.
     pub selected: Option<usize>,
@@ -32,8 +30,12 @@ pub fn set(
     } = *gui;
 
     let Project {
-        ref camera,
-        ref mut speakers,
+        state: project::State {
+            ref camera,
+            ref mut speakers,
+            ..
+        },
+        ..
     } = *project;
 
     let ProjectState {
@@ -125,8 +127,8 @@ pub fn set(
                             "{} - CH {} - ({}mx, {}my)",
                             speaker.name,
                             speaker.channel,
-                            (speaker.position.x.0 * 100.0).trunc() / 100.0,
-                            (speaker.position.y.0 * 100.0).trunc() / 100.0
+                            (speaker.point.x.0 * 100.0).trunc() / 100.0,
+                            (speaker.point.y.0 * 100.0).trunc() / 100.0
                         );
                         label
                     };
@@ -264,7 +266,7 @@ pub fn set(
                 .ok();
 
             // Update the local copy.
-            let speaker = Speaker { name, audio };
+            let speaker = project::Speaker { name, audio };
             speakers.insert(id, speaker);
             speakers_vec.push(id);
             speaker_editor.selected = Some(speakers.len() - 1);
@@ -313,7 +315,7 @@ pub fn set(
         .set(ids.speaker_editor_selected_name, ui)
     {
         if let widget::text_box::Event::Update(string) = event {
-            *speakers[&id].get_mut().unwrap() = string;
+            speakers.get_mut(&id).unwrap().name = string;
         }
     }
 
@@ -321,9 +323,10 @@ pub fn set(
         .map(|ch| {
             speakers_vec
                 .iter()
+                .map(|id| &speakers[id])
                 .enumerate()
-                .find(|&(ix, s)| i != ix && s.audio.channel == ch)
-                .map(|(_ix, s)| format!("CH {} (swap with {})", ch, &s.name))
+                .find(|&(ix, ref s)| i != ix && s.audio.channel == ch)
+                .map(|(_ix, s)| format!("CH {} (swap with {})", ch, s.name))
                 .unwrap_or_else(|| format!("CH {}", ch))
         })
         .collect();
@@ -359,8 +362,9 @@ pub fn set(
         // selection.
         let maybe_index = speakers_vec
             .iter()
+            .map(|id| &speakers[id])
             .enumerate()
-            .find(|&(ix, s)| i != ix && s.audio.channel == new_index)
+            .find(|&(ix, ref s)| i != ix && s.audio.channel == new_index)
             .map(|(ix, _)| ix);
         if let Some(ix) = maybe_index {
             // Update the local copy.
@@ -441,7 +445,7 @@ pub fn set(
     }
 
     // A scrollable list showing each of the assigned installations.
-    let mut selected_installations = speakers[i]
+    let mut selected_installations = speakers[&id]
         .audio
         .installations
         .iter()
@@ -509,8 +513,7 @@ pub fn set(
 
     // If some installation was clicked for removal, remove it.
     if let Some(inst) = maybe_remove_index.map(|i| selected_installations[i]) {
-        let speaker = &mut speakers[i];
-        let speaker_id = speaker.id;
+        let speaker = speakers.get_mut(&id).unwrap();
 
         // Remove the local copy.
         speaker.audio.installations.remove(&inst);
@@ -519,7 +522,7 @@ pub fn set(
         gui.channels
             .audio_output
             .send(move |audio| {
-                audio.remove_speaker_installation(speaker_id, &inst);
+                audio.remove_speaker_installation(id, &inst);
             })
             .ok();
 
@@ -527,7 +530,7 @@ pub fn set(
         gui.channels
             .soundscape
             .send(move |soundscape| {
-                soundscape.update_speaker(&speaker_id, |speaker| {
+                soundscape.update_speaker(&id, |speaker| {
                     speaker.installations.remove(&inst);
                 });
             })

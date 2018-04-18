@@ -20,7 +20,6 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate slug;
 extern crate time_calc;
-extern crate toml;
 extern crate utils as mindtree_utils;
 extern crate walkdir;
 
@@ -29,7 +28,6 @@ use nannou::prelude::*;
 use soundscape::Soundscape;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::thread;
 
 mod audio;
 mod camera;
@@ -55,7 +53,7 @@ struct Model {
     gui: gui::Model,
     soundscape: Soundscape,
     config: Config,
-    audio_monitor: thread::JoinHandle<()>,
+    audio_monitor: gui::monitor::Monitor,
 }
 
 // The path to the server's config file.
@@ -63,7 +61,7 @@ fn config_path<P>(assets: P) -> PathBuf
 where
     P: AsRef<Path>,
 {
-    assets.as_ref().join("config.toml")
+    assets.as_ref().join("config.json")
 }
 
 // Initialise the state of the application.
@@ -74,7 +72,7 @@ fn model(app: &App) -> Model {
 
     // Load the configuration struct.
     let config_path = config_path(&assets);
-    let config: Config = utils::load_from_toml_or_default(&config_path);
+    let config: Config = utils::load_from_json_or_default(&config_path);
 
     // Spawn the OSC input thread.
     let osc_receiver = nannou::osc::receiver(config.osc_input_port)
@@ -164,7 +162,7 @@ fn model(app: &App) -> Model {
     );
     let gui = gui::Model::new(
         &assets,
-        config,
+        config.clone(),
         app,
         window,
         gui_channels,
@@ -189,7 +187,8 @@ fn event(_app: &App, mut model: Model, event: Event) -> Model {
             ..
         } => {}
         Event::Update(_update) => {
-            model.gui.update();
+            let Model { ref mut gui, ref config, .. } = model;
+            gui.update(&config.project_default);
         }
         _ => (),
     }
@@ -203,27 +202,32 @@ fn view(app: &App, model: &Model, frame: Frame) -> Frame {
 }
 
 // Re-join with spawned threads on application exit.
-fn exit(_app: &App, model: Model) {
+fn exit(app: &App, model: Model) {
     let Model {
         gui,
-        config,
+        mut config,
         soundscape,
         audio_monitor,
         ..
     } = model;
 
+    // Update the selected project directory slug if necessary.
+    if let Some(selected_project_slug) = gui.selected_project_slug() {
+        config.selected_project_slug = selected_project_slug;
+    }
+
     // Find the assets directory so we can save state before closing.
     let assets = app.assets_path().expect("could not find assets directory");
 
-    // Save the top-level toml config.
+    // Save the top-level json config.
     let config_path = config_path(&assets);
-    if let Err(err) = utils::save_to_toml(&config_path, &config) {
-        eprintln!("failed to save \"assets/config.toml\" during exit: {}", err);
+    if let Err(err) = utils::save_to_json(&config_path, &config) {
+        eprintln!("failed to save \"assets/config.json\" during exit: {}", err);
     }
 
     // Save the selected gui project if there is one.
-    if let Some(project) = gui.project {
-        if let Err(err) = project.save() {
+    if let Some((project, _)) = gui.project {
+        if let Err(err) = project.save(&assets) {
             eprintln!("failed to save selected project during exit: {}", err);
         }
     }

@@ -1,5 +1,6 @@
 use metres::Metres;
 use nannou::math::Point2;
+use nannou::ui::Scalar;
 
 /// A 2D camera location in exhibition space.
 pub type Point = Point2<Metres>;
@@ -30,6 +31,18 @@ pub struct Camera {
     pub floorplan_pixels_per_metre: f64,
 }
 
+impl Camera {
+    /// Convert from metres to the GUI scalar value.
+    pub fn metres_to_scalar(&self, Metres(metres): Metres) -> Scalar {
+        self.zoom * metres * self.floorplan_pixels_per_metre
+    }
+
+    /// Convert from the GUI scalar value to metres.
+    pub fn scalar_to_metres(&self, scalar: Scalar) -> Metres {
+        Metres((scalar / self.zoom) / self.floorplan_pixels_per_metre)
+    }
+}
+
 impl Default for Camera {
     fn default() -> Self {
         let position = default_position();
@@ -44,7 +57,7 @@ fn default_position() -> Point {
 }
 
 fn default_zoom() -> f64 {
-    1.0
+    0.0
 }
 
 fn default_floorplan_pixels_per_metre() -> f64 {

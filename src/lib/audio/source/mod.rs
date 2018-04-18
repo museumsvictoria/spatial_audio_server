@@ -170,6 +170,9 @@ pub mod movement {
     /// The absolute maximum force that may be applied to an agent's movement.
     pub const MAX_FORCE: f64 = 1.0;
 
+    /// The absolute maximum force that may be applied to an agent's movement.
+    pub const MAX_ROTATION: f64 = 100.0 * PI_F64;
+
     /// The maximum number of vertices in an Ngon.
     pub const MAX_VERTICES: usize = 50;
 
@@ -181,6 +184,9 @@ pub mod movement {
 
     /// The amount of skew applied to the perception of the max speed constraints.
     pub const MAX_FORCE_SKEW: f32 = 0.25;
+
+    /// The amount of skew applied to the perception of the max speed constraints.
+    pub const MAX_ROTATION_SKEW: f32 = 0.25;
 
     /// The skew applied to the perception of Ngon vertices, whether GUI or generative.
     pub const VERTICES_SKEW: f32 = 0.5;
@@ -211,6 +217,8 @@ pub mod movement {
         /// The maximum amount of force (metres per second squared) that may be applied to the
         /// agent.
         pub max_force: Range<f64>,
+        /// The maximum amount of rotation in radians per second that may be applied to the agent.
+        pub max_rotation: Range<f64>,
     }
 
     /// A generative movement kind that traces the vertices of an n-sided polygon.
@@ -499,10 +507,6 @@ impl Role {
     }
 }
 
-impl Id {
-    pub const INITIAL: Self = Id(0);
-}
-
 impl Attack {
     fn next_gain(&mut self) -> f32 {
         if self.current_frame < self.duration_frames {
@@ -624,9 +628,14 @@ pub mod default {
     pub const FIXED: Point2<f64> = Point2 { x: 0.5, y: 0.5 };
     pub const MAX_SPEED: Range<f64> = Range { min: 1.0, max: 5.0 };
     pub const MAX_FORCE: Range<f64> = Range { min: 0.04, max: 0.06 };
+    pub const MAX_ROTATION: Range<f64> = Range {
+        min: super::movement::MAX_ROTATION,
+        max: super::movement::MAX_ROTATION,
+    };
     pub const AGENT: movement::Agent = movement::Agent {
         max_speed: MAX_SPEED,
         max_force: MAX_FORCE,
+        max_rotation: MAX_ROTATION,
     };
     pub const VERTICES: Range<usize> = Range { min: 3, max: 8 };
     pub const NTH: Range<usize> = Range { min: 1, max: 3 };

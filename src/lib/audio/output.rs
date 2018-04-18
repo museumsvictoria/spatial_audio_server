@@ -91,20 +91,20 @@ struct SpeakerAnalysis {
 
 /// State that lives on the audio thread.
 pub struct Model {
-    /// The total number of frames written since the model was created.
+    /// the total number of frames written since the model was created or the project was switched.
     ///
-    /// This is used for synchronising `Continuous` WAVs to the audio timeline with sample-perfect
+    /// this is used for synchronising `continuous` wavs to the audio timeline with sample-perfect
     /// accuracy.
     pub frame_count: u64,
-    /// The master volume, controlled via the GUI applied at the very end of processing.
+    /// the master volume, controlled via the gui applied at the very end of processing.
     pub master_volume: f32,
-    /// The DBAP rolloff decibel amount, used to attenuate speaker gains over distances.
+    /// the dbap rolloff decibel amount, used to attenuate speaker gains over distances.
     pub dbap_rolloff_db: f64,
-    /// The set of sources that are currently soloed. If not empty, only these sounds should play.
+    /// the set of sources that are currently soloed. if not empty, only these sounds should play.
     pub soloed: FxHashSet<source::Id>,
-    /// A map from audio sound IDs to the audio sounds themselves.
+    /// a map from audio sound ids to the audio sounds themselves.
     sounds: FxHashMap<sound::Id, ActiveSound>,
-    /// A map from speaker IDs to the speakers themselves.
+    /// a map from speaker ids to the speakers themselves.
     speakers: FxHashMap<speaker::Id, ActiveSpeaker>,
     // /// A map from a speaker's assigned channel to the ID of the speaker.
     // channel_to_speaker: FxHashMap<usize, speaker::Id>,
@@ -344,6 +344,23 @@ impl Model {
         let iter = self.sounds.iter_mut();
         SoundsMut { iter }
     }
+
+    /// Clear all data related to a specific audio server project.
+    ///
+    /// This is called when we switch between projects within the GUI.
+    pub fn clear_project_specific_data(&mut self) {
+        self.frame_count = 0;
+        self.soloed.clear();
+        self.speakers.clear();
+
+        let Model { ref mut sounds, ref gui_audio_monitor_msg_tx, .. } = *self;
+        for (sound_id, sound) in sounds.drain() {
+            // Send signal of completion back to GUI thread.
+            let sound_msg = gui::ActiveSoundMessage::End { sound };
+            let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
+            gui_audio_monitor_msg_tx.try_send(msg).ok();
+        }
+    }
 }
 
 /// The function given to nannou to use for rendering.
@@ -406,8 +423,15 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             // The number of samples to request from the sound for this buffer.
             let num_samples = buffer.len_frames() * sound.channels;
 
-            // Don't play it if some other sources are soloed.
-            if sound.muted || (!soloed.is_empty() && !soloed.contains(&sound.source_id())) {
+            // Don't play the sound if:
+            //
+            // - There are no speakers.
+            // - The source is muted.
+            // - Some other source(s) is/are soloed.
+            let play_condition = speakers.is_empty()
+                || sound.muted
+                || (!soloed.is_empty() && !soloed.contains(&sound.source_id()));
+            if play_condition {
                 // Pull samples from the signal but do not render them.
                 let samples_yielded = sound.signal.samples().take(num_samples).count();
                 if samples_yielded < num_samples {

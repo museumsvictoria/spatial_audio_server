@@ -128,11 +128,6 @@ impl Handle {
     pub fn source_id(&self) -> source::Id {
         self.shared.source_id
     }
-
-    /// The ID of the sound associated with this handle.
-    pub fn id(&self) -> Id {
-        self.shared.id
-    }
 }
 
 /// Creates a sound from the given `Source` and send it to the output stream.
@@ -414,11 +409,6 @@ impl Sound {
     /// The ID of the source used to generate this sound.
     pub fn source_id(&self) -> source::Id {
         self.shared.source_id
-    }
-
-    /// The ID of the sound associated with this handle.
-    pub fn id(&self) -> Id {
-        self.shared.id
     }
 }
 

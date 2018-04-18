@@ -1,5 +1,5 @@
 use audio;
-use camera;
+use camera::Camera;
 use config::Config;
 use fxhash::FxHashMap;
 use interaction::Interaction;
@@ -13,7 +13,8 @@ use osc;
 use osc::input::Log as OscInputLog;
 use osc::output::Log as OscOutputLog;
 use project::{self, Project};
-use soundscape::{self, Soundscape};
+use soundscape::Soundscape;
+use slug::slugify;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::ops::{Deref, DerefMut};
@@ -22,6 +23,7 @@ use time_calc::Ms;
 use utils::{self, HumanReadableTime, SEC_MS, MIN_MS, HR_MS};
 
 use self::installation_editor::InstallationEditor;
+use self::project_editor::ProjectEditor;
 use self::soundscape_editor::SoundscapeEditor;
 use self::source_editor::{SourceEditor, SourcePreviewMode};
 use self::speaker_editor::SpeakerEditor;
@@ -33,6 +35,7 @@ pub mod master;
 pub mod monitor;
 pub mod osc_in_log;
 pub mod osc_out_log;
+pub mod project_editor;
 pub mod source_editor;
 pub mod soundscape_editor;
 pub mod speaker_editor;
@@ -46,6 +49,8 @@ type ActiveSoundMap = FxHashMap<audio::sound::Id, ActiveSound>;
 pub struct Model {
     /// The nannou UI state.
     pub ui: Ui,
+    /// The currently selected project.
+    pub project: Option<(Project, ProjectState)>,
     /// All images used within the GUI.
     images: Images,
     /// A unique ID for each widget.
@@ -54,8 +59,6 @@ pub struct Model {
     channels: Channels,
     /// The runtime state of the model.
     state: State,
-    /// The currently selected project.
-    project: Option<(Project, ProjectState)>,
     /// A unique ID generator to use when spawning new sounds.
     sound_id_gen: audio::sound::IdGenerator,
     /// The latest received audio state.
@@ -73,13 +76,12 @@ pub struct Gui<'a> {
     audio_monitor: &'a AudioMonitor,
     channels: &'a Channels,
     sound_id_gen: &'a audio::sound::IdGenerator,
+    assets: &'a PathBuf,
 }
 
 /// GUI state related to a single project.
 #[derive(Default)]
 pub struct ProjectState {
-    /// Master control values for the exhibition.
-    master: Master,
     /// Runtime state related to the installation editor GUI panel.
     installation_editor: InstallationEditor,
     /// Runtime state related to the source editor GUI panel.
@@ -100,14 +102,17 @@ pub struct State {
     osc_out_log: Log<OscOutputLog>,
     /// A log of the most recently received Interactions for testing/debugging/monitoring.
     interaction_log: InteractionLog,
+    /// State related to the project editor.
+    project_editor: ProjectEditor,
     /// Whether or not each of the collapsible areas are open within the sidebar.
     is_open: IsOpen,
 }
 
 /// The state of each collapsible area in the sidebar.
-#[derive(Default)]
 struct IsOpen {
+    project_editor: bool,
     master: bool,
+    installation_editor: bool,
     soundscape_editor: bool,
     speaker_editor: bool,
     source_editor: bool,
@@ -220,34 +225,21 @@ pub enum SpeakerMessage {
     Remove,
 }
 
-fn master_path(assets: &Path) -> PathBuf {
-    assets
-        .join(Path::new(MASTER_FILE_STEM))
-        .with_extension("json")
-}
-
-fn installations_path(assets: &Path) -> PathBuf {
-    assets
-        .join(Path::new(INSTALLATIONS_FILE_STEM))
-        .with_extension("json")
-}
-
-fn speakers_path(assets: &Path) -> PathBuf {
-    assets
-        .join(Path::new(SPEAKERS_FILE_STEM))
-        .with_extension("json")
-}
-
-fn soundscape_path(assets: &Path) -> PathBuf {
-    assets
-        .join(Path::new(SOUNDSCAPE_FILE_STEM))
-        .with_extension("json")
-}
-
-fn sources_path(assets: &Path) -> PathBuf {
-    assets
-        .join(Path::new(SOURCES_FILE_STEM))
-        .with_extension("json")
+impl Default for IsOpen {
+    fn default() -> Self {
+        IsOpen {
+            side_menu: true,
+            project_editor: false,
+            master: false,
+            installation_editor: false,
+            soundscape_editor: false,
+            speaker_editor: false,
+            source_editor: false,
+            osc_in_log: false,
+            osc_out_log: false,
+            interaction_log: false,
+        }
+    }
 }
 
 impl Model {
@@ -288,21 +280,28 @@ impl Model {
         );
         let images = Images { floorplan };
 
-        // If there's a default project, attempt to load it.
-        let mut project_tuple = None;
-        let project_directory = project::projects_directory(&assets)
-            .join(config.selected_project_slug);
-        if project_directory.exists() && project_directory.is_dir() {
-            let project = Project::load(&assets, project_directory, &config.project_default, &channels);
-            let state = Default::default();
-            project_tuple = Some((project, state));
-        }
-
         // Initialise the GUI state.
         let input = audio_input_channels;
         let output = audio_output_channels;
         let audio_channels = AudioChannels { input, output };
-        let state = State::new(config, audio_channels);
+
+        // If there's a default project, attempt to load it.
+        let project = Project::load_from_slug(
+            &assets,
+            &config.selected_project_slug,
+            &config.project_default,
+        );
+        let (project_tuple, state) = if let Some(project) = project {
+            project.reset_and_sync_all_threads(&channels);
+            let project_state = Default::default();
+            let mut state = State::new(&project.config, audio_channels);
+            state.project_editor.text_box_name = project.name.clone();
+            let project_tuple = Some((project, project_state));
+            (project_tuple, state)
+        } else {
+            let state = State::new(&config.project_default, audio_channels);
+            (None, state)
+        };
 
         // Initialise the audio monitor.
         let master_peak = 0.0;
@@ -327,15 +326,17 @@ impl Model {
     ///
     /// - Collect pending OSC and interaction messages for the logs.
     /// - Instantiate the Ui's widgets.
-    pub fn update(&mut self) {
+    pub fn update(&mut self, default_project_config: &project::Config) {
         let Model {
             ref mut ui,
             ref mut ids,
+            ref mut project,
             ref mut state,
             ref mut audio_monitor,
             ref images,
             ref channels,
             ref sound_id_gen,
+            ref assets,
             ..
         } = *self;
 
@@ -402,11 +403,13 @@ impl Model {
 
                         // If the Id of the sound being removed matches the current preview, remove
                         // it.
-                        match state.source_editor.preview.current {
-                            Some((SourcePreviewMode::OneShot, s_id)) if id == s_id => {
-                                state.source_editor.preview.current = None;
+                        if let Some((_, ref mut state)) = *project {
+                            match state.source_editor.preview.current {
+                                Some((SourcePreviewMode::OneShot, s_id)) if id == s_id => {
+                                    state.source_editor.preview.current = None;
+                                }
+                                _ => (),
                             }
-                            _ => (),
                         }
                     }
                 },
@@ -426,7 +429,25 @@ impl Model {
             }
         }
 
+        // Set the widgets.
         let ui = ui.set_widgets();
+
+        // Check for `Ctrl+S` or `Cmd+S` for saving.
+        for event in ui.global_input().events().ui() {
+            if let ui::event::Ui::Press(_, press) = *event {
+                if let ui::event::Button::Keyboard(ui::input::Key::S) = press.button {
+                    let save_mod =
+                        press.modifiers.contains(ui::input::keyboard::ModifierKey::CTRL)
+                        || press.modifiers.contains(ui::input::keyboard::ModifierKey::GUI);
+                    if save_mod {
+                        if let Some((ref project, _)) = *project {
+                            project.save(assets).expect("failed to save project on keyboard shortcut");
+                        }
+                    }
+                }
+            }
+        }
+
         let mut gui = Gui {
             ui,
             ids,
@@ -435,8 +456,9 @@ impl Model {
             channels,
             sound_id_gen,
             audio_monitor,
+            assets,
         };
-        set_widgets(&mut gui);
+        set_widgets(&mut gui, project, default_project_config);
     }
 
     /// Whether or not the GUI currently contains representations of active sounds.
@@ -444,6 +466,11 @@ impl Model {
     /// This is used at the top-level to determine what application loop mode to use.
     pub fn is_animating(&self) -> bool {
         !self.audio_monitor.active_sounds.is_empty()
+    }
+
+    /// If a project is currently selected, this returns its directory path slug.
+    pub fn selected_project_slug(&self) -> Option<String> {
+        self.project.as_ref().map(|&(ref project, _)| slugify(&project.name))
     }
 }
 
@@ -455,11 +482,13 @@ impl State {
         let osc_out_log = Log::with_limit(config.osc_output_log_limit);
         let interaction_log = Log::with_limit(config.interaction_log_limit);
         let is_open = Default::default();
+        let project_editor = ProjectEditor::default();
         State {
             osc_in_log,
             osc_out_log,
             interaction_log,
             audio_channels,
+            project_editor,
             is_open,
         }
     }
@@ -500,31 +529,6 @@ impl<'a> Deref for Gui<'a> {
 impl<'a> DerefMut for Gui<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.ui
-    }
-}
-
-impl Deref for Camera {
-    type Target = camera::Camera;
-    fn deref(&self) -> &Self::Target {
-        &self.state
-    }
-}
-
-impl DerefMut for Camera {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.state
-    }
-}
-
-impl Camera {
-    /// Convert from metres to the GUI scalar value.
-    fn metres_to_scalar(&self, Metres(metres): Metres) -> Scalar {
-        self.zoom * metres * self.floorplan_pixels_per_metre
-    }
-
-    /// Convert from the GUI scalar value to metres.
-    fn scalar_to_metres(&self, scalar: Scalar) -> Metres {
-        Metres((scalar / self.zoom) / self.floorplan_pixels_per_metre)
     }
 }
 
@@ -712,6 +716,15 @@ widget_ids! {
         side_menu_button_line_top,
         side_menu_button_line_middle,
         side_menu_button_line_bottom,
+        // Project settings.
+        project_editor,
+        project_editor_add,
+        project_editor_name,
+        project_editor_none,
+        project_editor_list,
+        project_editor_copy,
+        project_editor_save,
+        project_editor_remove,
         // Master control settings.
         master,
         master_peak_meter,
@@ -818,6 +831,8 @@ widget_ids! {
         source_editor_selected_soundscape_movement_agent_max_speed_slider,
         source_editor_selected_soundscape_movement_agent_max_force_text,
         source_editor_selected_soundscape_movement_agent_max_force_slider,
+        source_editor_selected_soundscape_movement_agent_max_rotation_text,
+        source_editor_selected_soundscape_movement_agent_max_rotation_slider,
         source_editor_selected_soundscape_movement_ngon_speed_text,
         source_editor_selected_soundscape_movement_ngon_speed_slider,
         source_editor_selected_soundscape_movement_ngon_vertices_text,
@@ -860,6 +875,7 @@ widget_ids! {
         // The floorplan image and the canvas on which it is placed.
         floorplan_canvas,
         floorplan,
+        floorplan_project_name,
         floorplan_speakers[],
         floorplan_speaker_labels[],
         floorplan_sounds[],
@@ -935,6 +951,8 @@ pub fn duration_label(ms: &Ms) -> String {
     }
 }
 
+pub const PAD: Scalar = 6.0;
+pub const TEXT_PAD: Scalar = 20.0;
 pub const ITEM_HEIGHT: Scalar = 30.0;
 pub const SMALL_FONT_SIZE: FontSize = 12;
 pub const DARK_A: ui::Color = ui::Color::Rgba(0.1, 0.13, 0.15, 1.0);
@@ -942,15 +960,19 @@ pub const DARK_A: ui::Color = ui::Color::Rgba(0.1, 0.13, 0.15, 1.0);
 // Set the widgets in the side menu.
 fn set_side_menu_widgets(
     gui: &mut Gui,
-    project: &mut (Project, ProjectState),
+    project: &mut Option<(Project, ProjectState)>,
+    default_project_config: &project::Config,
 ) {
     // The panel for selecting, adding and removing projects.
-    let mut last_area_id = unimplemented!(); // project_editor::set
+    let mut last_area_id = gui.ids.side_menu_button;
+
+    // Project Editor - for adding, saving and removing projects.
+    last_area_id = project_editor::set(gui, project, default_project_config);
 
     // Many of the sidebar widgets can only be displayed if a project is selected.
-    if let (ref mut project, ref mut project_state) = *project {
+    if let Some((ref mut project, ref mut project_state)) = *project {
         // Installation Editor - for editing installation-specific data.
-        last_area_id = master::set(gui, project);
+        last_area_id = master::set(last_area_id, gui, project);
 
         // Installation Editor - for editing installation-specific data.
         last_area_id = installation_editor::set(last_area_id, gui, project, project_state);
@@ -963,20 +985,24 @@ fn set_side_menu_widgets(
 
         // For adding, changing and removing audio sources.
         last_area_id = source_editor::set(last_area_id, gui, project, project_state);
+
+        // The log of received OSC messages.
+        last_area_id = osc_in_log::set(last_area_id, gui, project);
+
+        // The log of received Interactions.
+        last_area_id = interaction_log::set(last_area_id, gui, project);
     }
 
-    // The log of received OSC messages.
-    let last_area_id = osc_in_log::set(last_area_id, gui);
-
-    // The log of received Interactions.
-    let last_area_id = interaction_log::set(last_area_id, gui);
-
     // The log of sent OSC messages.
-    let _last_area_id = osc_out_log::set(last_area_id, gui);
+    osc_out_log::set(last_area_id, gui);
 }
 
 // Update all widgets in the GUI with the given state.
-fn set_widgets(gui: &mut Gui) {
+fn set_widgets(
+    gui: &mut Gui,
+    project: &mut Option<(Project, ProjectState)>,
+    default_project_config: &project::Config,
+) {
     let background_color = color::WHITE;
 
     // The background for the main `UI` window.
@@ -995,7 +1021,7 @@ fn set_widgets(gui: &mut Gui) {
     const CLOSED_SIDE_MENU_W: ui::Scalar = 40.0;
     const OPEN_SIDE_MENU_W: ui::Scalar = 300.0;
     const SIDE_MENU_BUTTON_H: ui::Scalar = CLOSED_SIDE_MENU_W;
-    let side_menu_is_open = gui.state.side_menu_is_open;
+    let side_menu_is_open = gui.state.is_open.side_menu;
     let side_menu_w = match side_menu_is_open {
         false => CLOSED_SIDE_MENU_W,
         true => OPEN_SIDE_MENU_W,
@@ -1010,7 +1036,7 @@ fn set_widgets(gui: &mut Gui) {
         .color(color::rgb(0.07, 0.08, 0.09))
         .set(gui.ids.side_menu_button, gui)
     {
-        gui.state.side_menu_is_open = !side_menu_is_open;
+        gui.state.is_open.side_menu = !side_menu_is_open;
     }
 
     let margin = CLOSED_SIDE_MENU_W / 3.0;
@@ -1054,13 +1080,22 @@ fn set_widgets(gui: &mut Gui) {
 
     // If the side_menu is open, set all the side_menu widgets.
     if side_menu_is_open {
-        set_side_menu_widgets(gui);
+        set_side_menu_widgets(gui, project, default_project_config);
 
         // Set the scrollbar for the side menu.
         widget::Scrollbar::y_axis(gui.ids.side_menu)
             .right_from(gui.ids.side_menu, 0.0)
             .set(gui.ids.side_menu_scrollbar, gui);
     }
+
+    // Only continue if a project is selected.
+    let &mut (ref mut project, ref mut project_state) = match *project {
+        Some(ref mut p) => p,
+        None => {
+            // TODO: A text widget saying to add a project.
+            return;
+        }
+    };
 
     // The canvas on which the floorplan will be displayed.
     let background_rect = gui.rect_of(gui.ids.background).unwrap();
@@ -1075,7 +1110,7 @@ fn set_widgets(gui: &mut Gui) {
         .crop_kids()
         .set(gui.ids.floorplan_canvas, gui);
 
-    let floorplan_pixels_per_metre = gui.state.camera.floorplan_pixels_per_metre;
+    let floorplan_pixels_per_metre = project.config.floorplan_pixels_per_metre;
     let metres_from_floorplan_pixels = |px| Metres(px / floorplan_pixels_per_metre);
     let metres_to_floorplan_pixels = |Metres(m)| m * floorplan_pixels_per_metre;
 
@@ -1093,7 +1128,7 @@ fn set_widgets(gui: &mut Gui) {
     let total_scroll = gui.widget_input(gui.ids.floorplan)
         .scrolls()
         .fold(0.0, |acc, scroll| acc + scroll.y);
-    gui.state.camera.zoom = (gui.state.camera.zoom - total_scroll / 200.0)
+    project.state.camera.zoom = (project.state.camera.zoom - total_scroll / 200.0)
         .max(full_scale_w.min(full_scale_h))
         .min(1.0);
 
@@ -1103,12 +1138,12 @@ fn set_widgets(gui: &mut Gui) {
         .left()
         .map(|drag| drag.delta_xy)
         .fold([0.0, 0.0], |acc, dt| [acc[0] + dt[0], acc[1] + dt[1]]);
-    gui.state.camera.position.x -= gui.state.camera.scalar_to_metres(total_drag[0]);
-    gui.state.camera.position.y -= gui.state.camera.scalar_to_metres(total_drag[1]);
+    project.state.camera.position.x -= project.state.camera.scalar_to_metres(total_drag[0]);
+    project.state.camera.position.y -= project.state.camera.scalar_to_metres(total_drag[1]);
 
     // The part of the image visible from the camera.
-    let visible_w_m = gui.state.camera.scalar_to_metres(floorplan_canvas_w);
-    let visible_h_m = gui.state.camera.scalar_to_metres(floorplan_canvas_h);
+    let visible_w_m = project.state.camera.scalar_to_metres(floorplan_canvas_w);
+    let visible_h_m = project.state.camera.scalar_to_metres(floorplan_canvas_h);
 
     // Clamp the camera's position so it doesn't go out of bounds.
     let invisible_w_m = floorplan_w_metres - visible_w_m;
@@ -1121,21 +1156,21 @@ fn set_widgets(gui: &mut Gui) {
     let max_cam_x_m = centre_x_m + half_invisible_w_m;
     let min_cam_y_m = centre_y_m - half_invisible_h_m;
     let max_cam_y_m = centre_y_m + half_invisible_h_m;
-    gui.state.camera.position.x = gui.state
+    project.state.camera.position.x = project.state
         .camera
         .position
         .x
         .max(min_cam_x_m)
         .min(max_cam_x_m);
-    gui.state.camera.position.y = gui.state
+    project.state.camera.position.y = project.state
         .camera
         .position
         .y
         .max(min_cam_y_m)
         .min(max_cam_y_m);
 
-    let visible_x = metres_to_floorplan_pixels(gui.state.camera.position.x);
-    let visible_y = metres_to_floorplan_pixels(gui.state.camera.position.y);
+    let visible_x = metres_to_floorplan_pixels(project.state.camera.position.x);
+    let visible_y = metres_to_floorplan_pixels(project.state.camera.position.y);
     let visible_w = metres_to_floorplan_pixels(visible_w_m);
     let visible_h = metres_to_floorplan_pixels(visible_h_m);
     let visible_rect = ui::Rect::from_xy_dim([visible_x, visible_y], [visible_w, visible_h]);
@@ -1147,7 +1182,7 @@ fn set_widgets(gui: &mut Gui) {
         .next()
         .is_some()
     {
-        gui.state.speaker_editor.selected = None;
+        project_state.speaker_editor.selected = None;
     }
 
     // Display the floorplan.
@@ -1157,6 +1192,12 @@ fn set_widgets(gui: &mut Gui) {
         .middle_of(gui.ids.floorplan_canvas)
         .set(gui.ids.floorplan, gui);
 
+    // The name of the project if one is selected.
+    widget::Text::new(&project.name)
+        .top_left_with_margin_on(gui.ids.floorplan, 20.0)
+        .color(ui::color::BLACK)
+        .set(gui.ids.floorplan_project_name, gui);
+
     // Retrieve the absolute xy position of the floorplan as this will be useful for converting
     // absolute GUI values to metres and vice versa.
     let floorplan_xy = gui.rect_of(gui.ids.floorplan).unwrap().xy();
@@ -1164,10 +1205,10 @@ fn set_widgets(gui: &mut Gui) {
     // Draw the speakers over the floorplan.
     //
     // Display the `gui.state.speaker_editor.speakers` over the floorplan as circles.
-    let radius_min_m = gui.state.config.min_speaker_radius_metres;
-    let radius_max_m = gui.state.config.max_speaker_radius_metres;
-    let radius_min = gui.state.camera.metres_to_scalar(radius_min_m);
-    let radius_max = gui.state.camera.metres_to_scalar(radius_max_m);
+    let radius_min_m = project.config.min_speaker_radius_metres;
+    let radius_max_m = project.config.max_speaker_radius_metres;
+    let radius_min = project.state.camera.metres_to_scalar(radius_min_m);
+    let radius_max = project.state.camera.metres_to_scalar(radius_max_m);
 
     fn x_position_metres_to_floorplan(x: Metres, cam: &Camera) -> Scalar {
         cam.metres_to_scalar(x - cam.position.x)
@@ -1208,8 +1249,17 @@ fn set_widgets(gui: &mut Gui) {
             ..
         } = *gui;
 
+        let Project {
+            state: project::State {
+                ref camera,
+                ref mut speakers,
+                ..
+            },
+            ..
+        } = *project;
+
         // Ensure there are enough IDs available.
-        let num_speakers = state.speaker_editor.speakers.len();
+        let num_speakers = speakers.len();
         if ids.floorplan_speakers.len() < num_speakers {
             let id_gen = &mut ui.widget_id_generator();
             ids.floorplan_speakers.resize(num_speakers, id_gen);
@@ -1219,11 +1269,10 @@ fn set_widgets(gui: &mut Gui) {
             ids.floorplan_speaker_labels.resize(num_speakers, id_gen);
         }
 
-        for i in 0..state.speaker_editor.speakers.len() {
+        for (i, (&speaker_id, speaker)) in speakers.iter_mut().enumerate() {
             let widget_id = ids.floorplan_speakers[i];
             let label_widget_id = ids.floorplan_speaker_labels[i];
-            let speaker_id = state.speaker_editor.speakers[i].id;
-            let channel = state.speaker_editor.speakers[i].audio.channel;
+            let channel = speaker.audio.channel;
             let rms = match audio_monitor.speakers.get(&speaker_id) {
                 Some(levels) => levels.rms,
                 _ => 0.0,
@@ -1235,24 +1284,20 @@ fn set_widgets(gui: &mut Gui) {
                 .fold((0.0, 0.0), |(x, y), drag| {
                     (x + drag.delta_xy[0], y + drag.delta_xy[1])
                 });
-            let dragged_x_m = state.camera.scalar_to_metres(dragged_x);
-            let dragged_y_m = state.camera.scalar_to_metres(dragged_y);
+            let dragged_x_m = camera.scalar_to_metres(dragged_x);
+            let dragged_y_m = camera.scalar_to_metres(dragged_y);
 
             let position = {
-                let SpeakerEditor {
-                    ref mut speakers, ..
-                } = state.speaker_editor;
-                let p = speakers[i].audio.point;
+                let p = speaker.audio.point;
                 let x = p.x + dragged_x_m;
                 let y = p.y + dragged_y_m;
                 let new_p = Point2 { x, y };
                 if p != new_p {
                     // Update the local copy.
-                    speakers[i].audio.point = new_p;
+                    speaker.audio.point = new_p;
 
                     // Update the audio copy.
-                    let speaker_id = speakers[i].id;
-                    let speaker_clone = speakers[i].audio.clone();
+                    let speaker_clone = speaker.audio.clone();
                     channels
                         .audio_output
                         .send(move |audio| {
@@ -1271,7 +1316,7 @@ fn set_widgets(gui: &mut Gui) {
                 new_p
             };
 
-            let (x, y) = position_metres_to_gui(position, &state.camera);
+            let (x, y) = position_metres_to_gui(position, camera);
 
             // Select the speaker if it was pressed.
             if ui.widget_input(widget_id)
@@ -1281,11 +1326,11 @@ fn set_widgets(gui: &mut Gui) {
                 .next()
                 .is_some()
             {
-                state.speaker_editor.selected = Some(i);
+                project_state.speaker_editor.selected = Some(i);
             }
 
             // Give some tactile colour feedback if the speaker is interacted with.
-            let color = if Some(i) == state.speaker_editor.selected {
+            let color = if Some(i) == project_state.speaker_editor.selected {
                 color::BLUE
             } else {
                 if channel < state.audio_channels.output {
@@ -1336,9 +1381,9 @@ fn set_widgets(gui: &mut Gui) {
             ..
         } = *gui;
 
-        let current = state.source_editor.preview.current;
-        let point = state.source_editor.preview.point;
-        let selected = state.source_editor.selected;
+        let current = project_state.source_editor.preview.current;
+        let point = project_state.source_editor.preview.point;
+        let selected = project_state.source_editor.selected;
         let mut channel_amplitudes = [0.0f32; 16];
         for (i, (&sound_id, active_sound)) in audio_monitor.active_sounds.iter().enumerate() {
             // Fill the channel amplitudes.
@@ -1355,9 +1400,9 @@ fn set_widgets(gui: &mut Gui) {
             // If this is the preview sound it should be draggable and stand out.
             let condition = (current, point, selected);
             let (spread_m, channel_radians, channel_count, position, color) = match condition {
-                (Some((_, id)), Some(point), Some(i)) if id == sound_id => {
+                (Some((_, id)), Some(point), Some(selected_id)) if id == sound_id => {
                     let (spread, channel_radians, channel_count) = {
-                        let source = &state.source_editor.sources[i];
+                        let source = &project.sources[&selected_id];
                         let spread = source.audio.spread;
                         let channel_radians = source.audio.channel_radians;
                         let channel_count = source.audio.channel_count();
@@ -1371,8 +1416,8 @@ fn set_widgets(gui: &mut Gui) {
                         .fold((0.0, 0.0), |(x, y), drag| {
                             (x + drag.delta_xy[0], y + drag.delta_xy[1])
                         });
-                    let dragged_x_m = state.camera.scalar_to_metres(dragged_x);
-                    let dragged_y_m = state.camera.scalar_to_metres(dragged_y);
+                    let dragged_x_m = project.state.camera.scalar_to_metres(dragged_x);
+                    let dragged_y_m = project.state.camera.scalar_to_metres(dragged_y);
 
                     // Determine the resulting position after the drag.
                     let position = {
@@ -1381,7 +1426,7 @@ fn set_widgets(gui: &mut Gui) {
                         let new_p = Point2 { x, y };
                         if point != new_p {
                             // Update the local copy.
-                            state.source_editor.preview.point = Some(new_p);
+                            project_state.source_editor.preview.point = Some(new_p);
 
                             // Update the output audio thread.
                             channels
@@ -1410,18 +1455,16 @@ fn set_widgets(gui: &mut Gui) {
                 }
                 _ => {
                     // Find the source.
-                    let source = state
-                        .source_editor
+                    let (&id, source) = project
                         .sources
                         .iter()
-                        .find(|s| s.id == active_sound.source_id)
+                        .find(|&(&id, _)| id == active_sound.source_id)
                         .expect("No source found for active sound");
                     let spread = source.audio.spread;
                     let channel_radians = source.audio.channel_radians;
                     let channel_count = source.audio.channel_count();
                     let position = active_sound.position;
-                    let id = source.id;
-                    let soloed = &state.source_editor.soloed;
+                    let soloed = &project.state.sources.soloed;
                     let mut color = if source.audio.muted || (!soloed.is_empty() && !soloed.contains(&id)) {
                         color::LIGHT_CHARCOAL
                     } else if soloed.contains(&id) {
@@ -1431,10 +1474,10 @@ fn set_widgets(gui: &mut Gui) {
                     };
 
                     // If the source editor is open and this sound is selected, highlight it.
-                    if state.source_editor.is_open {
-                        if let Some(i) = selected {
-                            if let Some(selected) = state.source_editor.sources.get(i) {
-                                if selected.id == source.id {
+                    if state.is_open.source_editor {
+                        if let Some(selected_id) = selected {
+                            if project.sources.contains_key(&selected_id) {
+                                if selected_id == id {
                                     let luminance = color.luminance();
                                     color = color.with_luminance(luminance.powf(0.5));
                                 }
@@ -1452,15 +1495,15 @@ fn set_widgets(gui: &mut Gui) {
                 }
             };
 
-            let spread = state.camera.metres_to_scalar(spread_m);
+            let spread = project.camera.metres_to_scalar(spread_m);
             let side_m = custom_widget::sound::dimension_metres(0.0);
-            let side = state.camera.metres_to_scalar(side_m);
+            let side = project.state.camera.metres_to_scalar(side_m);
             let channel_amps = &channel_amplitudes[..channel_count];
-            let installations = state.source_editor
+            let installations = project.state
                 .sources
                 .iter()
-                .find(|s| s.id == active_sound.source_id)
-                .map(|s| s.audio.role.clone().into())
+                .find(|&(&id, _)| id == active_sound.source_id)
+                .map(|(_, s)| s.audio.role.clone().into())
                 .unwrap_or(audio::sound::Installations::All);
 
             // Determine the line colour by checking for interactions with the sound.
@@ -1481,9 +1524,9 @@ fn set_widgets(gui: &mut Gui) {
                 let radians = position.radians + channel_radians;
                 let channel_point_m =
                     audio::output::channel_point(point, channel, channel_count, spread_m, radians);
-                let (ch_x, ch_y) = position_metres_to_gui(channel_point_m, &state.camera);
+                let (ch_x, ch_y) = position_metres_to_gui(channel_point_m, &project.camera);
                 let channel_amp = channel_amplitudes[channel];
-                let speakers = &state.speaker_editor.speakers;
+                let speakers = &project.speakers;
 
                 // A function for finding all speakers within proximity of a sound channel.
                 fn find_speakers_in_proximity(
@@ -1492,41 +1535,59 @@ fn set_widgets(gui: &mut Gui) {
                     // Installations that the current sound is applied to.
                     installations: &audio::sound::Installations,
                     // All speakers.
-                    speakers: &[Speaker],
+                    speakers: &project::Speakers,
                     // The rolloff attenuation.
                     rolloff_db: f64,
                     // Amp along with the index within the given `Vec`.
-                    in_proximity: &mut Vec<(f32, usize)>,
+                    in_proximity: &mut Vec<(f32, audio::speaker::Id)>,
                 ) {
-                    let dbap_speakers: Vec<_> = speakers
-                        .iter()
-                        .map(|speaker| {
-                            let point_f = Point2 {
-                                x: point.x.0,
-                                y: point.y.0,
-                            };
-                            let speaker_f = Point2 {
-                                x: speaker.audio.point.x.0,
-                                y: speaker.audio.point.y.0,
-                            };
-                            let distance = audio::dbap::blurred_distance_2(
-                                point_f,
-                                speaker_f,
-                                audio::DISTANCE_BLUR,
-                            );
-                            let weight = audio::speaker::dbap_weight(
-                                installations,
-                                &speaker.audio.installations,
-                            );
-                            audio::dbap::Speaker { distance, weight }
-                        })
-                        .collect();
+                    if speakers.is_empty() {
+                        return;
+                    }
 
+                    let (ids, dbap_speakers): (Vec<audio::speaker::Id>, Vec<audio::dbap::Speaker>) = {
+                        // The location of the sound.
+                        let point_f = Point2 {
+                            x: point.x.0,
+                            y: point.y.0,
+                        };
+
+                        let mut iter = speakers.iter();
+                        iter.next()
+                            .map(|(&id, speaker)| {
+                                // The function used to create the dbap speakers.
+                                let dbap_speaker = |speaker: &project::Speaker| -> audio::dbap::Speaker {
+                                    let speaker_f = Point2 {
+                                        x: speaker.audio.point.x.0,
+                                        y: speaker.audio.point.y.0,
+                                    };
+                                    let distance = audio::dbap::blurred_distance_2(
+                                        point_f,
+                                        speaker_f,
+                                        audio::DISTANCE_BLUR,
+                                    );
+                                    let weight = audio::speaker::dbap_weight(
+                                        installations,
+                                        &speaker.audio.installations,
+                                    );
+                                    audio::dbap::Speaker { distance, weight }
+                                };
+
+                                let init = (vec![id], vec![dbap_speaker(speaker)]);
+                                iter.fold(init, |(mut ids, mut speakers), (&id, s)| {
+                                    ids.push(id);
+                                    speakers.push(dbap_speaker(s));
+                                    (ids, speakers)
+                                })
+                            })
+                            .unwrap_or_else(Default::default)
+                    };
                     let gains = audio::dbap::SpeakerGains::new(&dbap_speakers, rolloff_db);
                     in_proximity.clear();
                     for (i, gain) in gains.enumerate() {
-                        if audio::output::speaker_is_in_proximity(point, &speakers[i].audio.point) {
-                            in_proximity.push((gain as f32, i));
+                        let id = ids[i];
+                        if audio::output::speaker_is_in_proximity(point, &speakers[&id].audio.point) {
+                            in_proximity.push((gain as f32, id));
                         }
                     }
                 }
@@ -1535,19 +1596,20 @@ fn set_widgets(gui: &mut Gui) {
                     &channel_point_m,
                     &installations,
                     speakers,
-                    state.master.params.dbap_rolloff_db,
+                    project.master.dbap_rolloff_db,
                     &mut speakers_in_proximity,
                 );
                 let output_channels = state.audio_channels.output;
-                for &(amp_scaler, speaker_index) in speakers_in_proximity.iter() {
-                    if output_channels <= speaker_index {
+                for &(amp_scaler, speaker_id) in speakers_in_proximity.iter() {
+                    let speaker = &speakers[&speaker_id];
+                    if output_channels <= speaker.channel {
                         continue;
                     }
                     const MAX_THICKNESS: Scalar = 16.0;
                     let amp = (channel_amp * amp_scaler).powf(0.75);
                     let thickness = amp as Scalar * MAX_THICKNESS;
-                    let speaker_point_m = speakers[speaker_index].audio.point;
-                    let (s_x, s_y) = position_metres_to_gui(speaker_point_m, &state.camera);
+                    let speaker_point_m = speaker.point;
+                    let (s_x, s_y) = position_metres_to_gui(speaker_point_m, &project.camera);
 
                     // Ensure there is a unique `Id` for this line.
                     if ids.floorplan_channel_to_speaker_lines.len() <= line_index {
@@ -1568,7 +1630,7 @@ fn set_widgets(gui: &mut Gui) {
                 }
             }
 
-            let (x, y) = position_metres_to_gui(position.point, &state.camera);
+            let (x, y) = position_metres_to_gui(position.point, &project.camera);
             let radians = position.radians as _;
             custom_widget::Sound::new(channel_amps, spread, radians, channel_radians as _)
                 .and_then(active_sound.normalised_progress, |w, p| w.progress(p))

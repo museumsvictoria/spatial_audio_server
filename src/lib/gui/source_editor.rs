@@ -1,8 +1,7 @@
 use audio;
 use audio::source::Role;
 use audio::source::wav::Playback;
-use fxhash::FxHashSet;
-use gui::{collapsible_area, duration_label, hz_label, Gui, State};
+use gui::{collapsible_area, duration_label, hz_label, Gui, ProjectState, State};
 use gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
 use installation;
 use metres::Metres;
@@ -12,30 +11,27 @@ use nannou::ui::prelude::*;
 use project::{self, Project};
 use soundscape;
 use std::{self, cmp, mem, ops};
-use std::ffi::OsStr;
-use std::path::{Component, Path};
 use time_calc::{Ms, Samples};
 use utils;
-use walkdir::WalkDir;
 
 /// Runtime state related to the source editor GUI panel.
 #[derive(Debug, Default)]
 pub struct SourceEditor {
-    /// The index of the selected source.
-    pub selected: Option<usize>,
+    /// The Id of the currently selected source.
+    pub selected: Option<audio::source::Id>,
     /// The source currently being previewed via the source editor GUI.
     pub preview: SourcePreview,
 }
 
 /// A source currently being previewed.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct SourcePreview {
     pub current: Option<(SourcePreviewMode, audio::sound::Id)>,
     pub point: Option<Point2<Metres>>,
 }
 
 /// The mode of source preview.
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SourcePreviewMode {
     OneShot,
     Continuous,
@@ -55,158 +51,42 @@ const SOUNDSCAPE_COLOR: ui::Color = ui::color::DARK_RED;
 const INTERACTIVE_COLOR: ui::Color = ui::color::DARK_GREEN;
 const SCRIBBLES_COLOR: ui::Color = ui::color::DARK_PURPLE;
 
-impl StoredSources {
-    /// Load the audio sources from the given path.
-    ///
-    /// If there are any ".wav" files in `assets/audio` that have not yet been loaded into the
-    /// stored sources, load them as `Wav` kind sources.
-    ///
-    /// If the path is invalid or the JSON can't be read, `StoredSources::new` will be called.
-    pub fn load(sources_path: &Path, audio_path: &Path) -> Self {
-        let mut stored: StoredSources = utils::load_from_json_or_default(sources_path);
+pub fn set(
+    last_area_id: widget::Id,
+    gui: &mut Gui,
+    project: &mut Project,
+    project_state: &mut ProjectState,
+) -> widget::Id {
 
-        // Check the validity of the WAV source paths.
-        //
-        // If a path is invalid, check to see if it exists within the given `audio_path`. If so,
-        // update the source path. Otherwise, remove it.
-        for i in (0..stored.sources.len()).rev() {
-            let mut remove = false;
-            if let audio::source::Kind::Wav(ref mut wav) = stored.sources[i].audio.kind {
-                // If the path is valid, continue.
-                if wav.path.exists() {
-                    continue;
-                }
+    let Gui {
+        ref mut ui,
+        ref mut ids,
+        channels,
+        sound_id_gen,
+        state:
+            &mut State {
+                ref mut is_open,
+                ref audio_channels,
+                ..
+            },
+        ..
+    } = *gui;
 
-                // If the path doesn't exist, check to see if it contains the audio path stem.
-                //
-                // If so, check the path at the new location relative to the audio path.
-                //
-                // If we can find it, return the new absolute path.
-                let new_path: Option<std::path::PathBuf> = {
-                    let mut components = wav.path.components();
-                    let audio_path_stem = audio_path.file_stem().and_then(|os_str| os_str.to_str());
-                    components
-                        .find(|component| match *component {
-                            Component::Normal(os_str) if os_str.to_str() == audio_path_stem => true,
-                            _ => false,
-                        })
-                        .map(|_| {
-                            audio_path.components()
-                                .chain(components)
-                                .map(|c| c.as_os_str())
-                                .collect()
-                        })
-                };
+    let Project {
+        state: project::State {
+            ref camera,
+            ref master,
+            ref soundscape_groups,
+            ref mut sources,
+            ..
+        },
+        ..
+    } = *project;
 
-                // Update the wavs path, or remove the source if we couldn't find it.
-                if let Some(new_path) = new_path {
-                    if new_path.exists() {
-                        wav.path = new_path;
-                        continue;
-                    }
-                    eprintln!("Could not find WAV source at \"{}\" or at \"{}\". It will be ignored",
-                              wav.path.display(),
-                              new_path.display());
-                } else {
-                    eprintln!("Could not find WAV source at \"{}\". It will be ignored.",
-                              wav.path.display());
-                }
-
-                remove = true;
-            }
-
-            if remove {
-                // If no valid path was found, remove the source as we can't play it.
-                stored.sources.remove(i);
-            }
-        }
-
-        // If there are any WAVs in `assets/audio/` that we have not yet listed, load them.
-        if audio_path.exists() && audio_path.is_dir() {
-            let wav_paths = WalkDir::new(&audio_path)
-                .follow_links(true)
-                .into_iter()
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().is_file())
-                .filter_map(|e| {
-                    let file_name = e.file_name();
-                    let file_path = Path::new(&file_name);
-                    let ext = file_path
-                        .extension()
-                        .and_then(OsStr::to_str)
-                        .map(str::to_ascii_lowercase);
-                    match ext.as_ref().map(|e| &e[..]) {
-                        Some("wav") | Some("wave") => Some(e.path().to_path_buf()),
-                        _ => None,
-                    }
-                });
-
-            // For each new wav file, create a new source.
-            'paths: for path in wav_paths {
-                // If we already have this one, continue.
-                for s in &stored.sources {
-                    match s.audio.kind {
-                        audio::source::Kind::Wav(ref wav) => if wav.path == path {
-                            continue 'paths;
-                        },
-                        _ => (),
-                    }
-                }
-                // Set the name as the file name without the extension.
-                let name = match path.file_stem().and_then(OsStr::to_str) {
-                    Some(name) => name.to_string(),
-                    None => continue,
-                };
-                // Load the `Wav`.
-                let wav = match audio::source::Wav::from_path(path) {
-                    Ok(w) => w,
-                    Err(e) => {
-                        eprintln!("Failed to load wav file {:?}: {}", name, e);
-                        continue;
-                    }
-                };
-                let kind = audio::source::Kind::Wav(wav);
-                let role = None;
-                let spread = audio::source::default::SPREAD;
-                let channel_radians = audio::source::default::CHANNEL_RADIANS;
-                let volume = audio::source::default::VOLUME;
-                let muted = bool::default();
-                let audio = audio::Source {
-                    kind,
-                    role,
-                    spread,
-                    channel_radians,
-                    volume,
-                    muted,
-                };
-                let id = stored.next_id;
-                let source = Source { name, audio, id };
-                stored.sources.push(source);
-                stored.next_id = audio::source::Id(stored.next_id.0 + 1);
-            }
-        }
-
-        // Only keep soloed sources that remain.
-        {
-            let StoredSources { ref mut soloed, ref sources, .. } = stored;
-            soloed.retain(|&id| sources.iter().any(|s| s.id == id));
-        }
-
-        // Sort all sources by kind then name.
-        stored
-            .sources
-            .sort_by(|a, b| match (&a.audio.kind, &b.audio.kind) {
-                (&audio::source::Kind::Wav(_), &audio::source::Kind::Realtime(_)) => {
-                    std::cmp::Ordering::Less
-                }
-                _ => a.name.cmp(&b.name),
-            });
-        stored
-    }
-}
-
-pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
-    let is_open = gui.state.source_editor.is_open;
+    let ProjectState {
+        ref mut source_editor,
+        ..
+    } = *project_state;
 
     const PAD: Scalar = 6.0;
     const TEXT_PAD: Scalar = 20.0;
@@ -244,37 +124,49 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         + COMMON_CANVAS_H + INSTALLATIONS_CANVAS_H + PAD + SOUNDSCAPE_CANVAS_H;
     let source_editor_canvas_h = LIST_HEIGHT + ITEM_HEIGHT + selected_canvas_h;
 
-    let (area, event) = collapsible_area(is_open, "Source Editor", gui.ids.side_menu)
-        .align_middle_x_of(gui.ids.side_menu)
+    let (area, event) = collapsible_area(is_open.source_editor, "Source Editor", ids.side_menu)
+        .align_middle_x_of(ids.side_menu)
         .down_from(last_area_id, 0.0)
-        .set(gui.ids.source_editor, gui);
+        .set(ids.source_editor, ui);
     if let Some(event) = event {
-        gui.state.source_editor.is_open = event.is_open();
+        is_open.source_editor = event.is_open();
     }
 
     let area = match area {
         Some(area) => area,
-        None => return gui.ids.source_editor,
+        None => return ids.source_editor,
     };
 
     // The canvas on which the source editor will be placed.
     let canvas = widget::Canvas::new()
         .pad(0.0)
         .h(source_editor_canvas_h);
-    area.set(canvas, gui);
+    area.set(canvas, ui);
+
+    // Convert the given map into a sorted list of source Ids.
+    fn sorted_sources_vec(sources: &project::SourcesMap) -> Vec<audio::source::Id> {
+        let mut sources_vec: Vec<_> = sources.keys().cloned().collect();
+        sources_vec.sort_by(|a, b| source_display_order(&sources[a], &sources[b]));
+        sources_vec
+    }
+
+    // Convert the map of sources into a vec sourted for display.
+    //
+    // TODO: Possibly store this within source_editor for re-use.
+    let mut sources_vec = sorted_sources_vec(sources);
 
     // If there are no sources, display a message saying how to add some.
-    if gui.state.source_editor.sources.is_empty() {
+    if sources.is_empty() {
         widget::Text::new("Add some source outputs with the `+` button")
             .padded_w_of(area.id, TEXT_PAD)
             .mid_top_with_margin_on(area.id, TEXT_PAD)
             .font_size(SMALL_FONT_SIZE)
             .center_justify()
-            .set(gui.ids.source_editor_no_sources, gui);
+            .set(ids.source_editor_no_sources, ui);
 
     // Otherwise display the source list.
     } else {
-        let num_items = gui.state.source_editor.sources.len();
+        let num_items = sources.len();
         let (mut events, scrollbar) = widget::ListSelect::single(num_items)
             .item_size(ITEM_HEIGHT)
             .h(LIST_HEIGHT)
@@ -282,20 +174,25 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             .align_top_of(area.id)
             .scrollbar_next_to()
             .scrollbar_color(color::LIGHT_CHARCOAL)
-            .set(gui.ids.source_editor_list, gui);
+            .set(ids.source_editor_list, ui);
 
         // If a source was removed, process it after the whole list is instantiated to avoid
         // invalid indices.
         let mut maybe_remove_index = None;
+        let selected_id = source_editor.selected;
+        let selected_index = sources_vec.iter()
+            .position(|&id| Some(id) == selected_id)
+            .unwrap_or(0);
 
-        while let Some(event) = events.next(gui, |i| gui.state.source_editor.selected == Some(i)) {
+        while let Some(event) = events.next(ui, |i| i == selected_index) {
             use self::ui::widget::list_select::Event;
             match event {
                 // Instantiate a button for each source.
                 Event::Item(item) => {
-                    let selected = gui.state.source_editor.selected == Some(item.i);
+                    let selected = selected_index == item.i;
+                    let id = sources_vec[item.i];
                     let (label, is_wav) = {
-                        let source = &gui.state.source_editor.sources[item.i];
+                        let source = &sources[&id];
                         match source.audio.kind {
                             audio::source::Kind::Wav(ref wav) => {
                                 (format!("[{}CH WAV] {}", wav.channels, source.name), true)
@@ -327,17 +224,17 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             10.0,
                         ))))
                         .color(color);
-                    item.set(button, gui);
+                    item.set(button, ui);
 
                     // If the button or any of its children are capturing the mouse, display
                     // the `remove` button.
                     let show_remove_button = !is_wav
-                        && gui.global_input()
+                        && ui.global_input()
                             .current
                             .widget_capturing_mouse
                             .map(|id| {
                                 id == item.widget_id
-                                    || gui.widget_graph()
+                                    || ui.widget_graph()
                                         .does_recursive_depth_edge_exist(item.widget_id, id)
                             })
                             .unwrap_or(false);
@@ -354,7 +251,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         .align_right_of(item.widget_id)
                         .align_middle_y_of(item.widget_id)
                         .parent(item.widget_id)
-                        .set(gui.ids.source_editor_remove, gui)
+                        .set(ids.source_editor_remove, ui)
                         .was_clicked()
                     {
                         maybe_remove_index = Some(item.i);
@@ -363,17 +260,18 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
                 // Update the selected source.
                 Event::Selection(idx) => {
-                    gui.state.source_editor.selected = Some(idx);
+                    let id = sources_vec[idx];
+                    source_editor.selected = Some(id);
 
                     // If a source was being previewed, stop it.
-                    if let Some((_, sound_id)) = gui.state.source_editor.preview.current {
-                        gui.channels
+                    if let Some((_, sound_id)) = source_editor.preview.current {
+                        channels
                             .audio_output
                             .send(move |audio| {
                                 audio.remove_sound(sound_id);
                             })
                             .ok();
-                        gui.state.source_editor.preview.current = None;
+                        source_editor.preview.current = None;
                     }
                 }
 
@@ -383,36 +281,41 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
         // The scrollbar for the list.
         if let Some(s) = scrollbar {
-            s.set(gui);
+            s.set(ui);
         }
 
         // Remove a source if necessary.
         if let Some(i) = maybe_remove_index {
-            if Some(i) == gui.state.source_editor.selected {
-                gui.state.source_editor.selected = None;
+            let remove_id = sources_vec.remove(i);
+            if let Some(id) = source_editor.selected {
+                if remove_id == id {
+                    source_editor.selected = None;
+                }
             }
 
-            // Remove local copy.
-            let source = gui.state.source_editor.sources.remove(i);
-            let id = source.id;
+            // Remove the local copy.
+            sources.remove(&remove_id);
 
             // Remove audio input copy.
-            gui.channels
+            channels
                 .audio_input
                 .send(move |audio| {
-                    audio.sources.remove(&id);
-                    audio.active_sounds.remove(&id);
+                    audio.sources.remove(&remove_id);
+                    audio.active_sounds.remove(&remove_id);
                 })
                 .ok();
 
             // Remove soundscape copy.
-            gui.channels.soundscape.send(move |soundscape| {
-                soundscape.remove_source(&id);
-            }).expect("soundscape was closed");
+            channels
+                .soundscape
+                .send(move |soundscape| {
+                    soundscape.remove_source(&remove_id);
+                })
+                .expect("soundscape was closed");
         }
     }
 
-    let plus_button_w = gui.rect_of(area.id).unwrap().w() / 2.0;
+    let plus_button_w = ui.rect_of(area.id).unwrap().w() / 2.0;
     let plus_button = || -> widget::Button<widget::button::Flat> {
         widget::Button::new()
             .color(DARK_A)
@@ -425,13 +328,13 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     let new_wav = plus_button()
         .label("+ WAV")
         .align_left_of(area.id)
-        .set(gui.ids.source_editor_add_wav, gui)
+        .set(ids.source_editor_add_wav, ui)
         .was_clicked();
 
     let new_realtime = plus_button()
         .label("+ Realtime")
         .align_right_of(area.id)
-        .set(gui.ids.source_editor_add_realtime, gui)
+        .set(ids.source_editor_add_realtime, ui)
         .was_clicked();
 
     // Add a new WAV source.
@@ -444,12 +347,15 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         // Create the Realtime.
         const DEFAULT_CHANNELS: ops::Range<usize> = 0..1;
         const DEFAULT_DURATION: Ms = Ms(3_000.0);
-        let channels = DEFAULT_CHANNELS;
+        let n_channels = DEFAULT_CHANNELS;
         let duration = DEFAULT_DURATION;
-        let realtime = audio::source::Realtime { channels, duration };
+        let realtime = audio::source::Realtime {
+            channels: n_channels,
+            duration,
+        };
 
         // Create the Source.
-        let id = gui.state.source_editor.next_id();
+        let id = sources.next_id();
         let name = format!("Source {}", id.0);
         let kind = audio::source::Kind::Realtime(realtime.clone());
         let role = Default::default();
@@ -465,13 +371,13 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             volume,
             muted,
         };
-        let source = Source { id, name, audio };
+        let source = project::Source { name, audio };
 
         // Insert the source into the map.
-        gui.state.source_editor.sources.push(source);
+        sources.insert(id, source);
 
         // Send the source to the audio input thread.
-        gui.channels
+        channels
             .audio_input
             .send(move |audio| {
                 audio.sources.insert(id, realtime);
@@ -479,60 +385,37 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             .ok();
     }
 
-    let area_rect = gui.rect_of(area.id).unwrap();
+    let area_rect = ui.rect_of(area.id).unwrap();
     let start = area_rect.y.start;
     let end = start + selected_canvas_h;
     let selected_canvas_y = ui::Range { start, end };
 
     widget::Canvas::new()
         .pad(PAD)
-        .w_of(gui.ids.side_menu)
+        .w_of(ids.side_menu)
         .h(selected_canvas_h)
         .y(selected_canvas_y.middle())
-        .align_middle_x_of(gui.ids.side_menu)
-        .set(gui.ids.source_editor_selected_canvas, gui);
+        .align_middle_x_of(ids.side_menu)
+        .set(ids.source_editor_selected_canvas, ui);
 
-    let selected_canvas_kid_area = gui.kid_area_of(gui.ids.source_editor_selected_canvas)
+    let selected_canvas_kid_area = ui.kid_area_of(ids.source_editor_selected_canvas)
         .unwrap();
 
     // If a source is selected, display its info.
-    let i = match gui.state.source_editor.selected {
+    let id = match source_editor.selected {
         None => {
             widget::Text::new("No source selected")
                 .padded_w_of(area.id, TEXT_PAD)
-                .mid_top_with_margin_on(gui.ids.source_editor_selected_canvas, TEXT_PAD)
+                .mid_top_with_margin_on(ids.source_editor_selected_canvas, TEXT_PAD)
                 .font_size(SMALL_FONT_SIZE)
                 .center_justify()
-                .set(gui.ids.source_editor_selected_none, gui);
+                .set(ids.source_editor_selected_none, ui);
             return area.id;
         }
-        Some(i) => i,
+        Some(id) => id,
     };
 
-    let Gui {
-        ref mut ui,
-        ref mut ids,
-        channels,
-        sound_id_gen,
-        state:
-            &mut State {
-                ref camera,
-                ref audio_channels,
-                ref master,
-                source_editor:
-                    SourceEditor {
-                        ref mut sources,
-                        ref mut preview,
-                        ref mut soloed,
-                        ..
-                    },
-                ref soundscape_editor,
-                ..
-            },
-        ..
-    } = *gui;
-
-    for event in widget::TextBox::new(&sources[i].name)
+    for event in widget::TextBox::new(&sources[&id].name)
         .mid_top_of(ids.source_editor_selected_canvas)
         .kid_area_w_of(ids.source_editor_selected_canvas)
         .w(selected_canvas_kid_area.w())
@@ -543,7 +426,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         .set(ids.source_editor_selected_name, ui)
     {
         if let widget::text_box::Event::Update(string) = event {
-            sources[i].name = string;
+            sources.get_mut(&id).unwrap().name = string;
         }
     }
 
@@ -593,7 +476,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         }
     }
 
-    let selected_role_index = sources[i].audio.role.as_ref().map(role_index).unwrap_or(0);
+    let selected_role_index = sources[&id].audio.role.as_ref().map(role_index).unwrap_or(0);
     let role_selected = |j| j == selected_role_index;
 
     while let Some(event) = events.next(ui, &role_selected) {
@@ -622,8 +505,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
             // Update the selected role.
             Event::Selection(idx) => {
-                let source = &mut sources[i];
-                let id = source.id;
+                let source = sources.get_mut(&id).unwrap();
                 let new_role = int_to_role(idx);
                 let old_role = mem::replace(&mut source.audio.role, new_role.clone());
                 match (old_role, new_role) {
@@ -679,7 +561,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         channels: &super::Channels,
         sound_id_gen: &audio::sound::IdGenerator,
         camera: &super::Camera,
-        source: &Source,
+        source_id: audio::source::Id,
+        source: &project::Source,
         preview: &mut SourcePreview,
         realtime_source_latency: &Ms,
     ) {
@@ -732,7 +615,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
                     let _handle = audio::sound::spawn_from_source(
                         sound_id,
-                        source.id,
+                        source_id,
                         &audio,
                         position,
                         attack_duration,
@@ -754,7 +637,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         .label("One Shot")
         .label_font_size(SMALL_FONT_SIZE)
         .w(button_w)
-        .color(match preview.current {
+        .color(match source_editor.preview.current {
             Some((SourcePreviewMode::OneShot, _)) => color::BLUE,
             _ => color::DARK_CHARCOAL,
         })
@@ -766,9 +649,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             channels,
             sound_id_gen,
             camera,
-            &sources[i],
-            preview,
-            &master.params.realtime_source_latency,
+            id,
+            &sources[&id],
+            &mut source_editor.preview,
+            &master.realtime_source_latency,
         );
     }
 
@@ -777,7 +661,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         .label("Continuous")
         .label_font_size(SMALL_FONT_SIZE)
         .w(button_w)
-        .color(match preview.current {
+        .color(match source_editor.preview.current {
             Some((SourcePreviewMode::Continuous, _)) => color::BLUE,
             _ => color::DARK_CHARCOAL,
         })
@@ -789,15 +673,15 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             channels,
             sound_id_gen,
             camera,
-            &sources[i],
-            preview,
-            &master.params.realtime_source_latency,
+            id,
+            &sources[&id],
+            &mut source_editor.preview,
+            &master.realtime_source_latency,
         );
     }
 
     // Kind-specific data.
-    let source_id = sources[i].id;
-    let (kind_canvas_id, num_channels) = match sources[i].audio.kind {
+    let (kind_canvas_id, num_channels) = match sources.get_mut(&id).unwrap().audio.kind {
         audio::source::Kind::Wav(ref mut wav) => {
             // Instantiate a small canvas for displaying wav-specific stuff.
             widget::Canvas::new()
@@ -850,7 +734,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
                 // Update the soundscape thread copy.
                 channels.soundscape.send(move |soundscape| {
-                    soundscape.update_source(&source_id, |source| {
+                    soundscape.update_source(&id, |source| {
                         if let audio::source::Kind::Wav(ref mut wav) = source.kind {
                             wav.should_loop = new_loop;
                         }
@@ -934,7 +818,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
                         // Update the soundscape copy.
                         channels.soundscape.send(move |soundscape| {
-                            soundscape.update_source(&source_id, |source| {
+                            soundscape.update_source(&id, |source| {
                                 if let audio::source::Kind::Wav(ref mut wav) = source.kind {
                                     wav.playback = new_playback;
                                 }
@@ -943,7 +827,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
                         // Update all audio thread copies.
                         channels.audio_output.send(move |audio| {
-                            audio.update_sounds_with_source(&source_id, move |_, sound| {
+                            audio.update_sounds_with_source(&id, move |_, sound| {
                                 if let audio::source::SignalKind::Wav { ref mut playback, .. } = sound.signal.kind {
                                     *playback = new_playback;
                                 }
@@ -985,14 +869,14 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
                     // Update the audio input thread copy.
                     channels.audio_input.send(move |audio| {
-                        if let Some(realtime) = audio.sources.get_mut(&source_id) {
+                        if let Some(realtime) = audio.sources.get_mut(&id) {
                             $update_fn(realtime);
                         }
                     }).ok();
 
                     // Update the soundscape thread copy.
                     channels.soundscape.send(move |soundscape| {
-                        soundscape.update_source(&source_id, |source| {
+                        soundscape.update_source(&id, |source| {
                             if let audio::source::Kind::Realtime(ref mut realtime) = source.kind {
                                 $update_fn(realtime);
                             }
@@ -1091,7 +975,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         .top_left_of(ids.source_editor_selected_common_canvas)
         .set(ids.source_editor_selected_volume_text, ui);
 
-    let volume = sources[i].volume;
+    let volume = sources[&id].volume;
     let label = format!("{:.3}", volume);
     for new_volume in widget::Slider::new(volume, 0.0, 1.0)
         .label(&label)
@@ -1104,10 +988,9 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         .set(ids.source_editor_selected_volume_slider, ui)
     {
         // Update the local copy.
-        sources[i].volume = new_volume;
+        sources.get_mut(&id).unwrap().volume = new_volume;
 
         // Update the soundscape copy.
-        let id = sources[i].id;
         channels
             .soundscape
             .send(move |soundscape| {
@@ -1136,7 +1019,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         .label_font_size(SMALL_FONT_SIZE);
 
     // Solo button.
-    let solo = soloed.contains(&sources[i].id);
+    let solo = sources.soloed.contains(&id);
     for new_solo in toggle(solo)
         .label("SOLO")
         .align_left()
@@ -1147,7 +1030,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         // If the CTRL key was down, unsolo all other sources.
         if ui.global_input().current.modifiers.contains(ui::input::keyboard::ModifierKey::CTRL) {
             // Update local copy.
-            soloed.clear();
+            sources.soloed.clear();
 
             // Update audio output copy.
             channels
@@ -1159,11 +1042,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         }
 
         // Update local copy.
-        let id = sources[i].id;
         if new_solo {
-            soloed.insert(id);
+            sources.soloed.insert(id);
         } else {
-            soloed.remove(&id);
+            sources.soloed.remove(&id);
         }
 
         // Update audio output copy.
@@ -1180,7 +1062,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     }
 
     // Mute button.
-    for new_mute in toggle(sources[i].muted)
+    for new_mute in toggle(sources[&id].muted)
         .label("MUTE")
         .align_top()
         .right(PAD)
@@ -1188,10 +1070,9 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         .set(ids.source_editor_selected_mute, ui)
     {
         // Update local copy.
-        sources[i].muted = new_mute;
+        sources.get_mut(&id).unwrap().muted = new_mute;
 
         // Update soundscape copy.
-        let id = sources[i].id;
         channels
             .soundscape
             .send(move |soundscape| {
@@ -1227,7 +1108,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     // Slider for controlling how far apart speakers should be spread.
     const MIN_SPREAD: f32 = 0.0;
     const MAX_SPREAD: f32 = 10.0;
-    let mut spread = sources[i].audio.spread.0 as f32;
+    let mut spread = sources[&id].audio.spread.0 as f32;
     let label = format!("Spread: {:.2} metres", spread);
     for new_spread in slider(spread, MIN_SPREAD, MAX_SPREAD)
         .skew(2.0)
@@ -1240,10 +1121,9 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let spread_m = Metres(spread as _);
 
         // Update the local copy.
-        sources[i].audio.spread = spread_m;
+        sources.get_mut(&id).unwrap().audio.spread = spread_m;
 
         // Update soundscape copy if it's there.
-        let id = sources[i].id;
         channels.soundscape.send(move |soundscape| {
             soundscape.update_source(&id, |source| source.spread = spread_m);
         }).expect("soundscape was closed");
@@ -1259,7 +1139,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     // Slider for controlling how channels should be rotated.
     const MIN_RADIANS: f32 = 0.0;
     const MAX_RADIANS: f32 = std::f32::consts::PI * 2.0;
-    let mut channel_radians = sources[i].audio.channel_radians;
+    let mut channel_radians = sources[&id].audio.channel_radians;
     let label = format!("Rotate: {:.2} radians", channel_radians);
     for new_channel_radians in slider(channel_radians, MIN_RADIANS, MAX_RADIANS)
         .label(&label)
@@ -1270,10 +1150,9 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         channel_radians = new_channel_radians;
 
         // Update the local copy.
-        sources[i].audio.channel_radians = channel_radians;
+        sources.get_mut(&id).unwrap().audio.channel_radians = channel_radians;
 
         // Update the soundscape copy.
-        let id = sources[i].id;
         channels.soundscape.send(move |soundscape| {
             soundscape.update_source(&id, move |source| {
                 source.channel_radians = channel_radians;
@@ -1369,7 +1248,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
     // Role-specific //
     ///////////////////
 
-    match sources[i].audio.role.clone() {
+    match sources.get_mut(&id).unwrap().audio.role.clone() {
         // For soundscape sounds, allow the user to select installations.
         Some(Role::Soundscape(soundscape)) => {
             // Destructure the soundscape roll to its fields.
@@ -1426,13 +1305,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 installations.insert(installation);
 
                 // Update the local copy.
-                let source = &mut sources[i];
+                let source = sources.get_mut(&id).unwrap();
                 if let Some(Role::Soundscape(ref mut soundscape)) = source.audio.role {
                     soundscape.installations.insert(installation);
                 }
 
                 // Update the soundscape copy.
-                let id = source.id;
                 channels.soundscape.send(move |soundscape| {
                     soundscape.update_source(&id, |source| {
                         source.installations.insert(installation);
@@ -1513,8 +1391,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
             // If some installation was clicked for removal, remove it.
             if let Some(inst) = maybe_remove_index.map(|i| selected_installations[i]) {
-                let source = &mut sources[i];
-                let id = source.id;
+                let source = sources.get_mut(&id).unwrap();
 
                 // Remove the local copy.
                 if let Some(Role::Soundscape(ref mut soundscape)) = source.audio.role {
@@ -1565,6 +1442,23 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .font_size(SMALL_FONT_SIZE)
                 .set(ids.source_editor_selected_soundscape_title, ui);
 
+            // Shorthand for expecting a soundscape value within a source.
+            fn expect_soundscape_mut<'a>(
+                sources: &'a mut project::SourcesMap,
+                id: &audio::source::Id,
+            ) -> &'a mut audio::source::Soundscape
+            {
+                sources
+                    .get_mut(id)
+                    .unwrap()
+                    .audio
+                    .role
+                    .as_mut()
+                    .expect("no role was assigned")
+                    .soundscape_mut()
+                    .expect("role was not soundscape")
+            }
+
             /////////////////////
             // Occurrence Rate //
             /////////////////////
@@ -1600,15 +1494,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .set(ids.source_editor_selected_soundscape_occurrence_rate_slider, ui)
             {
                 let hz = value as _;
-                let id = sources[i].id;
 
                 // Update the local copy.
                 let new_rate = {
-                    let soundscape = sources[i].audio.role
-                        .as_mut()
-                        .expect("no role was assigned")
-                        .soundscape_mut()
-                        .expect("role was not Soundscape");
+                    let soundscape = expect_soundscape_mut(sources, &id);
                     match edge {
                         widget::range_slider::Edge::Start => {
                             let ms = utils::hz_to_ms_interval(hz);
@@ -1654,15 +1543,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .set(ids.source_editor_selected_soundscape_simultaneous_sounds_slider, ui)
             {
                 let num = value as _;
-                let id = sources[i].id;
 
                 // Update the local copy.
                 let new_num = {
-                    let soundscape = sources[i].audio.role
-                        .as_mut()
-                        .expect("no role was assigned")
-                        .soundscape_mut()
-                        .expect("role was not Soundscape");
+                    let soundscape = expect_soundscape_mut(sources, &id);
                     match edge {
                         widget::range_slider::Edge::Start => {
                             soundscape.simultaneous_sounds.min = num;
@@ -1696,8 +1580,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
             //
             // - If it is a non-looping WAV, then the max duration is the length of the WAV.
             // - If it is a looping WAV or a realtime source the max is some arbitrary limit.
-            let skew = sources[i].kind.playback_duration_skew();
-            let max_duration = match sources[i].kind {
+            let skew = sources[&id].kind.playback_duration_skew();
+            let max_duration = match sources[&id].kind {
                 audio::source::Kind::Realtime(_) => audio::source::MAX_PLAYBACK_DURATION,
                 audio::source::Kind::Wav(ref wav) => match wav.should_loop {
                     true => audio::source::MAX_PLAYBACK_DURATION,
@@ -1719,15 +1603,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .set(ids.source_editor_selected_soundscape_playback_duration_slider, ui)
             {
                 let duration = Ms(value as _);
-                let id = sources[i].id;
 
                 // Update the local copy.
                 let new_duration = {
-                    let soundscape = sources[i].audio.role
-                        .as_mut()
-                        .expect("no role was assigned")
-                        .soundscape_mut()
-                        .expect("role was not Soundscape");
+                    let soundscape = expect_soundscape_mut(sources, &id);
                     match edge {
                         widget::range_slider::Edge::Start => {
                             soundscape.playback_duration.min = duration;
@@ -1773,15 +1652,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .set(ids.source_editor_selected_soundscape_attack_duration_slider, ui)
             {
                 let duration = Ms(value);
-                let id = sources[i].id;
 
                 // Update the local copy.
                 let new_duration = {
-                    let soundscape = sources[i].audio.role
-                        .as_mut()
-                        .expect("no role was assigned")
-                        .soundscape_mut()
-                        .expect("role was not Soundscape");
+                    let soundscape = expect_soundscape_mut(sources, &id);
                     match edge {
                         widget::range_slider::Edge::Start => {
                             soundscape.attack_duration.min = duration;
@@ -1827,15 +1701,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .set(ids.source_editor_selected_soundscape_release_duration_slider, ui)
             {
                 let duration = Ms(value);
-                let id = sources[i].id;
 
                 // Update the local copy.
                 let new_duration = {
-                    let soundscape = sources[i].audio.role
-                        .as_mut()
-                        .expect("no role was assigned")
-                        .soundscape_mut()
-                        .expect("role was not Soundscape");
+                    let soundscape = expect_soundscape_mut(sources, &id);
                     match edge {
                         widget::range_slider::Edge::Start => {
                             soundscape.release_duration.min = duration;
@@ -1865,7 +1734,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                 .font_size(SMALL_FONT_SIZE)
                 .set(ids.source_editor_selected_soundscape_groups_text, ui);
 
-            let mut groups_vec: Vec<_> = soundscape_editor.groups.iter().collect();
+            let mut groups_vec: Vec<_> = soundscape_groups.iter().collect();
             groups_vec.sort_by(|a, b| a.1.name.cmp(&b.1.name));
             let (mut events, scrollbar) = widget::ListSelect::multiple(groups_vec.len())
                 .item_size(ITEM_HEIGHT)
@@ -1884,15 +1753,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                     Event::Item(item) => {
                         let selected = is_selected(item.i);
                         let (&group_id, _) = groups_vec[item.i];
-                        let source_id = sources[i].id;
-                        let soundscape = sources[i].audio.role
-                            .as_mut()
-                            .expect("no role was assigned")
-                            .soundscape_mut()
-                            .expect("role was not soundscape");
+                        let soundscape = expect_soundscape_mut(sources, &id);
                         let color = if selected { ui::color::BLUE } else { ui::color::BLACK };
                         let button = widget::Button::new()
-                            .label(&groups_vec[item.i].1.name.0)
+                            .label(&groups_vec[item.i].1.name)
                             .label_font_size(SMALL_FONT_SIZE)
                             .color(color);
 
@@ -1906,7 +1770,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
 
                             // Update the soundscape copy.
                             channels.soundscape.send(move |soundscape| {
-                                soundscape.update_source(&source_id, move |source| {
+                                soundscape.update_source(&id, move |source| {
                                     if selected {
                                         source.groups.remove(&group_id);
                                     } else {
@@ -1970,12 +1834,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             };
 
                             // Update local copy.
-                            let source_id = sources[i].id;
-                            let soundscape = sources[i].audio.role
-                                .as_mut()
-                                .expect("no role was assigned")
-                                .soundscape_mut()
-                                .expect("role was not soundscape");
+                            let soundscape = expect_soundscape_mut(sources, &id);
                             soundscape.movement = movement.clone();
 
                             // Update the soundsape thread copy.
@@ -1983,7 +1842,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                                 .soundscape
                                 .send(move |soundscape| {
                                     // Update the source and all associated active sounds.
-                                    soundscape.update_source_movement(&source_id, &movement);
+                                    soundscape.update_source_movement(&id, &movement);
                                 })
                                 .expect("could not update movement field on soundscape thread");
                         }
@@ -2015,11 +1874,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         .set(ids.source_editor_selected_soundscape_movement_fixed_point, ui)
                     {
                         // Update the local copy.
-                        let soundscape = sources[i].audio.role
-                            .as_mut()
-                            .expect("no role was assigned")
-                            .soundscape_mut()
-                            .expect("role was not soundscape");
+                        let soundscape = expect_soundscape_mut(sources, &id);
                         let point = pt2(new_x, new_y);
                         let movement = audio::source::Movement::Fixed(point);
                         soundscape.movement = movement.clone();
@@ -2029,7 +1884,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             .soundscape
                             .send(move |soundscape| {
                                 // Update the source and all active sounds that use the given source.
-                                soundscape.update_source_movement(&source_id, &movement);
+                                soundscape.update_source_movement(&id, &movement);
                             })
                             .expect("could not update movement field on soundscape thread");
                     }
@@ -2077,12 +1932,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             };
 
                             // Update local copy.
-                            let source_id = sources[i].id;
-                            let soundscape = sources[i].audio.role
-                                .as_mut()
-                                .expect("no role was assigned")
-                                .soundscape_mut()
-                                .expect("role was not soundscape");
+                            let soundscape = expect_soundscape_mut(sources, &id);
                             let movement = audio::source::Movement::Generative(gen);
                             soundscape.movement = movement.clone();
 
@@ -2091,7 +1941,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                                 .soundscape
                                 .send(move |soundscape| {
                                     // Update the source and all active sounds that use the given source.
-                                    soundscape.update_source_movement(&source_id, &movement);
+                                    soundscape.update_source_movement(&id, &movement);
                                 })
                                 .expect("could not update movement field on soundscape thread");
                         }
@@ -2132,13 +1982,9 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         }
 
                         // Update local copy.
-                        let soundscape = sources[i].audio.role
-                            .as_mut()
-                            .expect("no role was assigned")
-                            .soundscape_mut()
-                            .expect("role was not soundscape");
                         let generative = audio::source::movement::Generative::Agent(agent.clone());
                         let movement = audio::source::Movement::Generative(generative);
+                        let soundscape = expect_soundscape_mut(sources, &id);
                         soundscape.movement = movement.clone();
 
                         // Update the soundsape thread copy.
@@ -2147,7 +1993,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             .soundscape
                             .send(move |soundscape| {
                                 // Update all active sounds.
-                                soundscape.update_active_sounds_with_source(source_id, |_, sound| {
+                                soundscape.update_active_sounds_with_source(id, |_, sound| {
                                     let gen = match sound.movement {
                                         soundscape::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2160,7 +2006,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                                 });
 
                                 // Update the source.
-                                soundscape.update_source(&source_id, |source| {
+                                soundscape.update_source(&id, |source| {
                                     let gen = match source.movement {
                                         audio::source::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2203,11 +2049,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         }
 
                         // Update local copy.
-                        let soundscape = sources[i].audio.role
-                            .as_mut()
-                            .expect("no role was assigned")
-                            .soundscape_mut()
-                            .expect("role was not soundscape");
+                        let soundscape = expect_soundscape_mut(sources, &id);
                         let generative = audio::source::movement::Generative::Agent(agent.clone());
                         let movement = audio::source::Movement::Generative(generative);
                         soundscape.movement = movement.clone();
@@ -2218,7 +2060,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             .soundscape
                             .send(move |soundscape| {
                                 // Update all active sounds.
-                                soundscape.update_active_sounds_with_source(source_id, |_, sound| {
+                                soundscape.update_active_sounds_with_source(id, |_, sound| {
                                     let gen = match sound.movement {
                                         soundscape::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2231,7 +2073,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                                 });
 
                                 // Update the source.
-                                soundscape.update_source(&source_id, |source| {
+                                soundscape.update_source(&id, |source| {
                                     let gen = match source.movement {
                                         audio::source::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2246,6 +2088,72 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             .ok();
                     }
 
+                    //////////////////
+                    // Max Rotation //
+                    //////////////////
+
+                    widget::Text::new("Max Rotation")
+                        .mid_left_of(ids.source_editor_selected_soundscape_canvas)
+                        .down(PAD * 2.0)
+                        .font_size(SMALL_FONT_SIZE)
+                        .set(ids.source_editor_selected_soundscape_movement_agent_max_rotation_text, ui);
+
+                    let min = agent.max_rotation.min;
+                    let max = agent.max_rotation.max;
+                    let total_min = 0.0;
+                    let total_max = audio::source::movement::MAX_ROTATION;
+                    let label = format!("{:.2} to {:.2} radians per second", min, max);
+                    for (edge, value) in range_slider(min, max, total_min, total_max)
+                        .skew(audio::source::movement::MAX_ROTATION_SKEW)
+                        .align_left()
+                        .label(&label)
+                        .down(PAD * 2.0)
+                        .set(ids.source_editor_selected_soundscape_movement_agent_max_rotation_slider, ui)
+                    {
+                        match edge {
+                            widget::range_slider::Edge::Start => agent.max_rotation.min = value,
+                            widget::range_slider::Edge::End => agent.max_rotation.max = value,
+                        }
+
+                        // Update local copy.
+                        let soundscape = expect_soundscape_mut(sources, &id);
+                        let generative = audio::source::movement::Generative::Agent(agent.clone());
+                        let movement = audio::source::Movement::Generative(generative);
+                        soundscape.movement = movement.clone();
+
+                        // Update the soundsape thread copy.
+                        let new_max_rotation = agent.max_rotation;
+                        channels
+                            .soundscape
+                            .send(move |soundscape| {
+                                // Update all active sounds.
+                                soundscape.update_active_sounds_with_source(id, |_, sound| {
+                                    let gen = match sound.movement {
+                                        soundscape::Movement::Generative(ref mut gen) => gen,
+                                        _ => return,
+                                    };
+                                    let agent = match *gen {
+                                        soundscape::movement::Generative::Agent(ref mut agent) => agent,
+                                        _ => return,
+                                    };
+                                    agent.max_rotation = new_max_rotation.clamp(agent.max_rotation);
+                                });
+
+                                // Update the source.
+                                soundscape.update_source(&id, |source| {
+                                    let gen = match source.movement {
+                                        audio::source::Movement::Generative(ref mut gen) => gen,
+                                        _ => return,
+                                    };
+                                    let agent = match *gen {
+                                        audio::source::movement::Generative::Agent(ref mut agent) => agent,
+                                        _ => return,
+                                    };
+                                    agent.max_rotation = new_max_rotation;
+                                });
+                            })
+                            .ok();
+                    }
                 },
 
                 // Ngon-specific widgets.
@@ -2280,11 +2188,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         }
 
                         // Update local copy.
-                        let soundscape = sources[i].audio.role
-                            .as_mut()
-                            .expect("no role was assigned")
-                            .soundscape_mut()
-                            .expect("role was not soundscape");
+                        let soundscape = expect_soundscape_mut(sources, &id);
                         let generative = audio::source::movement::Generative::Ngon(ngon.clone());
                         let movement = audio::source::Movement::Generative(generative);
                         soundscape.movement = movement.clone();
@@ -2295,7 +2199,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             .soundscape
                             .send(move |soundscape| {
                                 // Update all active sounds.
-                                soundscape.update_active_sounds_with_source(source_id, |_, sound| {
+                                soundscape.update_active_sounds_with_source(id, |_, sound| {
                                     let gen = match sound.movement {
                                         soundscape::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2308,7 +2212,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                                 });
 
                                 // Update the source.
-                                soundscape.update_source(&source_id, |source| {
+                                soundscape.update_source(&id, |source| {
                                     let gen = match source.movement {
                                         audio::source::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2352,11 +2256,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         }
 
                         // Update local copy.
-                        let soundscape = sources[i].audio.role
-                            .as_mut()
-                            .expect("no role was assigned")
-                            .soundscape_mut()
-                            .expect("role was not soundscape");
+                        let soundscape = expect_soundscape_mut(sources, &id);
                         let generative = audio::source::movement::Generative::Ngon(ngon.clone());
                         let movement = audio::source::Movement::Generative(generative);
                         soundscape.movement = movement.clone();
@@ -2367,7 +2267,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             .soundscape
                             .send(move |soundscape| {
                                 // Update all active sounds.
-                                soundscape.update_active_sounds_with_source(source_id, |_, sound| {
+                                soundscape.update_active_sounds_with_source(id, |_, sound| {
                                     let gen = match sound.movement {
                                         soundscape::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2380,7 +2280,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                                 });
 
                                 // Update the source.
-                                soundscape.update_source(&source_id, |source| {
+                                soundscape.update_source(&id, |source| {
                                     let gen = match source.movement {
                                         audio::source::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2426,11 +2326,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         .set(ids.source_editor_selected_soundscape_movement_ngon_width_slider, ui)
                     {
                         // Update local copy.
-                        let soundscape = sources[i].audio.role
-                            .as_mut()
-                            .expect("no role was assigned")
-                            .soundscape_mut()
-                            .expect("role was not soundscape");
+                        let soundscape = expect_soundscape_mut(sources, &id);
                         if let audio::source::Movement::Generative(ref mut gen) = soundscape.movement {
                             if let audio::source::movement::Generative::Ngon(ref mut ngon) = *gen {
                                 ngon.normalised_dimensions.x = new_width;
@@ -2442,7 +2338,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             .soundscape
                             .send(move |soundscape| {
                                 // Update all active sounds.
-                                soundscape.update_active_sounds_with_source(source_id, |_, sound| {
+                                soundscape.update_active_sounds_with_source(id, |_, sound| {
                                     let gen = match sound.movement {
                                         soundscape::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2454,7 +2350,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                                     ngon.normalised_dimensions.x = new_width;
                                 });
                                 // Update the source.
-                                soundscape.update_source(&source_id, |source| {
+                                soundscape.update_source(&id, |source| {
                                     let gen = match source.movement {
                                         audio::source::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2481,11 +2377,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         .set(ids.source_editor_selected_soundscape_movement_ngon_height_slider, ui)
                     {
                         // Update local copy.
-                        let soundscape = sources[i].audio.role
-                            .as_mut()
-                            .expect("no role was assigned")
-                            .soundscape_mut()
-                            .expect("role was not soundscape");
+                        let soundscape = expect_soundscape_mut(sources, &id);
                         if let audio::source::Movement::Generative(ref mut gen) = soundscape.movement {
                             if let audio::source::movement::Generative::Ngon(ref mut ngon) = *gen {
                                 ngon.normalised_dimensions.y = new_height;
@@ -2497,7 +2389,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             .soundscape
                             .send(move |soundscape| {
                                 // Update all active sounds.
-                                soundscape.update_active_sounds_with_source(source_id, |_, sound| {
+                                soundscape.update_active_sounds_with_source(id, |_, sound| {
                                     let gen = match sound.movement {
                                         soundscape::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2509,7 +2401,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                                     ngon.normalised_dimensions.y = new_height;
                                 });
                                 // Update the source.
-                                soundscape.update_source(&source_id, |source| {
+                                soundscape.update_source(&id, |source| {
                                     let gen = match source.movement {
                                         audio::source::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2551,11 +2443,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         }
 
                         // Update local copy.
-                        let soundscape = sources[i].audio.role
-                            .as_mut()
-                            .expect("no role was assigned")
-                            .soundscape_mut()
-                            .expect("role was not soundscape");
+                        let soundscape = expect_soundscape_mut(sources, &id);
                         let generative = audio::source::movement::Generative::Ngon(ngon.clone());
                         let movement = audio::source::Movement::Generative(generative);
                         soundscape.movement = movement.clone();
@@ -2566,7 +2454,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             .soundscape
                             .send(move |soundscape| {
                                 // Update all active sounds.
-                                soundscape.update_active_sounds_with_source(source_id, |_, sound| {
+                                soundscape.update_active_sounds_with_source(id, |_, sound| {
                                     let gen = match sound.movement {
                                         soundscape::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2579,7 +2467,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                                 });
 
                                 // Update the source.
-                                soundscape.update_source(&source_id, |source| {
+                                soundscape.update_source(&id, |source| {
                                     let gen = match source.movement {
                                         audio::source::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2622,11 +2510,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                         }
 
                         // Update local copy.
-                        let soundscape = sources[i].audio.role
-                            .as_mut()
-                            .expect("no role was assigned")
-                            .soundscape_mut()
-                            .expect("role was not soundscape");
+                        let soundscape = expect_soundscape_mut(sources, &id);
                         let generative = audio::source::movement::Generative::Ngon(ngon.clone());
                         let movement = audio::source::Movement::Generative(generative);
                         soundscape.movement = movement.clone();
@@ -2637,7 +2521,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                             .soundscape
                             .send(move |soundscape| {
                                 // Update all active sounds.
-                                soundscape.update_active_sounds_with_source(source_id, |_, sound| {
+                                soundscape.update_active_sounds_with_source(id, |_, sound| {
                                     let gen = match sound.movement {
                                         soundscape::Movement::Generative(ref mut gen) => gen,
                                         _ => return,
@@ -2650,7 +2534,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
                                 });
 
                                 // Update the source.
-                                soundscape.update_source(&source_id, |source| {
+                                soundscape.update_source(&id, |source| {
                                     let gen = match source.movement {
                                         audio::source::Movement::Generative(ref mut gen) => gen,
                                         _ => return,

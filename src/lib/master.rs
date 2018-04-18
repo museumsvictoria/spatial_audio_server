@@ -20,7 +20,7 @@ impl Default for Master {
         let volume = default_master_volume();
         let realtime_source_latency = default_realtime_source_latency();
         let dbap_rolloff_db = default_dbap_rolloff_db();
-        Parameters { volume, realtime_source_latency, dbap_rolloff_db }
+        Master { volume, realtime_source_latency, dbap_rolloff_db }
     }
 }
 

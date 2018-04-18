@@ -1,13 +1,12 @@
-use fxhash::FxHashMap;
-use gui::{self, collapsible_area, Channels, Gui};
+use gui::{self, collapsible_area, Channels, Gui, ProjectState, State};
 use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
 use installation;
-use nannou;
+use nannou::{self, ui};
 use nannou::osc::Connected;
-use nannou::ui;
 use nannou::ui::prelude::*;
 use osc;
-use std::{io, net, ops};
+use project::{self, Project};
+use std::{io, net};
 
 /// Runtime state relevant to the installation editor GUI.
 #[derive(Default)]
@@ -38,10 +37,17 @@ pub fn set(
         ref mut ui,
         ref ids,
         channels,
+        state: &mut State {
+            ref mut is_open,
+            ..
+        },
         ..
     } = *gui;
     let Project {
-        ref mut installations,
+        state: project::State {
+            ref mut installations,
+            ..
+        },
         ..
     } = *project;
     let ProjectState {
@@ -76,12 +82,12 @@ pub fn set(
     // padding.
     let installation_editor_h = LIST_HEIGHT + selected_canvas_h;
 
-    let (area, event) = collapsible_area(*is_open, "Installation Editor", ids.side_menu)
+    let (area, event) = collapsible_area(is_open.installation_editor, "Installation Editor", ids.side_menu)
         .align_middle_x_of(ids.side_menu)
         .down_from(last_area_id, 0.0)
         .set(ids.installation_editor, ui);
     if let Some(event) = event {
-        *is_open = event.is_open();
+        is_open.installation_editor = event.is_open();
     }
 
     // If the area is open, continue. If its closed, return the editor id as the last id.
@@ -106,7 +112,7 @@ pub fn set(
         .set(ids.installation_editor_list, ui);
 
     while let Some(event) = events.next(ui, |i| selected.as_ref().map(|s| s.index) == Some(i)) {
-        use self::ui::widget::list_select::Event;
+        use nannou::ui::widget::list_select::Event;
         match event {
             // Instantiate a button for each installation.
             Event::Item(item) => {
@@ -134,15 +140,14 @@ pub fn set(
 
             // Update the selected source.
             Event::Selection(index) => {
-                let installation =
-                    installation::Id::from_usize(index).expect("no installation for index");
-                let addresses = &computer_map[&installation];
+                let id = installation::Id::from_usize(index).expect("no installation for index");
+                let addresses = &installations[&id].computers;
                 let selected_computer = match addresses.len() {
                     0 => None,
                     _ => {
                         let computer = installation::computer::Id(0);
                         let (socket_string, osc_addr) = {
-                            let address = &computer_map[&installation][&computer];
+                            let address = &addresses[&computer];
                             (format!("{}", address.socket), address.osc_addr.clone())
                         };
                         Some(SelectedComputer {
@@ -191,7 +196,7 @@ pub fn set(
         ref mut index,
         ref mut selected_computer,
     } = *selected;
-    let installation = installation::Id::from_usize(*index).expect("no installation for index");
+    let id = installation::Id::from_usize(*index).expect("no installation for index");
 
     // The canvas for displaying the computer selection / editor.
     widget::Canvas::new()
@@ -215,7 +220,7 @@ pub fn set(
     }
 
     // A number dialer to control the number of computers in the installation.
-    let n_computers = computer_map[&installation].len();
+    let n_computers = installations[&id].computers.len();
     let min_cpus = 0.0;
     let max_cpus = 128.0;
     let precision = 0;
@@ -229,12 +234,12 @@ pub fn set(
         .set(ids.installation_editor_computer_number, ui)
     {
         let n = n as usize;
-        let computers = computer_map.get_mut(&installation).unwrap();
+        let installation = installations.get_mut(&id).unwrap();
         if n_computers < n {
             for i in n_computers..n {
                 let computer = installation::computer::Id(i);
                 let socket = "127.0.0.1:9002".parse().unwrap();
-                let osc_addr_base = installation.default_osc_addr_str();
+                let osc_addr_base = id.default_osc_addr_str();
                 let osc_addr = format!("/{}/{}", osc_addr_base, i);
                 let osc_tx = match osc_sender(&socket) {
                     Err(err) => {
@@ -243,21 +248,20 @@ pub fn set(
                     },
                     Ok(tx) => tx,
                 };
-                let add =
-                    osc::output::OscTarget::Add(installation, computer, osc_tx, osc_addr.clone());
+                let add = osc::output::OscTarget::Add(id, computer, osc_tx, osc_addr.clone());
                 let msg = osc::output::Message::Osc(add);
                 if channels.osc_out_msg_tx.send(msg).ok().is_some() {
-                    let addr = Address { socket, osc_addr };
-                    computers.insert(computer, addr);
+                    let addr = installation::computer::Address { socket, osc_addr };
+                    installation.computers.insert(computer, addr);
                 }
             }
         } else if n_computers > n {
             for i in n..n_computers {
                 let computer = installation::computer::Id(i);
-                let rem = osc::output::OscTarget::Remove(installation, computer);
+                let rem = osc::output::OscTarget::Remove(id, computer);
                 let msg = osc::output::Message::Osc(rem);
                 if channels.osc_out_msg_tx.send(msg).ok().is_some() {
-                    computers.remove(&computer);
+                    installation.computers.remove(&computer);
                 }
             }
             if selected_computer
@@ -271,7 +275,7 @@ pub fn set(
     }
 
     // Display the computer list for this installation.
-    let n_computers = computer_map[&installation].len();
+    let n_computers = installations[&id].computers.len();
     let (mut events, scrollbar) = widget::ListSelect::single(n_computers)
         .item_size(ITEM_HEIGHT)
         .h(COMPUTER_LIST_HEIGHT)
@@ -296,7 +300,7 @@ pub fn set(
                 } else {
                     color::BLACK
                 };
-                let addr = &computer_map[&installation][&computer];
+                let addr = &installations[&id].computers[&computer];
                 let label = format!("{} {}", addr.socket, addr.osc_addr);
 
                 // Use `Button`s for the selectable items.
@@ -313,7 +317,7 @@ pub fn set(
             // Update the selected source.
             Event::Selection(index) => {
                 let computer = installation::computer::Id(index);
-                let addr = &computer_map[&installation][&computer];
+                let addr = &installations[&id].computers[&computer];
                 let socket_string = format!("{}", addr.socket);
                 let osc_addr = addr.osc_addr.clone();
                 *selected_computer = Some(SelectedComputer {
@@ -354,10 +358,10 @@ pub fn set(
         .set(ids.installation_editor_osc_text, ui);
 
     fn update_addr(
-        installation: installation::Id,
+        id: installation::Id,
         selected: &SelectedComputer,
         channels: &Channels,
-        computer_map: &mut ComputerMap,
+        computers: &mut installation::Computers,
     ) {
         let socket = match selected.socket_string.parse() {
             Ok(s) => s,
@@ -375,21 +379,18 @@ pub fn set(
         };
         let osc_addr = selected.osc_addr.clone();
         let add =
-            osc::output::OscTarget::Add(installation, selected.computer, osc_tx, osc_addr.clone());
+            osc::output::OscTarget::Add(id, selected.computer, osc_tx, osc_addr.clone());
         let msg = osc::output::Message::Osc(add);
         if channels.osc_out_msg_tx.send(msg).ok().is_some() {
-            let addr = Address { socket, osc_addr };
-            computer_map
-                .get_mut(&installation)
-                .unwrap()
-                .insert(selected.computer, addr);
+            let addr = installation::computer::Address { socket, osc_addr };
+            computers.insert(selected.computer, addr);
         }
     }
 
     // The textbox for editing the OSC output IP address.
     let color = match selected_computer.socket_string.parse::<net::SocketAddrV4>() {
         Ok(socket) => {
-            match installations[&installation].computers[&selected_computer.computer].socket == socket {
+            match installations[&id].computers[&selected_computer.computer].socket == socket {
                 true => color::BLACK,
                 false => color::DARK_GREEN.with_luminance(0.1),
             }
@@ -409,7 +410,8 @@ pub fn set(
         use nannou::ui::conrod::widget::text_box::Event;
         match event {
             Event::Enter => {
-                update_addr(installation, &selected_computer, channels, computer_map);
+                let computers = &mut installations.get_mut(&id).unwrap().computers;
+                update_addr(id, &selected_computer, channels, computers);
             }
             Event::Update(new_string) => {
                 selected_computer.socket_string = new_string;
@@ -430,7 +432,8 @@ pub fn set(
         use nannou::ui::conrod::widget::text_box::Event;
         match event {
             Event::Enter => {
-                update_addr(installation, &selected_computer, channels, computer_map);
+                let computers = &mut installations.get_mut(&id).unwrap().computers;
+                update_addr(id, &selected_computer, channels, computers);
             }
             Event::Update(new_string) => {
                 selected_computer.osc_addr = new_string;
@@ -459,7 +462,7 @@ pub fn set(
     // SIMULTANEOUS SOUNDS //
     /////////////////////////
 
-    let range = installations[&installation].soundscape.simultaneous_sounds;
+    let range = installations[&id].soundscape.simultaneous_sounds;
     let label = format!("{} to {} sounds at once", range.min, range.max);
     let total_min_num = 0.0;
     let total_max_num = 100.0;
@@ -482,7 +485,7 @@ pub fn set(
 
         // Update the local copy.
         let new_range = {
-            let installation = installations.get_mut(&installation).unwrap();
+            let installation = installations.get_mut(&id).unwrap();
             match edge {
                 widget::range_slider::Edge::Start => {
                     installation.soundscape.simultaneous_sounds.min = num;
@@ -496,7 +499,7 @@ pub fn set(
 
         // Update the soundscape copy.
         channels.soundscape.send(move |soundscape| {
-            soundscape.update_installation(&installation, |installation| {
+            soundscape.update_installation(&id, |installation| {
                 installation.simultaneous_sounds = new_range;
             });
         }).ok();
