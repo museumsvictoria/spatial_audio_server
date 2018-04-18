@@ -1,6 +1,6 @@
 use audio;
 use fxhash::FxHashMap;
-use installation::Installation;
+use installation;
 use metres::Metres;
 use nannou::prelude::*;
 use nannou::rand::Rng;
@@ -32,6 +32,8 @@ pub struct Agent {
     pub max_speed: f64,
     /// Used to limit the magnitude of the steering force.
     pub max_force: f64,
+    /// The maximum rotation that can be applied to the agent in radians per second.
+    pub max_rotation: f64,
 }
 
 /// Information about an installation required by the Agent.
@@ -49,16 +51,17 @@ pub struct InstallationData {
 }
 
 /// A map of installation data relevant to the agent.
-pub type InstallationDataMap = FxHashMap<Installation, InstallationData>;
+pub type InstallationDataMap = FxHashMap<installation::Id, InstallationData>;
 
 impl Agent {
     /// Generate a new agent starting in the given installation area.
     pub fn generate<R>(
         mut rng: R,
-        start_installation: Installation,
+        start_installation: installation::Id,
         installations: &InstallationDataMap,
         max_speed: f64,
         max_force: f64,
+        max_rotation: f64,
     ) -> Self
     where
         R: Rng,
@@ -82,6 +85,7 @@ impl Agent {
             velocity,
             max_speed,
             max_force,
+            max_rotation,
         };
         agent
     }
@@ -110,9 +114,29 @@ impl Agent {
 
     /// Applies the given force to the agent, updating its internal state appropriately.
     pub fn apply_force(&mut self, force: Vector, delta_time: &time::Duration) {
-        let new_velocity = vt2::to_f64(self.velocity) + vt2::to_f64(force);
-        self.velocity = vt2::to_metres(new_velocity);
+        use std::f64::consts::PI;
+
         let delta_secs = duration_to_secs(delta_time);
+        let new_velocity = vt2::to_f64(self.velocity) + vt2::to_f64(force);
+
+        fn is_counter_clockwise(b: Vector2<f64>, c: Vector2<f64>) -> bool {
+             (b.x * c.y - b.y * c.x) > 0.0
+        }
+
+        // Limit `new_velocity` by max_rotation TODO: There must be a way to simplify this.
+        let new_magnitude = new_velocity.magnitude();
+        let radians_start = self.velocity.y.0.atan2(self.velocity.x.0);
+        let radians_end = new_velocity.y.atan2(new_velocity.x);
+        let delta_radians = radians_end - radians_start;
+        let abs_delta_radians = delta_radians.min(utils::fmod(-delta_radians, 2.0 * PI)).abs();
+        let abs_delta_radians_limited = abs_delta_radians.min(delta_secs * self.max_rotation);
+        let is_left = is_counter_clockwise(vt2::to_f64(self.velocity), new_velocity);
+        let delta_radians_limited = abs_delta_radians_limited * if is_left { 1.0 } else { -1.0 };
+        let radians_end_limited = radians_start + delta_radians_limited;
+        let (new_vx, new_vy) = utils::rad_mag_to_x_y(radians_end_limited, new_magnitude);
+        let new_velocity = vec2(new_vx, new_vy);
+
+        self.velocity = vt2::to_metres(new_velocity);
         self.location = pt2::to_metres(pt2::to_f64(self.location) + new_velocity * delta_secs);
     }
 
@@ -178,7 +202,7 @@ fn should_pick_new_target(
 fn closest_installation(
     p: Point,
     installations: &InstallationDataMap,
-) -> Option<(&Installation, &InstallationData)> {
+) -> Option<(&installation::Id, &InstallationData)> {
     let mut iter = installations.iter();
     iter.next()
         .map(|first| {

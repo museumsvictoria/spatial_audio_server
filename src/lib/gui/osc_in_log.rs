@@ -1,15 +1,20 @@
 use gui::{collapsible_area, info_text, Gui};
 use nannou::ui::prelude::*;
+use project::Project;
 
-pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
-    let is_open = gui.state.osc_in_log_is_open;
+pub fn set(
+    last_area_id: widget::Id,
+    gui: &mut Gui,
+    project: &Project,
+) -> widget::Id {
+    let is_open = gui.state.is_open.osc_in_log;
     let log_canvas_h = 200.0;
     let (area, event) = collapsible_area(is_open, "OSC Input Log", gui.ids.side_menu)
         .align_middle_x_of(gui.ids.side_menu)
         .down_from(last_area_id, 0.0)
         .set(gui.ids.osc_in_log, gui);
     if let Some(event) = event {
-        gui.state.osc_in_log_is_open = event.is_open();
+        gui.state.is_open.osc_in_log = event.is_open();
     }
     if let Some(area) = area {
         // The canvas on which the log will be placed.
@@ -23,7 +28,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
         let log_string = match gui.state.osc_in_log.len() {
             0 => format!(
                 "No messages received yet.\nListening on port {}...",
-                gui.state.config.osc_input_port
+                project.config.osc_input_port
             ),
             _ => gui.state.osc_in_log.format(),
         };

@@ -1,9 +1,0 @@
-# The initial window size.
-window_width = 1280
-window_height = 720
-# The port used to listen for OSC messages.
-osc_input_port = 9001
-# The number of messages stored in the log before they are dropped.
-osc_log_limit = 50
-interaction_log_limit = 50
-floorplan_pixels_per_metre = 94.0

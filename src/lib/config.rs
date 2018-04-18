@@ -1,80 +1,36 @@
-use metres::Metres;
-use std;
-use std::path::Path;
-use toml;
-use utils::Seed;
+use project;
+use std::ops::Deref;
 
-/// Various configuration parameters for the audio_server loaded on startup.
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq)]
+/// Various configuration parameters for a single project.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Config {
-    #[serde(default = "default::window_width")]
-    pub window_width: u32,
-    #[serde(default = "default::window_height")]
-    pub window_height: u32,
-    #[serde(default = "default::osc_input_port")]
-    pub osc_input_port: u16,
-    #[serde(default = "default::osc_input_log_limit")]
-    pub osc_input_log_limit: usize,
-    #[serde(default = "default::osc_output_log_limit")]
-    pub osc_output_log_limit: usize,
-    #[serde(default = "default::interaction_log_limit")]
-    pub interaction_log_limit: usize,
-    #[serde(default = "default::floorplan_pixels_per_metre")]
-    pub floorplan_pixels_per_metre: f64,
-    #[serde(default = "default::min_speaker_radius_metres")]
-    pub min_speaker_radius_metres: Metres,
-    #[serde(default = "default::max_speaker_radius_metres")]
-    pub max_speaker_radius_metres: Metres,
-    #[serde(default = "default::seed")]
-    pub seed: Seed,
+    /// The default configuration for a project.
+    #[serde(default)]
+    pub project_default: project::Config,
+    /// The directory stem of the selected project.
+    #[serde(default = "default::project_slug")]
+    pub selected_project_slug: String,
 }
 
-// Fallback parameters in the case that they are missing from the file or invalid.
-pub mod default {
-    use metres::Metres;
-    use utils::Seed;
-
-    pub fn window_width() -> u32 {
-        1280
-    }
-    pub fn window_height() -> u32 {
-        720
-    }
-    pub fn osc_input_port() -> u16 {
-        9001
-    }
-    pub fn osc_input_log_limit() -> usize {
-        50
-    }
-    pub fn osc_output_log_limit() -> usize {
-        10
-    }
-    pub fn interaction_log_limit() -> usize {
-        50
-    }
-    pub fn floorplan_pixels_per_metre() -> f64 {
-        148.0
-    }
-    pub fn min_speaker_radius_metres() -> Metres {
-        Metres(0.25)
-    }
-    pub fn max_speaker_radius_metres() -> Metres {
-        Metres(1.0)
-    }
-
-    pub fn seed() -> Seed {
-        [0, 0, 0, 0]
+impl Default for Config {
+    fn default() -> Self {
+        let project_default = Default::default();
+        let selected_project_slug = default::project_slug();
+        Config { project_default, selected_project_slug }
     }
 }
 
-/// Load the `Config` from the toml file at the given path.
-pub fn load(path: &Path) -> Result<Config, std::io::Error> {
-    // Load the `toml` string from the given file.
-    let mut file = std::fs::File::open(&path)?;
-    let mut contents = Vec::new();
-    std::io::Read::read_to_end(&mut file, &mut contents)?;
-    let toml_str = std::str::from_utf8(&contents[..]).unwrap();
+impl Deref for Config {
+    type Target = project::Config;
+    fn deref(&self) -> &Self::Target {
+        &self.project_default
+    }
+}
 
-    // Parse the `String` into a `Toml` type.
-    Ok(toml::from_str(toml_str).unwrap())
+mod default {
+    use project;
+    use slug::slugify;
+    pub fn project_slug() -> String {
+        slugify(project::default_project_name())
+    }
 }

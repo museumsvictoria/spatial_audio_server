@@ -1,5 +1,5 @@
 use nannou::math::map_range;
-use nannou::math::num_traits::NumCast;
+use nannou::math::num_traits::{Float, NumCast};
 use serde;
 use serde_json;
 use std::{cmp, fmt, fs, io};
@@ -141,33 +141,39 @@ pub fn duration_to_secs(d: &time::Duration) -> f64 {
 
 /// Errors that might occur when saving a file.
 #[derive(Debug)]
-pub enum FileError {
+pub enum FileError<E> {
     Io(io::Error),
-    Json(serde_json::Error),
+    Format(E),
 }
 
-impl From<io::Error> for FileError {
+impl<E> From<io::Error> for FileError<E> {
     fn from(err: io::Error) -> Self {
         FileError::Io(err)
     }
 }
 
-impl From<serde_json::Error> for FileError {
+impl From<serde_json::Error> for FileError<serde_json::Error> {
     fn from(err: serde_json::Error) -> Self {
-        FileError::Json(err)
+        FileError::Format(err)
     }
 }
 
-impl Error for FileError {
+impl<E> Error for FileError<E>
+where
+    E: Error,
+{
     fn description(&self) -> &str {
         match *self {
             FileError::Io(ref err) => err.description(),
-            FileError::Json(ref err) => err.description(),
+            FileError::Format(ref err) => err.description(),
         }
     }
 }
 
-impl fmt::Display for FileError {
+impl<E> fmt::Display for FileError<E>
+where
+    E: Error,
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.description())
     }
@@ -206,7 +212,7 @@ pub fn safe_file_save(path: &Path, content: &[u8]) -> io::Result<()> {
 }
 
 /// A generic function for safely saving a serializable type to a JSON file.
-pub fn save_to_json<T>(json_path: &Path, t: &T) -> Result<(), FileError>
+pub fn save_to_json<T>(json_path: &Path, t: &T) -> Result<(), FileError<serde_json::Error>>
 where
     T: serde::Serialize,
 {
@@ -227,7 +233,7 @@ where
 }
 
 /// A generic funtion for loading a type from a JSON file.
-pub fn load_from_json<'a, T>(json_path: &Path) -> Result<T, FileError>
+pub fn load_from_json<'a, T>(json_path: &Path) -> Result<T, FileError<serde_json::Error>>
 where
     T: for<'de> serde::Deserialize<'de>,
 {
@@ -268,6 +274,16 @@ pub fn rad_mag_to_x_y(rad: f64, mag: f64) -> (f64, f64) {
     let x = rad.cos() * mag;
     let y = rad.sin() * mag;
     (x, y)
+}
+
+/// Models the CPP fmod function.
+#[inline]
+pub fn fmod<F>(numer: F, denom: F) -> F
+where
+    F: Float,
+{
+    let rquot: F = (numer / denom).floor();
+    numer - rquot * denom
 }
 
 pub mod pt2 {

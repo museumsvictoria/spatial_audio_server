@@ -1,6 +1,6 @@
 use audio::{input, output, source, Source, SAMPLE_RATE};
 use fxhash::FxHashSet;
-use installation::Installation;
+use installation;
 use metres::Metres;
 use nannou::math::Point2;
 use std::ops;
@@ -127,11 +127,6 @@ impl Handle {
     /// The ID of the source used to generate this sound.
     pub fn source_id(&self) -> source::Id {
         self.shared.source_id
-    }
-
-    /// The ID of the sound associated with this handle.
-    pub fn id(&self) -> Id {
-        self.shared.id
     }
 }
 
@@ -415,17 +410,12 @@ impl Sound {
     pub fn source_id(&self) -> source::Id {
         self.shared.source_id
     }
-
-    /// The ID of the sound associated with this handle.
-    pub fn id(&self) -> Id {
-        self.shared.id
-    }
 }
 
 #[derive(Debug)]
 pub enum Installations {
     All,
-    Set(FxHashSet<Installation>),
+    Set(FxHashSet<installation::Id>),
 }
 
 impl From<Option<source::Role>> for Installations {

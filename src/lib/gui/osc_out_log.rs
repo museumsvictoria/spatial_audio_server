@@ -1,15 +1,18 @@
 use gui::{collapsible_area, info_text, Gui};
 use nannou::ui::prelude::*;
 
-pub fn set(last_area_id: widget::Id, gui: &mut Gui) -> widget::Id {
-    let is_open = gui.state.osc_out_log_is_open;
+pub fn set(
+    last_area_id: widget::Id,
+    gui: &mut Gui,
+) -> widget::Id {
+    let is_open = gui.state.is_open.osc_out_log;
     let log_canvas_h = 200.0;
     let (area, event) = collapsible_area(is_open, "OSC Output Log", gui.ids.side_menu)
         .align_middle_x_of(gui.ids.side_menu)
         .down_from(last_area_id, 0.0)
         .set(gui.ids.osc_out_log, gui);
     if let Some(event) = event {
-        gui.state.osc_out_log_is_open = event.is_open();
+        gui.state.is_open.osc_out_log = event.is_open();
     }
     if let Some(area) = area {
         // The canvas on which the log will be placed.
