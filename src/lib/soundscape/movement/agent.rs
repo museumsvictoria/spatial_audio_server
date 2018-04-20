@@ -34,6 +34,9 @@ pub struct Agent {
     pub max_force: f64,
     /// The maximum rotation that can be applied to the agent in radians per second.
     pub max_rotation: f64,
+    /// Specifies whether or not the orientation of the agent should be summed onto the channel
+    /// radians.
+    pub directional: bool,
 }
 
 /// Information about an installation required by the Agent.
@@ -62,6 +65,7 @@ impl Agent {
         max_speed: f64,
         max_force: f64,
         max_rotation: f64,
+        directional: bool,
     ) -> Self
     where
         R: Rng,
@@ -88,16 +92,21 @@ impl Agent {
             max_speed,
             max_force,
             max_rotation,
+            directional,
         };
         agent
     }
 
     /// The current location and orientation of the **Agent** for use within the audio engine's
-    /// DBAP calculations..
+    /// DBAP calculations.
     pub fn position(&self) -> audio::sound::Position {
         let point = self.location;
-        let vel = vt2::to_f64(self.velocity);
-        let radians = vel.y.atan2(vel.x) as f32;
+        let radians = if self.directional {
+            let vel = vt2::to_f64(self.velocity);
+            vel.y.atan2(vel.x) as f32
+        } else {
+            0.0
+        };
         audio::sound::Position { point, radians }
     }
 

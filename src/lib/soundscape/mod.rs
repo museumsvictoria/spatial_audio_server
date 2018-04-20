@@ -860,6 +860,7 @@ fn generate_movement(
                     max_speed,
                     max_force,
                     max_rotation,
+                    agent.directional,
                 );
                 let generative = movement::Generative::Agent(agent);
                 let movement = Movement::Generative(generative);

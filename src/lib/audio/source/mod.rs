@@ -213,12 +213,18 @@ pub mod movement {
     #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
     pub struct Agent {
         /// The maximum speed (metres per second) that the agent may reach.
+        #[serde(default = "super::default::max_speed")]
         pub max_speed: Range<f64>,
         /// The maximum amount of force (metres per second squared) that may be applied to the
         /// agent.
+        #[serde(default = "super::default::max_force")]
         pub max_force: Range<f64>,
         /// The maximum amount of rotation in radians per second that may be applied to the agent.
+        #[serde(default = "super::default::max_rotation")]
         pub max_rotation: Range<f64>,
+        /// Whether or not the agent's orientation should be applied to channel rotation.
+        #[serde(default = "super::default::directional")]
+        pub directional: bool,
     }
 
     /// A generative movement kind that traces the vertices of an n-sided polygon.
@@ -632,10 +638,12 @@ pub mod default {
         min: super::movement::MAX_ROTATION,
         max: super::movement::MAX_ROTATION,
     };
+    pub const DIRECTIONAL: bool = true;
     pub const AGENT: movement::Agent = movement::Agent {
         max_speed: MAX_SPEED,
         max_force: MAX_FORCE,
         max_rotation: MAX_ROTATION,
+        directional: DIRECTIONAL,
     };
     pub const VERTICES: Range<usize> = Range { min: 3, max: 8 };
     pub const NTH: Range<usize> = Range { min: 1, max: 3 };
@@ -698,6 +706,22 @@ pub mod default {
 
     pub fn radians_offset() -> Range<f64> {
         RADIANS_OFFSET
+    }
+
+    pub fn max_speed() -> Range<f64> {
+        MAX_SPEED
+    }
+
+    pub fn max_force() -> Range<f64> {
+        MAX_FORCE
+    }
+
+    pub fn max_rotation() -> Range<f64> {
+        MAX_ROTATION
+    }
+
+    pub fn directional() -> bool {
+        DIRECTIONAL
     }
 }
 
