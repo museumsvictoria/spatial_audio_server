@@ -28,7 +28,7 @@ pub const MAX_CHANNELS: usize = 128;
 pub const MAX_CHANNELS: usize = 2;
 
 /// The desired sample rate of the output stream.
-pub const SAMPLE_RATE: f64 = 44_100.0;
+pub const SAMPLE_RATE: f64 = 48_000.0;
 
 /// The desired number of frames requested at a time.
 pub const FRAMES_PER_BUFFER: usize = 64;

@@ -34,6 +34,9 @@ pub struct Agent {
     pub max_force: f64,
     /// The maximum rotation that can be applied to the agent in radians per second.
     pub max_rotation: f64,
+    /// Specifies whether or not the orientation of the agent should be summed onto the channel
+    /// radians.
+    pub directional: bool,
 }
 
 /// Information about an installation required by the Agent.
@@ -62,18 +65,21 @@ impl Agent {
         max_speed: f64,
         max_force: f64,
         max_rotation: f64,
+        directional: bool,
     ) -> Self
     where
         R: Rng,
     {
-        let location =
-            generate_installation_target(&mut rng, &installations[&start_installation].area);
+        let installation_data = installations
+            .get(&start_installation)
+            .expect("no `InstallationData` for given for `start_installation`");
+        let location = generate_installation_target(&mut rng, &installation_data.area);
         let target_location = generate_target(&mut rng, installations);
-        // TODO: Generate these based on "weight" or whatever user params are decided upon.
+        // Generate these based on "weight" or whatever user params are decided upon.
         let start_magnitude = rng.gen::<f64>() * max_speed;
         let desired_velocity = desired_velocity(location, target_location);
         let desired_radians = desired_velocity.y.0.atan2(desired_velocity.x.0);
-        // TODO: Generate initial angle and create velocity from this.
+        // Generate initial angle and create velocity from this.
         let initial_radians = desired_radians + rng.gen::<f64>() * 2.0 - 1.0;
         let velocity = {
             let (vx, vy) = utils::rad_mag_to_x_y(initial_radians, start_magnitude);
@@ -86,16 +92,21 @@ impl Agent {
             max_speed,
             max_force,
             max_rotation,
+            directional,
         };
         agent
     }
 
     /// The current location and orientation of the **Agent** for use within the audio engine's
-    /// DBAP calculations..
+    /// DBAP calculations.
     pub fn position(&self) -> audio::sound::Position {
         let point = self.location;
-        let vel = vt2::to_f64(self.velocity);
-        let radians = vel.y.atan2(vel.x) as f32;
+        let radians = if self.directional {
+            let vel = vt2::to_f64(self.velocity);
+            vel.y.atan2(vel.x) as f32
+        } else {
+            0.0
+        };
         audio::sound::Position { point, radians }
     }
 
@@ -117,7 +128,7 @@ impl Agent {
         use std::f64::consts::PI;
 
         let delta_secs = duration_to_secs(delta_time);
-        let new_velocity = vt2::to_f64(self.velocity) + vt2::to_f64(force);
+        let mut new_velocity = vt2::to_f64(self.velocity) + vt2::to_f64(force);
 
         fn is_counter_clockwise(b: Vector2<f64>, c: Vector2<f64>) -> bool {
              (b.x * c.y - b.y * c.x) > 0.0
@@ -128,13 +139,16 @@ impl Agent {
         let radians_start = self.velocity.y.0.atan2(self.velocity.x.0);
         let radians_end = new_velocity.y.atan2(new_velocity.x);
         let delta_radians = radians_end - radians_start;
-        let abs_delta_radians = delta_radians.min(utils::fmod(-delta_radians, 2.0 * PI)).abs();
-        let abs_delta_radians_limited = abs_delta_radians.min(delta_secs * self.max_rotation);
-        let is_left = is_counter_clockwise(vt2::to_f64(self.velocity), new_velocity);
-        let delta_radians_limited = abs_delta_radians_limited * if is_left { 1.0 } else { -1.0 };
-        let radians_end_limited = radians_start + delta_radians_limited;
-        let (new_vx, new_vy) = utils::rad_mag_to_x_y(radians_end_limited, new_magnitude);
-        let new_velocity = vec2(new_vx, new_vy);
+        let abs_delta_radians = delta_radians.abs().min(utils::fmod(-delta_radians.abs(), 2.0 * PI));
+        let max_delta_radians = delta_secs * self.max_rotation;
+        if max_delta_radians < abs_delta_radians {
+            let abs_delta_radians_limited = abs_delta_radians.min(max_delta_radians);
+            let is_left = is_counter_clockwise(vt2::to_f64(self.velocity), new_velocity);
+            let delta_radians_limited = abs_delta_radians_limited * if is_left { 1.0 } else { -1.0 };
+            let radians_end_limited = radians_start + delta_radians_limited;
+            let (new_vx, new_vy) = utils::rad_mag_to_x_y(radians_end_limited, new_magnitude);
+            new_velocity = vec2(new_vx, new_vy);
+        }
 
         self.velocity = vt2::to_metres(new_velocity);
         self.location = pt2::to_metres(pt2::to_f64(self.location) + new_velocity * delta_secs);

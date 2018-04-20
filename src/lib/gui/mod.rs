@@ -833,6 +833,7 @@ widget_ids! {
         source_editor_selected_soundscape_movement_agent_max_force_slider,
         source_editor_selected_soundscape_movement_agent_max_rotation_text,
         source_editor_selected_soundscape_movement_agent_max_rotation_slider,
+        source_editor_selected_soundscape_movement_agent_directional,
         source_editor_selected_soundscape_movement_ngon_speed_text,
         source_editor_selected_soundscape_movement_ngon_speed_slider,
         source_editor_selected_soundscape_movement_ngon_vertices_text,

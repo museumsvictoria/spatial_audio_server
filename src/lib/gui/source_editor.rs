@@ -1954,6 +1954,62 @@ pub fn set(
             match generative {
                 // Agent-specific widgets.
                 audio::source::movement::Generative::Agent(mut agent) => {
+                    /////////////////
+                    // Directional //
+                    /////////////////
+
+                    let on_off = if agent.directional { "ON" } else { "OFF" };
+                    let label = format!("Directional: {}", on_off);
+                    for new_directional in widget::Toggle::new(agent.directional)
+                        .label(&label)
+                        .label_font_size(SMALL_FONT_SIZE)
+                        .mid_left_of(ids.source_editor_selected_soundscape_canvas)
+                        .down(PAD * 2.0)
+                        .h(ITEM_HEIGHT)
+                        .w(canvas_kid_area.w())
+                        .color(ui::color::LIGHT_CHARCOAL)
+                        .set(ids.source_editor_selected_soundscape_movement_agent_directional, ui)
+                    {
+                        // Update local copy.
+                        agent.directional = new_directional;
+                        let generative = audio::source::movement::Generative::Agent(agent.clone());
+                        let movement = audio::source::Movement::Generative(generative);
+                        let soundscape = expect_soundscape_mut(sources, &id);
+                        soundscape.movement = movement.clone();
+
+                        // Update the soundsape thread copy.
+                        channels
+                            .soundscape
+                            .send(move |soundscape| {
+                                // Update all active sounds.
+                                soundscape.update_active_sounds_with_source(id, |_, sound| {
+                                    let gen = match sound.movement {
+                                        soundscape::Movement::Generative(ref mut gen) => gen,
+                                        _ => return,
+                                    };
+                                    let agent = match *gen {
+                                        soundscape::movement::Generative::Agent(ref mut agent) => agent,
+                                        _ => return,
+                                    };
+                                    agent.directional = new_directional;
+                                });
+
+                                // Update the source.
+                                soundscape.update_source(&id, |source| {
+                                    let gen = match source.movement {
+                                        audio::source::Movement::Generative(ref mut gen) => gen,
+                                        _ => return,
+                                    };
+                                    let agent = match *gen {
+                                        audio::source::movement::Generative::Agent(ref mut agent) => agent,
+                                        _ => return,
+                                    };
+                                    agent.directional = new_directional;
+                                });
+                            })
+                            .ok();
+                    }
+
                     ///////////////
                     // Max Speed //
                     ///////////////
