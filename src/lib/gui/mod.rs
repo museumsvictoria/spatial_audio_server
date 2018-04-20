@@ -1269,7 +1269,9 @@ fn set_widgets(
             ids.floorplan_speaker_labels.resize(num_speakers, id_gen);
         }
 
-        for (i, (&speaker_id, speaker)) in speakers.iter_mut().enumerate() {
+        let sorted_speakers = speaker_editor::sorted_speakers_vec(speakers);
+        for (i, speaker_id) in sorted_speakers.into_iter().enumerate() {
+            let speaker = speakers.get_mut(&speaker_id).unwrap();
             let widget_id = ids.floorplan_speakers[i];
             let label_widget_id = ids.floorplan_speaker_labels[i];
             let channel = speaker.audio.channel;

@@ -14,6 +14,13 @@ pub struct SpeakerEditor {
     pub selected: Option<usize>,
 }
 
+/// Convert the given map into a sorted list of speaker Id.
+pub fn sorted_speakers_vec(speakers: &project::Speakers) -> Vec<audio::speaker::Id> {
+    let mut speakers_vec: Vec<_> = speakers.keys().cloned().collect();
+    speakers_vec.sort_by(|a, b| a.0.cmp(&b.0));
+    speakers_vec
+}
+
 // Instantiate the sidebar speaker editor widgets.
 pub fn set(
     last_area_id: widget::Id,
