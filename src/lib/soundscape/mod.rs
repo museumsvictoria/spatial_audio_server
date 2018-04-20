@@ -410,6 +410,7 @@ impl Model {
             seed,
             playback_duration,
             installations,
+            &installation_areas,
             &mut target_sounds_per_installation,
         );
         let active_sound_positions = active_sound_positions(active_sounds);
@@ -486,6 +487,8 @@ impl Model {
         self.groups_last_used.clear();
         self.sources_last_used.clear();
         self.active_sounds.clear();
+        self.installation_speakers.clear();
+        self.installation_areas.clear();
     }
 }
 
@@ -948,12 +951,19 @@ fn update_installation_areas(
 //
 // We can determine this in a purely functional manner by using the playback duration as the phase
 // for a noise_walk signal.
+//
+// Note that an installation may not generate any sounds if it has no area (i.e. there are no
+// speakers assigned).
 fn installation_target_sounds(
     seed: Seed,
     playback_duration: &time::Duration,
     installation: &installation::Id,
     constraints: &installation::Soundscape,
+    installation_areas: &InstallationAreas,
 ) -> usize {
+    if !installation_areas.contains_key(installation) {
+        return 0;
+    }
     let playback_secs = duration_to_secs(playback_duration);
     // Update the target number of sounds very slowly. Say, once every 5 minutes.
     let hr_secs = 1.0 * 60.0 * 60.0;
@@ -982,15 +992,17 @@ fn update_target_sounds_per_installation(
     seed: Seed,
     playback_duration: &time::Duration,
     installations: &Installations,
+    installation_areas: &InstallationAreas,
     target_sounds_per_installation: &mut TargetSoundsPerInstallation,
 ) {
     target_sounds_per_installation.clear();
-    for (installation, constraints) in installations {
+    for (installation, installation_constraints) in installations {
         let target_num_sounds = installation_target_sounds(
             seed,
             playback_duration,
             installation,
-            constraints,
+            installation_constraints,
+            installation_areas,
         );
         target_sounds_per_installation.insert(*installation, target_num_sounds);
     }
@@ -1037,6 +1049,7 @@ fn tick(model: &mut Model, tick: Tick) {
         seed,
         &tick.playback_duration,
         installations,
+        installation_areas,
         &mut target_sounds_per_installation,
     );
 
@@ -1315,6 +1328,11 @@ fn tick(model: &mut Model, tick: Tick) {
                 let mut available_sources: Vec<AvailableSource> = sources
                     .iter()
                     .filter_map(|(source_id, source)| {
+                        // Check that the source is assigned to this installation.
+                        if !source.installations.contains(installation) {
+                            return None;
+                        }
+
                         // We only want sources from the current group.
                         if !source.groups.contains(&available_groups[group_index].id) {
                             return None;
