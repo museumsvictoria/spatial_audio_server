@@ -36,6 +36,8 @@ type ActiveSounds = FxHashMap<audio::sound::Id, ActiveSound>;
 type ActiveSoundPositions = FxHashMap<audio::sound::Id, ActiveSoundPosition>;
 type ActiveSoundsPerInstallation = FxHashMap<installation::Id, Vec<audio::sound::Id>>;
 type TargetSoundsPerInstallation = FxHashMap<installation::Id, usize>;
+type AvailableGroups = Vec<AvailableGroup>;
+type AvailableSources = Vec<AvailableSource>;
 
 /// The kinds of messages received by the soundscape thread.
 pub enum Message {
@@ -124,6 +126,8 @@ pub struct Model {
     pub realtime_source_latency: Ms,
     /// The soundscape's deterministic source of randomness.
     seed: Seed,
+    /// For generating unique IDs for each new sound.
+    sound_id_gen: audio::sound::IdGenerator,
     /// How long the soundscape has been actively playing (in an un-paused state).
     ///
     /// This is updated upon each `Tick`.
@@ -140,22 +144,89 @@ pub struct Model {
     groups_last_used: GroupsLastUsed,
     /// The moment at which each `Source` was last used to spawn a sound.
     sources_last_used: SourcesLastUsed,
-
     /// All sounds currently being played that were spawned by the soundscape thread.
     active_sounds: ActiveSounds,
+
+    // The following are intermediary buffers re-used between calculations.
+    //
+    // They should not be relied upon to have up-to-date state without first calling their
+    // associated `update_*` function. These are primarily for efficiency within the `tick`
+    // function.
 
     /// Tracks the speakers assignned to each installation. Updated at the beginning of each tick.
     installation_speakers: InstallationSpeakers,
     /// This tracks the bounding area for each installation at the beginning of each tick.
     installation_areas: InstallationAreas,
+    /// This tracks the current target number of sounds desired by each installation.
+    target_sounds_per_installation: TargetSoundsPerInstallation,
+    /// This tracks the sounds that are currently active per installation.
+    active_sounds_per_installation: ActiveSoundsPerInstallation,
+    /// Tracks the position of all active sounds.
+    active_sound_positions: ActiveSoundPositions,
+    /// A buffer to re-use when calculating currently available groups.
+    available_groups: AvailableGroups,
+    /// A buffer to re-use when calculating currently available sources.
+    available_sources: AvailableSources,
+
+    // Communication channels.
+
     /// A handle for submitting new sounds to the input stream.
     audio_input_stream: audio::input::Stream,
     /// A handle for submitting new sounds to the output stream.
     audio_output_stream: audio::output::Stream,
-    /// For generating unique IDs for each new sound.
-    sound_id_gen: audio::sound::IdGenerator,
     // A handle to the ticker thread.
     tick_thread: thread::JoinHandle<()>,
+}
+
+// Data related to the suitability of a group or source for selection of use within the soundscape.
+#[derive(Debug)]
+struct Suitability {
+    // The number of sounds needed to reach the minimum number of sounds for the group.
+    //
+    // A positive value here should be a heavily weight the probability of using sources
+    // from this group to add sounds.
+    num_sounds_needed: usize,
+    // The number of sounds that may be added from this group.
+    //
+    // This will always be either equal to or greater than the `num_sounds_needed`
+    num_available_sounds: usize,
+    // Suitability related to the timing of playback.
+    //
+    // This is `None` if the sound has never been played.
+    timing: Option<Timing>,
+    // Used to reset the  `duration` properties once a sound from this group is used.
+    occurrence_rate_interval: Range<Ms>,
+}
+
+// Timing info related to the `Suitability` struct.
+#[derive(Debug)]
+struct Timing {
+    // The duration since the minimum occurrence rate interval.
+    duration_since_min_interval: Ms,
+    // The duration until time will have exceeded the max occurrence rate
+    duration_until_sound_needed: Ms,
+}
+
+// Data related to a group that is available for use as a source for new sounds.
+#[derive(Debug)]
+struct AvailableGroup {
+    // The unique Id associated with this group.
+    id: group::Id,
+    // Parameters describing the group's availablility.
+    suitability: Suitability,
+}
+
+// Data related to a source that is available for use in spawning a new sound.
+#[derive(Debug)]
+struct AvailableSource {
+    // The unique Id associated with this group.
+    id: audio::source::Id,
+    // Params that describe the suitability of the source for use with a sound.
+    suitability: Suitability,
+    // Ranges used to trigger playback.
+    playback_duration: Range<Ms>,
+    attack_duration: Range<Ms>,
+    release_duration: Range<Ms>,
 }
 
 impl ActiveSound {
@@ -397,23 +468,26 @@ impl Model {
             ref speakers,
             ref installations,
             ref mut active_sounds,
+
+            // Intermediary buffers.
+            ref mut installation_speakers,
+            ref mut installation_areas,
+            ref mut target_sounds_per_installation,
+            ref mut active_sound_positions,
             ..
         } = *self;
 
         // Collect the necessary data for generating a `Movement` instance from the constraints.
-        let mut installation_speakers = InstallationSpeakers::default();
-        update_installation_speakers(speakers, &mut installation_speakers);
-        let mut installation_areas = InstallationAreas::default();
-        update_installation_areas(speakers, &installation_speakers, &mut installation_areas);
-        let mut target_sounds_per_installation = TargetSoundsPerInstallation::default();
+        update_installation_speakers(speakers, installation_speakers);
+        update_installation_areas(speakers, installation_speakers, installation_areas);
         update_target_sounds_per_installation(
             seed,
             playback_duration,
             installations,
             &installation_areas,
-            &mut target_sounds_per_installation,
+            target_sounds_per_installation,
         );
-        let active_sound_positions = active_sound_positions(active_sounds);
+        update_active_sound_positions(active_sounds, active_sound_positions);
 
         // Collect a map of all new movements.
         for (sound_id, sound) in active_sound_positions {
@@ -489,6 +563,35 @@ impl Model {
         self.active_sounds.clear();
         self.installation_speakers.clear();
         self.installation_areas.clear();
+        self.target_sounds_per_installation.clear();
+        self.active_sounds_per_installation.clear();
+        self.active_sound_positions.clear();
+        self.available_groups.clear();
+        self.available_sources.clear();
+    }
+}
+
+impl Suitability {
+    // This is called when the group or source that owns these suitability parameters have
+    // been used as a source for a new sound. Using this we can incrementally update the
+    // list of
+    //
+    // Returns `true` if the source or group that owns these suitability parameters should
+    // be removed from the list of available groups/sounds. This will always be the case if
+    // the group or source has some non-zero occurrence rate interval.
+    fn update_for_used_sound(&mut self) -> bool {
+        self.num_sounds_needed = self.num_sounds_needed.saturating_sub(1);
+        self.num_available_sounds = self.num_available_sounds.saturating_sub(1);
+        let timing = Timing {
+            duration_since_min_interval: -self.occurrence_rate_interval.min,
+            duration_until_sound_needed: self.occurrence_rate_interval.max,
+        };
+        self.timing = Some(timing);
+        if self.occurrence_rate_interval.min > Ms(0.0) {
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -608,6 +711,11 @@ pub fn spawn(
     let installation_areas = Default::default();
     let groups_last_used = Default::default();
     let sources_last_used = Default::default();
+    let target_sounds_per_installation = Default::default();
+    let active_sound_positions = Default::default();
+    let active_sounds_per_installation = Default::default();
+    let available_groups = Default::default();
+    let available_sources = Default::default();
     let model = Model {
         realtime_source_latency,
         seed,
@@ -621,6 +729,11 @@ pub fn spawn(
         sources_last_used,
         installation_speakers,
         installation_areas,
+        target_sounds_per_installation,
+        active_sounds_per_installation,
+        active_sound_positions,
+        available_groups,
+        available_sources,
         audio_input_stream,
         audio_output_stream,
         sound_id_gen,
@@ -672,10 +785,13 @@ fn run(mut model: Model, msg_rx: mpsc::Receiver<Message>) {
 }
 
 // Convert a map of active sounds to a map of data only relevant to their positions.
-fn active_sound_positions(active_sounds: &ActiveSounds) -> ActiveSoundPositions {
-    active_sounds.iter()
-        .map(|(&id, sound)| (id, sound.active_sound_position()))
-        .collect()
+fn update_active_sound_positions(
+    active_sounds: &ActiveSounds,
+    active_sound_positions: &mut ActiveSoundPositions,
+) {
+    active_sound_positions.clear();
+    let extension = active_sounds.iter().map(|(&id, sound)| (id, sound.active_sound_position()));
+    active_sound_positions.extend(extension);
 }
 
 // Find the sound's closest assigned installation.
@@ -726,13 +842,15 @@ fn closest_assigned_installation(
 }
 
 // Group the active sounds via the installation they are currently closest to.
-fn active_sounds_per_installation(
+fn update_active_sounds_per_installation(
     active_sound_positions: &ActiveSoundPositions,
     sources: &Sources,
     installation_areas: &InstallationAreas,
-) -> ActiveSoundsPerInstallation
-{
-    let mut active_sounds_per_installation = ActiveSoundsPerInstallation::default();
+    active_sounds_per_installation: &mut ActiveSoundsPerInstallation,
+) {
+    for installation_active_sounds in active_sounds_per_installation.values_mut() {
+        installation_active_sounds.clear();
+    }
     for (&sound_id, sound) in active_sound_positions.iter() {
         if let Some(inst) = closest_assigned_installation(sound, sources, installation_areas) {
             active_sounds_per_installation
@@ -741,7 +859,6 @@ fn active_sounds_per_installation(
                 .push(sound_id);
         }
     }
-    active_sounds_per_installation
 }
 
 // Collect the necessary data for each installation relevant to the agent.
@@ -764,8 +881,13 @@ fn agent_installation_data(
     };
 
     // Group the sounds by the installations that they are closest to.
-    let active_sounds_per_installation =
-        active_sounds_per_installation(active_sound_positions, sources, installation_areas);
+    let mut active_sounds_per_installation = ActiveSoundsPerInstallation::default();
+    update_active_sounds_per_installation(
+        active_sound_positions,
+        sources,
+        installation_areas,
+        &mut active_sounds_per_installation,
+    );
 
     // For each assigned installation, collect the necessary installation data.
     //
@@ -844,7 +966,8 @@ fn generate_movement(
                 let max_force = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
                 let r = &agent.max_rotation;
                 let max_rotation = map_range(rng.gen(), 0f64, 1.0, r.min, r.max);
-                let active_sound_positions = active_sound_positions(active_sounds);
+                let mut active_sound_positions = ActiveSoundPositions::default();
+                update_active_sound_positions(active_sounds, &mut active_sound_positions);
                 let installation_data = agent_installation_data(
                     source_id,
                     sources,
@@ -1009,6 +1132,109 @@ fn update_target_sounds_per_installation(
     }
 }
 
+// Collect available groups of sources (based on occurrence rate and simultaneous sounds) for the
+// given installation at the given moment in time..
+fn update_available_groups(
+    installation: &installation::Id,
+    tick: &Tick,
+    sources: &Sources,
+    groups: &Groups,
+    active_sounds: &ActiveSounds,
+    active_sounds_per_installation: &ActiveSoundsPerInstallation,
+    groups_last_used: &GroupsLastUsed,
+    available_groups: &mut AvailableGroups,
+) {
+    available_groups.clear();
+    let extension = groups
+        .iter()
+        .filter_map(|(group_id, group)| {
+            // The number of active sounds in this installation sourced from this group.
+            let num_active_sounds = active_sounds_per_installation
+                .get(installation)
+                .map(|installation_active_sounds| {
+                    installation_active_sounds
+                        .iter()
+                        .map(|id| &active_sounds[id])
+                        .filter(|sound| {
+                            let source_id = sound.source_id();
+                            let source = match sources.get(&source_id) {
+                                None => return false,
+                                Some(s) => s,
+                            };
+                            source.groups.contains(group_id)
+                        })
+                        .count()
+                })
+                .unwrap_or(0);
+
+            // If there are no available sounds, skip this group.
+            let num_available_sounds = if group.simultaneous_sounds.max > num_active_sounds {
+                group.simultaneous_sounds.max - num_active_sounds
+            } else {
+                return None;
+            };
+
+            let num_sounds_needed = if group.simultaneous_sounds.min > num_active_sounds {
+                group.simultaneous_sounds.min - num_active_sounds
+            } else {
+                0
+            };
+
+            // Find the duration since the last time a sound was spawned using a source from
+            // this group.
+            let timing = if let Some(&last_used) = groups_last_used.get(group_id) {
+                let duration_since_last: time::Duration =
+                    tick.instant.duration_since(last_used);
+                let duration_since_last_ms =
+                    Ms(duration_to_secs(&duration_since_last) * 1_000.0);
+                let duration_since_min_interval =
+                    if duration_since_last_ms > group.occurrence_rate.min {
+                        duration_since_last_ms - group.occurrence_rate.min
+                    } else {
+                        return None;
+                    };
+                let duration_until_sound_needed =
+                    group.occurrence_rate.max - duration_since_last_ms;
+                Some(Timing {
+                    duration_since_min_interval,
+                    duration_until_sound_needed,
+                })
+            } else {
+                None
+            };
+
+            let occurrence_rate_interval = group.occurrence_rate;
+            let suitability = Suitability {
+                occurrence_rate_interval,
+                num_sounds_needed,
+                num_available_sounds,
+                timing,
+            };
+
+            Some(AvailableGroup {
+                id: *group_id,
+                suitability,
+            })
+        });
+
+    available_groups.extend(extension);
+}
+
+// Order the two sets or properties by their suitability for use as the next sound.
+fn suitability(a: &Suitability, b: &Suitability) -> cmp::Ordering {
+    match b.num_sounds_needed.cmp(&a.num_sounds_needed) {
+        cmp::Ordering::Equal => match (&a.timing, &b.timing) {
+            (&None, &Some(_)) => cmp::Ordering::Less,
+            (&Some(_), &None) => cmp::Ordering::Greater,
+            (&None, &None) => cmp::Ordering::Equal,
+            (&Some(ref a), &Some(ref b)) => a.duration_until_sound_needed
+                .partial_cmp(&b.duration_until_sound_needed)
+                .expect("could not compare `duration_until_sound_needed`"),
+        },
+        ord => ord,
+    }
+}
+
 // Called each time the soundscape thread receives a tick.
 fn tick(model: &mut Model, tick: Tick) {
     let Model {
@@ -1024,6 +1250,11 @@ fn tick(model: &mut Model, tick: Tick) {
         ref mut active_sounds,
         ref mut installation_speakers,
         ref mut installation_areas,
+        ref mut target_sounds_per_installation,
+        ref mut active_sounds_per_installation,
+        ref mut active_sound_positions,
+        ref mut available_groups,
+        ref mut available_sources,
         ref mut sound_id_gen,
         ref audio_input_stream,
         ref audio_output_stream,
@@ -1045,19 +1276,18 @@ fn tick(model: &mut Model, tick: Tick) {
     //
     // We can determine this in a purely functional manner by using the playback duration as the
     // phase for a noise_walk signal.
-    let mut target_sounds_per_installation: TargetSoundsPerInstallation = Default::default();
     update_target_sounds_per_installation(
         seed,
         &tick.playback_duration,
         installations,
         installation_areas,
-        &mut target_sounds_per_installation,
+        target_sounds_per_installation,
     );
 
     // Update the movement of each active sound.
     {
         let mut rng = nannou::rand::thread_rng();
-        let active_sound_positions = active_sound_positions(active_sounds);
+        update_active_sound_positions(active_sounds, active_sound_positions);
         for (&sound_id, sound) in active_sounds.iter_mut() {
             let initial_installation_area = installation_areas.get(&sound.initial_installation);
             match sound.movement {
@@ -1103,14 +1333,17 @@ fn tick(model: &mut Model, tick: Tick) {
     // Sound/Installation associations are determined by finding the installation's centroid that
     // is closest to each sound (as long as that installation is one of those assigned to the
     // sound's source).
-    let active_sounds_per_installation = {
-        let active_sound_positions = active_sound_positions(active_sounds);
-        active_sounds_per_installation(&active_sound_positions, sources, installation_areas)
-    };
+    update_active_sound_positions(active_sounds, active_sound_positions);
+    update_active_sounds_per_installation(
+        active_sound_positions,
+        sources,
+        installation_areas,
+        active_sounds_per_installation,
+    );
 
     // Determine how many sounds to add (if any) by finding the difference between the target
     // number and actual number.
-    for (installation, &num_target_sounds) in &target_sounds_per_installation {
+    for (installation, &num_target_sounds) in target_sounds_per_installation.iter() {
         let num_active_sounds = match active_sounds_per_installation.get(installation) {
             None => 0,
             Some(sounds) => sounds.len(),
@@ -1130,157 +1363,21 @@ fn tick(model: &mut Model, tick: Tick) {
             None => continue,
         };
 
-        #[derive(Debug)]
-        struct Suitability {
-            // The number of sounds needed to reach the minimum number of sounds for the group.
-            //
-            // A positive value here should be a heavily weight the probability of using sources
-            // from this group to add sounds.
-            num_sounds_needed: usize,
-            // The number of sounds that may be added from this group.
-            //
-            // This will always be either equal to or greater than the `num_sounds_needed`
-            num_available_sounds: usize,
-            // Suitability related to the timing of playback.
-            //
-            // This is `None` if the sound has never been played.
-            timing: Option<Timing>,
-            // Used to reset the  `duration` properties once a sound from this group is used.
-            occurrence_rate_interval: Range<Ms>,
-        }
-
-        #[derive(Debug)]
-        struct Timing {
-            // The duration since the minimum occurrence rate interval.
-            duration_since_min_interval: Ms,
-            // The duration until time will have exceeded the max occurrence rate
-            duration_until_sound_needed: Ms,
-        }
-
-        impl Suitability {
-            // This is called when the group or source that owns these suitability parameters have
-            // been used as a source for a new sound. Using this we can incrementally update the
-            // list of
-            //
-            // Returns `true` if the source or group that owns these suitability parameters should
-            // be removed from the list of available groups/sounds. This will always be the case if
-            // the group or source has some non-zero occurrence rate interval.
-            fn update_for_used_sound(&mut self) -> bool {
-                self.num_sounds_needed = self.num_sounds_needed.saturating_sub(1);
-                self.num_available_sounds = self.num_available_sounds.saturating_sub(1);
-                let timing = Timing {
-                    duration_since_min_interval: -self.occurrence_rate_interval.min,
-                    duration_until_sound_needed: self.occurrence_rate_interval.max,
-                };
-                self.timing = Some(timing);
-                if self.occurrence_rate_interval.min > Ms(0.0) {
-                    true
-                } else {
-                    false
-                }
-            }
-        }
-
-        #[derive(Debug)]
-        struct AvailableGroup {
-            // The unique Id associated with this group.
-            id: group::Id,
-            // Parameters describing the group's availablility.
-            suitability: Suitability,
-        }
-
         // Collect available groups of sounds (based on occurrence rate and simultaneous sounds).
-        let mut available_groups: Vec<AvailableGroup> = groups
-            .iter()
-            .filter_map(|(group_id, group)| {
-                // The number of active sounds in this installation sourced from this group.
-                let num_active_sounds = active_sounds_per_installation
-                    .get(installation)
-                    .map(|installation_active_sounds| {
-                        installation_active_sounds
-                            .iter()
-                            .map(|id| &active_sounds[id])
-                            .filter(|sound| {
-                                let source_id = sound.source_id();
-                                let source = match sources.get(&source_id) {
-                                    None => return false,
-                                    Some(s) => s,
-                                };
-                                source.groups.contains(group_id)
-                            })
-                            .count()
-                    })
-                    .unwrap_or(0);
-
-                // If there are no available sounds, skip this group.
-                let num_available_sounds = if group.simultaneous_sounds.max > num_active_sounds {
-                    group.simultaneous_sounds.max - num_active_sounds
-                } else {
-                    return None;
-                };
-
-                let num_sounds_needed = if group.simultaneous_sounds.min > num_active_sounds {
-                    group.simultaneous_sounds.min - num_active_sounds
-                } else {
-                    0
-                };
-
-                // Find the duration since the last time a sound was spawned using a source from
-                // this group.
-                let timing = if let Some(&last_used) = groups_last_used.get(group_id) {
-                    let duration_since_last: time::Duration =
-                        tick.instant.duration_since(last_used);
-                    let duration_since_last_ms =
-                        Ms(duration_to_secs(&duration_since_last) * 1_000.0);
-                    let duration_since_min_interval =
-                        if duration_since_last_ms > group.occurrence_rate.min {
-                            duration_since_last_ms - group.occurrence_rate.min
-                        } else {
-                            return None;
-                        };
-                    let duration_until_sound_needed =
-                        group.occurrence_rate.max - duration_since_last_ms;
-                    Some(Timing {
-                        duration_since_min_interval,
-                        duration_until_sound_needed,
-                    })
-                } else {
-                    None
-                };
-
-                let occurrence_rate_interval = group.occurrence_rate;
-                let suitability = Suitability {
-                    occurrence_rate_interval,
-                    num_sounds_needed,
-                    num_available_sounds,
-                    timing,
-                };
-
-                Some(AvailableGroup {
-                    id: *group_id,
-                    suitability,
-                })
-            })
-            .collect();
+        update_available_groups(
+            installation,
+            &tick,
+            sources,
+            groups,
+            active_sounds,
+            active_sounds_per_installation,
+            groups_last_used,
+            available_groups,
+        );
 
         // If there are no available groups, go to the next installation.
         if available_groups.is_empty() {
             continue;
-        }
-
-        // Order the two sets or properties by their suitability for use as the next sound.
-        fn suitability(a: &Suitability, b: &Suitability) -> cmp::Ordering {
-            match b.num_sounds_needed.cmp(&a.num_sounds_needed) {
-                cmp::Ordering::Equal => match (&a.timing, &b.timing) {
-                    (&None, &Some(_)) => cmp::Ordering::Less,
-                    (&Some(_), &None) => cmp::Ordering::Greater,
-                    (&None, &None) => cmp::Ordering::Equal,
-                    (&Some(ref a), &Some(ref b)) => a.duration_until_sound_needed
-                        .partial_cmp(&b.duration_until_sound_needed)
-                        .expect("could not compare `duration_until_sound_needed`"),
-                },
-                ord => ord,
-            }
         }
 
         // Sort the groups by:
@@ -1306,99 +1403,88 @@ fn tick(model: &mut Model, tick: Tick) {
                 let group_index: usize = match available_groups.is_empty() {
                     true => continue,
                     false => {
-                        let num_equal = utils::count_equal(&available_groups, |a, b| {
+                        let num_equal = utils::count_equal(&*available_groups, |a, b| {
                             suitability(&a.suitability, &b.suitability)
                         });
                         nannou::rand::thread_rng().gen_range(0, num_equal)
                     }
                 };
 
-                #[derive(Debug)]
-                struct AvailableSource {
-                    // The unique Id associated with this group.
-                    id: audio::source::Id,
-                    // Params that describe the suitability of the source for use with a sound.
-                    suitability: Suitability,
-                    // Ranges used to trigger playback.
-                    playback_duration: Range<Ms>,
-                    attack_duration: Range<Ms>,
-                    release_duration: Range<Ms>,
-                }
-
                 // Find all available sources for the front group.
-                let mut available_sources: Vec<AvailableSource> = sources
-                    .iter()
-                    .filter_map(|(source_id, source)| {
-                        // Check that the source is assigned to this installation.
-                        if !source.installations.contains(installation) {
-                            return None;
-                        }
+                available_sources.clear();
+                available_sources.extend({
+                    sources.iter()
+                        .filter_map(|(source_id, source)| {
+                            // Check that the source is assigned to this installation.
+                            if !source.installations.contains(installation) {
+                                return None;
+                            }
 
-                        // We only want sources from the current group.
-                        if !source.groups.contains(&available_groups[group_index].id) {
-                            return None;
-                        }
+                            // We only want sources from the current group.
+                            if !source.groups.contains(&available_groups[group_index].id) {
+                                return None;
+                            }
 
-                        // How many instances of this sound are already playing.
-                        let num_sounds = installation_active_sounds
-                            .iter()
-                            .map(|id| &active_sounds[id])
-                            .filter(|s| s.source_id() == *source_id)
-                            .count();
+                            // How many instances of this sound are already playing.
+                            let num_sounds = installation_active_sounds
+                                .iter()
+                                .map(|id| &active_sounds[id])
+                                .filter(|s| s.source_id() == *source_id)
+                                .count();
 
-                        // If there are no available sounds, skip this group.
-                        let num_available_sounds = if source.simultaneous_sounds.max > num_sounds {
-                            source.simultaneous_sounds.max - num_sounds
-                        } else {
-                            return None;
-                        };
+                            // If there are no available sounds, skip this group.
+                            let num_available_sounds = if source.simultaneous_sounds.max > num_sounds {
+                                source.simultaneous_sounds.max - num_sounds
+                            } else {
+                                return None;
+                            };
 
-                        // Determine the number of this sound that is required to reach the minimum.
-                        let num_sounds_needed = if source.simultaneous_sounds.min > num_sounds {
-                            source.simultaneous_sounds.min - num_sounds
-                        } else {
-                            0
-                        };
+                            // Determine the number of this sound that is required to reach the minimum.
+                            let num_sounds_needed = if source.simultaneous_sounds.min > num_sounds {
+                                source.simultaneous_sounds.min - num_sounds
+                            } else {
+                                0
+                            };
 
-                        // TODO: Find the duration since the last time a sound was spawned using a source
-                        // from this group.
-                        let timing = if let Some(&last_use) = sources_last_used.get(source_id) {
-                            let duration_since_last = tick.instant.duration_since(last_use);
-                            let duration_since_last_ms =
-                                Ms(duration_to_secs(&duration_since_last) * 1_000.0);
-                            let duration_since_min_interval =
-                                if duration_since_last_ms > source.occurrence_rate.min {
-                                    duration_since_last_ms - source.occurrence_rate.min
-                                } else {
-                                    return None;
-                                };
-                            let duration_until_sound_needed =
-                                source.occurrence_rate.max - duration_since_last_ms;
-                            Some(Timing {
-                                duration_since_min_interval,
-                                duration_until_sound_needed,
+                            // TODO: Find the duration since the last time a sound was spawned using a source
+                            // from this group.
+                            let timing = if let Some(&last_use) = sources_last_used.get(source_id) {
+                                let duration_since_last = tick.instant.duration_since(last_use);
+                                let duration_since_last_ms =
+                                    Ms(duration_to_secs(&duration_since_last) * 1_000.0);
+                                let duration_since_min_interval =
+                                    if duration_since_last_ms > source.occurrence_rate.min {
+                                        duration_since_last_ms - source.occurrence_rate.min
+                                    } else {
+                                        return None;
+                                    };
+                                let duration_until_sound_needed =
+                                    source.occurrence_rate.max - duration_since_last_ms;
+                                Some(Timing {
+                                    duration_since_min_interval,
+                                    duration_until_sound_needed,
+                                })
+                            } else {
+                                None
+                            };
+
+                            let occurrence_rate_interval = source.occurrence_rate;
+                            let suitability = Suitability {
+                                occurrence_rate_interval,
+                                num_sounds_needed,
+                                num_available_sounds,
+                                timing,
+                            };
+
+                            Some(AvailableSource {
+                                id: *source_id,
+                                suitability,
+                                playback_duration: source.playback_duration,
+                                attack_duration: source.attack_duration,
+                                release_duration: source.release_duration,
                             })
-                        } else {
-                            None
-                        };
-
-                        let occurrence_rate_interval = source.occurrence_rate;
-                        let suitability = Suitability {
-                            occurrence_rate_interval,
-                            num_sounds_needed,
-                            num_available_sounds,
-                            timing,
-                        };
-
-                        Some(AvailableSource {
-                            id: *source_id,
-                            suitability,
-                            playback_duration: source.playback_duration,
-                            attack_duration: source.attack_duration,
-                            release_duration: source.release_duration,
                         })
-                    })
-                    .collect();
+                });
 
                 // If there are no available sources for this group, continue to the next.
                 if available_sources.is_empty() {
@@ -1413,7 +1499,7 @@ fn tick(model: &mut Model, tick: Tick) {
 
                 // The index of the source.
                 let source_index: usize = {
-                    let num_equal = utils::count_equal(&available_sources, |a, b| {
+                    let num_equal = utils::count_equal(&*available_sources, |a, b| {
                         suitability(&a.suitability, &b.suitability)
                     });
                     nannou::rand::thread_rng().gen_range(0, num_equal)
