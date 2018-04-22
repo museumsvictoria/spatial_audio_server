@@ -67,7 +67,6 @@ impl Model {
     /// This is called when we switch between projects within the GUI.
     pub fn clear_project_specific_data(&mut self) {
         self.sources.clear();
-        self.channel_targets.clear();
         self.active_sounds.clear();
     }
 }
