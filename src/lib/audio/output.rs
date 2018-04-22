@@ -37,6 +37,20 @@ pub struct ActiveSound {
 pub struct ActiveSpeaker {
     speaker: Speaker,
     env_detector: EnvDetector,
+}
+
+pub struct Installation {
+    /// A buffer that is resized to match the size of the `buffer` fed to the `render` function.
+    ///
+    /// This is re-used between calls to `render` to sum all audio from each speaker channel that
+    /// is assigned to the installation. The audio data is then used to perform the necessary FFT
+    /// calculations for the installation, ready to be sent over OSC for visualisation.
+    ///
+    /// This is silenced at the beginning of each call to `render`.
+    buffer: Vec<f32>,
+    /// The peak and RMS for each speaker in the installation.
+    speaker_analyses: Vec<SpeakerAnalysis>,
+    /// The detector used for incrementally calculating the FFT.
     fft_detector: FftDetector,
 }
 
@@ -118,8 +132,8 @@ pub struct Model {
     osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
     /// A handle to the soundscape thread - for notifying when a sound is complete.
     soundscape_tx: mpsc::Sender<soundscape::Message>,
-    /// An analysis per installation to re-use for sending to the OSC output thread.
-    installation_analyses: FxHashMap<installation::Id, Vec<SpeakerAnalysis>>,
+    /// Data related to a single installation necessary for the audio output thread.
+    installations: FxHashMap<installation::Id, Installation>,
     /// A buffer to re-use for DBAP speaker calculations.
     ///
     /// The index of the speaker is its channel.
@@ -168,10 +182,20 @@ impl Model {
         // A buffer for collecting exhausted `Sound`s.
         let exhausted_sounds = Vec::with_capacity(128);
 
-        // A map from installations to audio analysis frames that can be re-used.
-        let installation_analyses = installation::ALL
+        // A map from installations to their audio data and speaker analyses that can be re-used.
+        let installations = installation::ALL
             .iter()
-            .map(|&inst| (inst, Vec::with_capacity(MAX_CHANNELS)))
+            .map(|&id| {
+                let speaker_analyses = Vec::with_capacity(MAX_CHANNELS);
+                let buffer = Vec::with_capacity(1024);
+                let fft_detector = FftDetector::new();
+                let installation = Installation {
+                    speaker_analyses,
+                    buffer,
+                    fft_detector,
+                };
+                (id, installation)
+            })
             .collect();
 
         // A buffer to re-use for DBAP speaker calculations.
@@ -208,7 +232,7 @@ impl Model {
             speakers,
             unmixed_samples,
             exhausted_sounds,
-            installation_analyses,
+            installations,
             gui_audio_monitor_msg_tx,
             osc_output_msg_tx,
             soundscape_tx,
@@ -223,20 +247,12 @@ impl Model {
     /// Inserts the speaker and sends an `Add` message to the GUI.
     pub fn insert_speaker(&mut self, id: speaker::Id, speaker: Speaker) -> Option<Speaker> {
         // Re-use the old detectors if there are any.
-        let (env_detector, fft_detector, old_speaker) = match self.speakers.remove(&id) {
-            None => (EnvDetector::new(), FftDetector::new(), None),
-            Some(ActiveSpeaker {
-                speaker,
-                env_detector,
-                fft_detector,
-            }) => (env_detector, fft_detector, Some(speaker)),
+        let (env_detector, old_speaker) = match self.speakers.remove(&id) {
+            None => (EnvDetector::new(), None),
+            Some(ActiveSpeaker { speaker, env_detector, }) => (env_detector, Some(speaker)),
         };
 
-        let speaker = ActiveSpeaker {
-            speaker,
-            env_detector,
-            fft_detector,
-        };
+        let speaker = ActiveSpeaker { speaker, env_detector };
         let speaker_msg = gui::SpeakerMessage::Add;
         let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
         self.gui_audio_monitor_msg_tx.try_send(msg).ok();
@@ -374,7 +390,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref mut sounds,
             ref mut unmixed_samples,
             ref mut exhausted_sounds,
-            ref mut installation_analyses,
+            ref mut installations,
             ref mut speakers,
             ref mut dbap_speakers,
             ref mut dbap_speaker_gains,
@@ -387,8 +403,13 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
         } = model;
 
         // Always silence the buffer to begin.
-        for sample in buffer.iter_mut() {
-            *sample = 0.0;
+        buffer.iter_mut().for_each(|s| *s = 0.0);
+
+        // Clear the analyses.
+        for installation in installations.values_mut() {
+            installation.speaker_analyses.clear();
+            installation.buffer.resize(buffer.len_frames(), 0.0);
+            installation.buffer.iter_mut().for_each(|s| *s = 0.0);
         }
 
         // For each sound, request `buffer.len()` number of frames and sum them onto the
@@ -522,80 +543,115 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
         // For each speaker, feed its amplitude into its detectors.
         let n_channels = buffer.channels();
-        let mut sum_peak = 0.0;
-        let mut sum_rms = 0.0;
-        let mut sum_lmh = [0.0; 3];
-        let mut sum_fft_8_band = [0.0; 8];
         for (&id, active) in speakers.iter_mut() {
-            let mut channel_i = active.speaker.channel;
+            let channel_i = active.speaker.channel;
             if channel_i >= n_channels {
                 continue;
             }
             let ActiveSpeaker {
                 ref mut env_detector,
-                ref mut fft_detector,
                 ..
             } = *active;
+
+            // Update the envelope detector.
             for frame in buffer.frames() {
                 let sample = frame[channel_i];
                 env_detector.next(sample);
-                fft_detector.push(sample);
             }
 
             // The current env and fft detector states.
             let (rms, peak) = env_detector.current();
-            fft_detector.calc_fft(fft_planner, fft, &mut fft_frequency_amplitudes_2[..]);
-            let (l_2, m_2, h_2) = fft::lmh(&fft_frequency_amplitudes_2[..]);
-            let mut fft_8_bins_2 = [0.0; 8];
-            fft::mel_bins(&fft_frequency_amplitudes_2[..], &mut fft_8_bins_2);
 
             // Send the detector state for the speaker to the GUI.
             let speaker_msg = gui::SpeakerMessage::Update { rms, peak };
             let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
             gui_audio_monitor_msg_tx.try_send(msg).ok();
 
-            // Sum the rms and peak.
-            for installation in &active.speaker.installations {
-                let speakers = match installation_analyses.get_mut(&installation) {
+            // Sum raw audio data for FFTs.
+            for id in &active.speaker.installations {
+                let installation = match installations.get_mut(&id) {
                     None => continue,
-                    Some(speakers) => speakers,
+                    Some(installation) => installation,
                 };
-                sum_peak += peak;
-                sum_rms += rms;
-                for (sum, amp_2) in sum_lmh.iter_mut().zip(&[l_2, m_2, h_2]) {
-                    *sum += amp_2.sqrt() / (FFT_WINDOW_LEN / 2) as f32;
+
+                let index = channel_i;
+                let analysis = SpeakerAnalysis { peak, rms, index };
+                installation.speaker_analyses.push(analysis);
+
+                // Sum the audio data for the speaker onto its associated installation buffers.
+                for (i, frame) in buffer.frames().enumerate() {
+                    installation.buffer[i] += frame[channel_i];
                 }
-                for (sum, amp_2) in sum_fft_8_band.iter_mut().zip(&fft_8_bins_2) {
-                    *sum += amp_2.sqrt() / (FFT_WINDOW_LEN / 2) as f32;
-                }
-                let analysis = SpeakerAnalysis {
-                    peak,
-                    rms,
-                    index: channel_i,
-                };
-                speakers.push(analysis);
             }
         }
 
         // Send the collected analysis to the OSC output thread.
-        for (&installation, speakers) in installation_analyses.iter_mut() {
+        for (&id, installation) in installations.iter_mut() {
             if speakers.is_empty() {
                 continue;
             }
-            speakers.sort_by(|a, b| a.index.cmp(&b.index));
-            let len_f = speakers.len() as f32;
-            let avg_peak = sum_peak / len_f;
-            let avg_rms = sum_rms / len_f;
-            let avg_lmh = [sum_lmh[0] / len_f, sum_lmh[1] / len_f, sum_lmh[2] / len_f];
-            let mut avg_8_band = [0.0; 8];
-            for (avg, &sum) in avg_8_band.iter_mut().zip(&sum_fft_8_band) {
-                *avg = sum / len_f;
-            }
-            let avg_fft = osc::output::FftData {
-                lmh: avg_lmh,
-                bins: avg_8_band,
+
+            // Retrieve the audio buffer so we can perform FFT.
+            let avg_fft: osc::output::FftData = {
+                let Installation {
+                    ref buffer,
+                    ref speaker_analyses,
+                    ref mut fft_detector,
+                    ..
+                } = *installation;
+
+                let n_speakers = speakers.iter()
+                    .filter(|&(_, ref s)| s.speaker.installations.contains(&id))
+                    .count();
+
+
+                // Feed the buffer into the FFT detector, normalised for the number of speakers in
+                // the installation..
+                for &sample in buffer {
+                    // TODO: This division might be better on lmh and bins.
+                    fft_detector.push(sample / n_speakers as f32);
+                }
+
+                // Perform the FFT.
+                fft_detector.calc_fft(fft_planner, fft, &mut fft_frequency_amplitudes_2[..]);
+
+                // Retrieve the LMH representation.
+                let (l_2, m_2, h_2) = fft::lmh(&fft_frequency_amplitudes_2[..]);
+                let mut lmh = [0.0; 3];
+                for (amp, amp_2) in lmh.iter_mut().zip(&[l_2, m_2, h_2]) {
+                    *amp = amp_2.sqrt() / (FFT_WINDOW_LEN / 2) as f32;
+                }
+
+                // Retrieve the 8-bin representation.
+                let mut bins_2 = [0.0; 8];
+                fft::mel_bins(&fft_frequency_amplitudes_2[..], &mut bins_2);
+                let mut bins = [0.0; 8];
+                for (amp, amp_2) in bins.iter_mut().zip(&bins_2) {
+                    *amp = amp_2.sqrt() / (FFT_WINDOW_LEN / 2) as f32;
+                }
+
+                // Prepare the osc output message.
+                let fft_data = osc::output::FftData { lmh, bins };
+                fft_data
             };
-            let speakers = speakers
+
+            // Find the average peak and RMS across all speakers in the installation.
+            let (avg_peak, avg_rms) = {
+                let n_speakers_f = installation.speaker_analyses.len() as f32;
+                let mut iter = installation.speaker_analyses.iter();
+                iter.next()
+                    .map(|s| {
+                        let init = (s.peak, s.rms);
+                        iter.fold(init, |(acc_p, acc_r), s| (acc_p + s.peak, acc_r + s.rms))
+                    })
+                    .map(|(sum_p, sum_r)| (sum_p / n_speakers_f, sum_r / n_speakers_f))
+                    .unwrap_or((0.0, 0.0))
+            };
+
+            // Sort the speakers by channel index as the OSC output thread assumes that speakers
+            // are in order of index.
+            installation.speaker_analyses.sort_by(|a, b| a.index.cmp(&b.index));
+            let speakers = installation.speaker_analyses
                 .drain(..)
                 .map(|s| osc::output::Speaker {
                     rms: s.rms,
@@ -608,14 +664,13 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 avg_fft,
                 speakers,
             };
-            let msg = osc::output::Message::Audio(installation, data);
+            let msg = osc::output::Message::Audio(id, data);
             osc_output_msg_tx.send(msg).ok();
         }
 
         // Remove all sounds that have been exhausted.
         for sound_id in exhausted_sounds.drain(..) {
-            // TODO: Possibly send this with the `End` message to avoid de-allocating on audio
-            // thread.
+            // Possibly send this with the `End` message to avoid de-allocating on audio thread.
             let sound = sounds.remove(&sound_id).unwrap();
 
             // Send signal of completion back to GUI thread.
