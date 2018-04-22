@@ -907,19 +907,19 @@ pub fn info_text(text: &str) -> widget::Text {
 pub fn hz_label(hz: f64) -> String {
     match utils::human_readable_hz(hz) {
         (HumanReadableTime::Ms, times_per_ms) => {
-            format!("{:.2} per millisecond", times_per_ms)
+            format!("{} per millisecond", times_per_ms.round())
         },
         (HumanReadableTime::Secs, hz) => {
-            format!("{:.2} per second", hz)
+            format!("{} per second", hz.round())
         },
         (HumanReadableTime::Mins, times_per_min) => {
-            format!("{:.2} per minute", times_per_min)
+            format!("{} per minute", times_per_min.round())
         },
         (HumanReadableTime::Hrs, times_per_hr) => {
-            format!("{:.2} per hour", times_per_hr)
+            format!("{} per hour", times_per_hr.round())
         },
         (HumanReadableTime::Days, times_per_day) => {
-            format!("{:.2} per day", times_per_day)
+            format!("{} per day", times_per_day.round())
         },
     }
 }
@@ -929,25 +929,25 @@ pub fn duration_label(ms: &Ms) -> String {
     // Playback duration.
     match utils::human_readable_ms(ms) {
         (HumanReadableTime::Ms, ms) => {
-            format!("{:.2} ms", ms)
+            format!("{} ms", ms)
         },
         (HumanReadableTime::Secs, secs) => {
             let secs = secs.floor();
             let ms = ms.ms() - (secs * SEC_MS);
-            format!("{} secs {:.2} ms", secs, ms)
+            format!("{} secs {} ms", secs, ms)
         },
         (HumanReadableTime::Mins, mins) => {
             let mins = mins.floor();
             let secs = (ms.ms() - (mins * MIN_MS)) / SEC_MS;
-            format!("{} mins {:.2} secs", mins, secs)
+            format!("{} mins {} secs", mins, secs)
         },
         (HumanReadableTime::Hrs, hrs) => {
             let hrs = hrs.floor();
             let mins = (ms.ms() - (hrs * HR_MS)) / MIN_MS;
-            format!("{} hrs {:.2} mins", hrs, mins)
+            format!("{} hrs {} mins", hrs, mins)
         },
         (HumanReadableTime::Days, days) => {
-            format!("{:.2} days", days)
+            format!("{} days", days)
         },
     }
 }
