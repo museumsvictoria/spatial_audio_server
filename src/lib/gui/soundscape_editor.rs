@@ -377,7 +377,10 @@ pub fn set(
         .down(PAD * 2.0)
         .set(ids.soundscape_editor_occurrence_rate_slider, ui)
     {
-        let hz = value as _;
+        let hz = {
+            let (unit, times_per_unit) = utils::human_readable_hz(value as _);
+            unit.times_per_unit_to_hz(times_per_unit.round())
+        };
         let id = selected.id;
 
         // Update the local copy.

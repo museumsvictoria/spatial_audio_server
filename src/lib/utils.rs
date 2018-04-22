@@ -54,6 +54,43 @@ pub enum HumanReadableTime {
     Days,
 }
 
+impl HumanReadableTime {
+    /// Convert the given "times per unit (self)" to hz.
+    pub fn times_per_unit_to_hz(&self, times_per_unit: f64) -> f64 {
+        match *self {
+            HumanReadableTime::Ms => times_per_unit * MS_IN_HZ,
+            HumanReadableTime::Secs => times_per_unit,
+            HumanReadableTime::Mins => times_per_unit * MIN_IN_HZ,
+            HumanReadableTime::Hrs => times_per_unit * HR_IN_HZ,
+            HumanReadableTime::Days => times_per_unit * DAY_IN_HZ,
+        }
+    }
+
+    /// Convert the given value to the next finer unit.
+    ///
+    /// If `self` is ms, ms is returned.
+    pub fn to_finer_unit(&self, value: f64) -> (HumanReadableTime, f64) {
+        match *self {
+            HumanReadableTime::Ms => (HumanReadableTime::Ms, value),
+            HumanReadableTime::Secs => (HumanReadableTime::Ms, value * SEC_MS),
+            HumanReadableTime::Mins => (HumanReadableTime::Secs, value * 60.0),
+            HumanReadableTime::Hrs => (HumanReadableTime::Mins, value * 60.0),
+            HumanReadableTime::Days => (HumanReadableTime::Hrs, value * 24.0),
+        }
+    }
+
+    /// Convert the given human readable value to Ms.
+    pub fn to_ms(&self, value: f64) -> Ms {
+        match *self {
+            HumanReadableTime::Ms => Ms(value),
+            HumanReadableTime::Secs => Ms(value * SEC_MS),
+            HumanReadableTime::Mins => Ms(value * MIN_MS),
+            HumanReadableTime::Hrs => Ms(value * HR_MS),
+            HumanReadableTime::Days => Ms(value * DAY_MS),
+        }
+    }
+}
+
 /// Sums seed `b` onto seed `a` in a wrapping manner.
 pub fn add_seeds(a: &Seed, b: &Seed) -> Seed {
     let s0 = a[0].wrapping_add(b[0]);

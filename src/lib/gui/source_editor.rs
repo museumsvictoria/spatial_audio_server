@@ -1493,7 +1493,10 @@ pub fn set(
                 .down(PAD * 2.0)
                 .set(ids.source_editor_selected_soundscape_occurrence_rate_slider, ui)
             {
-                let hz = value as _;
+                let hz = {
+                    let (unit, times_per_unit) = utils::human_readable_hz(value as _);
+                    unit.times_per_unit_to_hz(times_per_unit.round())
+                };
 
                 // Update the local copy.
                 let new_rate = {
@@ -1602,7 +1605,11 @@ pub fn set(
                 .down(PAD * 2.0)
                 .set(ids.source_editor_selected_soundscape_playback_duration_slider, ui)
             {
-                let duration = Ms(value as _);
+                let duration = {
+                    let (unit, value) = utils::human_readable_ms(&Ms(value as _));
+                    let (unit, value) = unit.to_finer_unit(value);
+                    unit.to_ms(value.round())
+                };
 
                 // Update the local copy.
                 let new_duration = {
@@ -1651,7 +1658,11 @@ pub fn set(
                 .down(PAD * 2.0)
                 .set(ids.source_editor_selected_soundscape_attack_duration_slider, ui)
             {
-                let duration = Ms(value);
+                let duration = {
+                    let (unit, value) = utils::human_readable_ms(&Ms(value as _));
+                    let (unit, value) = unit.to_finer_unit(value);
+                    unit.to_ms(value.round())
+                };
 
                 // Update the local copy.
                 let new_duration = {
@@ -1700,7 +1711,11 @@ pub fn set(
                 .down(PAD * 2.0)
                 .set(ids.source_editor_selected_soundscape_release_duration_slider, ui)
             {
-                let duration = Ms(value);
+                let duration = {
+                    let (unit, value) = utils::human_readable_ms(&Ms(value as _));
+                    let (unit, value) = unit.to_finer_unit(value);
+                    unit.to_ms(value.round())
+                };
 
                 // Update the local copy.
                 let new_duration = {
