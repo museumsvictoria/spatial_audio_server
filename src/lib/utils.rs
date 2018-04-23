@@ -258,17 +258,6 @@ where
     Ok(())
 }
 
-/// A generic function for safely saving a serializable type to a JSON file.
-///
-/// **Panics** if an error occurs while attempting to serialize or save the file.
-pub fn save_to_json_or_panic<T>(json_path: &Path, t: &T)
-where
-    T: serde::Serialize,
-{
-    save_to_json(json_path, t)
-        .unwrap_or_else(|err| panic!("failed to save file \"{}\": {}", json_path.display(), err))
-}
-
 /// A generic funtion for loading a type from a JSON file.
 pub fn load_from_json<'a, T>(json_path: &Path) -> Result<T, FileError<serde_json::Error>>
 where

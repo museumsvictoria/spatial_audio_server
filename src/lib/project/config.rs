@@ -14,8 +14,8 @@ pub struct Config {
     pub osc_input_log_limit: usize,
     #[serde(default = "default::osc_output_log_limit")]
     pub osc_output_log_limit: usize,
-    #[serde(default = "default::interaction_log_limit")]
-    pub interaction_log_limit: usize,
+    #[serde(default = "default::control_log_limit")]
+    pub control_log_limit: usize,
     #[serde(default = "default::floorplan_pixels_per_metre")]
     pub floorplan_pixels_per_metre: f64,
     #[serde(default = "default::min_speaker_radius_metres")]
@@ -33,7 +33,7 @@ impl Default for Config {
         let osc_input_port = default::osc_input_port();
         let osc_input_log_limit = default::osc_input_log_limit();
         let osc_output_log_limit = default::osc_output_log_limit();
-        let interaction_log_limit = default::interaction_log_limit();
+        let control_log_limit = default::control_log_limit();
         let floorplan_pixels_per_metre = default::floorplan_pixels_per_metre();
         let min_speaker_radius_metres = default::min_speaker_radius_metres();
         let max_speaker_radius_metres = default::max_speaker_radius_metres();
@@ -44,7 +44,7 @@ impl Default for Config {
             osc_input_port,
             osc_input_log_limit,
             osc_output_log_limit,
-            interaction_log_limit,
+            control_log_limit,
             floorplan_pixels_per_metre,
             min_speaker_radius_metres,
             max_speaker_radius_metres,
@@ -73,7 +73,7 @@ pub mod default {
     pub fn osc_output_log_limit() -> usize {
         10
     }
-    pub fn interaction_log_limit() -> usize {
+    pub fn control_log_limit() -> usize {
         50
     }
     pub fn floorplan_pixels_per_metre() -> f64 {
