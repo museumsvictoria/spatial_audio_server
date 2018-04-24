@@ -28,7 +28,7 @@ pub struct SpeakerGains<'a> {
 pub fn blurred_distance_2(source: Point2<f64>, speaker: Point2<f64>, blur: f64) -> f64 {
     let x = speaker.x - source.x;
     let y = speaker.y - source.y;
-    x * x + y * y + blur * blur
+    (x * x + y * y + blur * blur).max(::std::f64::EPSILON)
 }
 
 impl<'a> SpeakerGains<'a> {

@@ -1,7 +1,6 @@
 use audio;
 use gui::{collapsible_area, Gui, ProjectState};
 use gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
-use installation;
 use nannou::ui;
 use nannou::ui::prelude::*;
 use project::{self, Project};
@@ -39,6 +38,7 @@ pub fn set(
     let Project {
         state: project::State {
             ref camera,
+            ref installations,
             ref mut speakers,
             ..
         },
@@ -408,14 +408,14 @@ pub fn set(
     // A dropdownlist for assigning installations to the speaker.
     //
     // Only show installations that aren't yet assigned.
-    let installations = installation::ALL
-        .iter()
+    let installations_vec = installations
+        .keys()
         .filter(|inst| !speakers[&id].installations.contains(inst))
         .cloned()
         .collect::<Vec<_>>();
-    let installation_strs = installations
+    let installation_strs = installations_vec
         .iter()
-        .map(installation::Id::display_str)
+        .map(|inst_id| &installations[&inst_id].name)
         .collect::<Vec<_>>();
     for index in widget::DropDownList::new(&installation_strs, None)
         .align_middle_x_of(ids.speaker_editor_selected_installations_canvas)
@@ -426,7 +426,7 @@ pub fn set(
         .label_font_size(SMALL_FONT_SIZE)
         .set(ids.speaker_editor_selected_installations_ddl, ui)
     {
-        let installation = installations[index];
+        let installation = installations_vec[index];
         let speaker = speakers.get_mut(&id).unwrap();
 
         // Update the local copy.
@@ -458,7 +458,9 @@ pub fn set(
         .iter()
         .cloned()
         .collect::<Vec<_>>();
-    selected_installations.sort_by(|a, b| a.display_str().cmp(b.display_str()));
+    selected_installations.sort_by(|a, b| {
+        installations[a].name.cmp(&installations[b].name)
+    });
     let (mut items, scrollbar) = widget::List::flow_down(selected_installations.len())
         .item_size(ITEM_HEIGHT)
         .h(INSTALLATION_LIST_H)
@@ -471,7 +473,7 @@ pub fn set(
     let mut maybe_remove_index = None;
     while let Some(item) = items.next(ui) {
         let inst = selected_installations[item.i];
-        let label = inst.display_str();
+        let label = &installations[&inst].name;
 
         // Use `Button`s for the selectable items.
         let button = widget::Button::new()

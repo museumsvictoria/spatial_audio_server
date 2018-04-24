@@ -4,34 +4,60 @@
 //! hard-coded and rather identified via dynamically generated unique IDs. Otherwise, most
 //! of the logic should remain the same.
 
-use std::fmt;
+use serde::{Deserialize, Deserializer};
+use slug::slugify;
 use utils::Range;
 
-/// The ID of all installations in the beyond perception exhibition.
-pub const ALL: &'static [Id] = &[
-    Id::WavesAtWork,
-    Id::RipplesInSpacetime,
-    Id::EnergeticVibrationsAudioVisualiser,
-    Id::EnergeticVibrationsProjectionMapping,
-    Id::TurbulentEncounters,
-    Id::Cacophony,
-    Id::WrappedInSpectrum,
-    Id::Turret1,
-    Id::Turret2,
+/// All known beyond perception installations (used by default).
+pub const BEYOND_PERCEPTION_NAMES: &'static [&'static str] = &[
+    "Waves At Work",
+    "Ripples In Spacetime",
+    "Energetic Vibrations - Audio Visualiser",
+    "Energetic Vibrations - Projection Mapping",
+    "Turbulent Encounters",
+    "Cacophony",
+    "Wrapped In Spectrum",
+    "Turret 1",
+    "Turret 2",
 ];
 
-/// A unique identifier for referring to an installation.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
-pub enum Id {
-    WavesAtWork = 0,
-    RipplesInSpacetime = 1,
-    EnergeticVibrationsAudioVisualiser = 2,
-    EnergeticVibrationsProjectionMapping = 3,
-    TurbulentEncounters = 4,
-    Cacophony = 5,
-    WrappedInSpectrum = 6,
-    Turret1 = 7,
-    Turret2 = 8,
+/// A memory efficient unique identifier for an installation.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Serialize)]
+pub struct Id(pub usize);
+
+// Support loading installations from the old enum format.
+impl<'de> Deserialize<'de> for Id {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde_json;
+        match serde_json::Value::deserialize(d)? {
+            // Deserialize the Id as a string rather than an int.
+            serde_json::Value::String(string) => {
+                // Check for old enum variant names.
+                let id = match &string[..] {
+                    "WavesAtWork" => Id(0),
+                    "RipplesInSpacetime" => Id(1),
+                    "EnergeticVibrationsAudioVisualiser" => Id(2),
+                    "EnergeticVibrationsProjectionMapping" => Id(3),
+                    "TurbulentEncounters" => Id(4),
+                    "Cacophony" => Id(5),
+                    "WrappedInSpectrum" => Id(6),
+                    "Turret1" => Id(7),
+                    "Turret2" => Id(8),
+                    s => Id(s.parse().expect("could not parse installation id as usize")),
+                };
+
+                Ok(id)
+            }
+            serde_json::Value::Number(n) => {
+                let u = n.as_u64().expect("could not deserialize Id number to u64") as usize;
+                Ok(Id(u))
+            },
+            err => panic!("failed to deserialize `Id`: expected String or Int, found {:?}", err),
+        }
+    }
 }
 
 /// An installation's computers.
@@ -40,10 +66,24 @@ pub type Computers = computer::Addresses;
 /// A single installation within the exhibition.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Installation {
+    /// The name of the Installation.
+    #[serde(default = "default::name_string")]
+    pub name: String,
     /// All computers within the exhibition.
+    #[serde(default)]
     pub computers: Computers,
     /// Constraints related to the soundscape.
+    #[serde(default)]
     pub soundscape: Soundscape,
+}
+
+impl Default for Installation {
+    fn default() -> Self {
+        let name = default::name().into();
+        let computers = Default::default();
+        let soundscape = Default::default();
+        Installation { name, computers, soundscape }
+    }
 }
 
 /// Constraints related to the soundscape.
@@ -60,109 +100,44 @@ impl Default for Soundscape {
     }
 }
 
-impl Id {
-    pub fn display_str(&self) -> &str {
-        match *self {
-            Id::WavesAtWork => "Waves At Work",
-            Id::RipplesInSpacetime => "Ripples In Spacetime",
-            Id::EnergeticVibrationsAudioVisualiser => {
-                "Energetic Vibrations - Audio Visualiser"
-            }
-            Id::EnergeticVibrationsProjectionMapping => {
-                "Energetic Vibrations - Projection Mapping"
-            }
-            Id::TurbulentEncounters => "Turbulent Encounters",
-            Id::Cacophony => "Cacophony",
-            Id::WrappedInSpectrum => "Wrapped In Spectrum",
-            Id::Turret1 => "Turret 1",
-            Id::Turret2 => "Turret 2",
-        }
-    }
-
-    pub fn default_osc_addr_str(&self) -> &str {
-        match *self {
-            Id::WavesAtWork => "wave",
-            Id::RipplesInSpacetime => "ripp",
-            Id::EnergeticVibrationsAudioVisualiser => "enav",
-            Id::EnergeticVibrationsProjectionMapping => "enpm",
-            Id::TurbulentEncounters => "turb",
-            Id::Cacophony => "caco",
-            Id::WrappedInSpectrum => "wrap",
-            Id::Turret1 => "tur1",
-            Id::Turret2 => "tur2",
-        }
-    }
-
-    pub fn from_usize(i: usize) -> Option<Self> {
-        ALL.get(i).map(|&i| i)
-    }
-
-    pub fn to_u32(&self) -> u32 {
-        match *self {
-            Id::WavesAtWork => 0,
-            Id::RipplesInSpacetime => 1,
-            Id::EnergeticVibrationsAudioVisualiser => 2,
-            Id::EnergeticVibrationsProjectionMapping => 3,
-            Id::TurbulentEncounters => 4,
-            Id::Cacophony => 5,
-            Id::WrappedInSpectrum => 6,
-            Id::Turret1 => 7,
-            Id::Turret2 => 8,
-        }
-    }
-
-    pub fn default_num_computers(&self) -> usize {
-        match *self {
-            Id::WavesAtWork => 1,
-            Id::RipplesInSpacetime => 4,
-            Id::EnergeticVibrationsAudioVisualiser => 1,
-            Id::EnergeticVibrationsProjectionMapping => 3,
-            Id::TurbulentEncounters => 1,
-            Id::Cacophony => 1,
-            Id::WrappedInSpectrum => 2,
-            Id::Turret1 => 0,
-            Id::Turret2 => 0,
-        }
-    }
+/// Produces the OSC address string - a slugified version of the installation's name.
+pub fn osc_addr_string(name: &str) -> String {
+    format!("/{}", slugify(name))
 }
 
-impl fmt::Display for Id {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.display_str())
-    }
+/// The default number of computers for the beyond perception installation with the given name.
+pub fn beyond_perception_default_num_computers(name: &str) -> Option<usize> {
+    let n = match name {
+        "Waves At Work" => 1,
+        "Ripples In Spacetime" => 4,
+        "Energetic Vibrations - Audio Visualiser" => 1,
+        "Energetic Vibrations - Projection Mapping" => 3,
+        "Turbulent Encounters" => 1,
+        "Cacophony" => 1,
+        "Wrapped In Spectrum" => 2,
+        "Turret 1" => 0,
+        "Turret 2" => 0,
+        _ => return None,
+    };
+    Some(n)
 }
 
 /// Default soundscape constraints.
 pub mod default {
-    use fxhash::FxHashMap;
     use utils::Range;
 
     pub const SIMULTANEOUS_SOUNDS: Range<usize> = Range { min: 1, max: 8 };
 
-    pub fn simultaneous_sounds() -> Range<usize> {
-        SIMULTANEOUS_SOUNDS
+    pub fn name() -> &'static str {
+        "<unnamed>"
     }
 
-    /// The default map of installations used by the Beyond Perception project.
-    pub fn map() -> FxHashMap<super::Id, super::Installation> {
-        super::ALL
-            .iter()
-            .map(|&id| {
-                let computers = (0..id.default_num_computers())
-                    .map(|i| {
-                        let computer = super::computer::Id(i);
-                        let socket = "127.0.0.1:9002".parse().unwrap();
-                        let osc_addr_base = id.default_osc_addr_str().to_string();
-                        let osc_addr = format!("/{}/{}", osc_addr_base, i);
-                        let addr = super::computer::Address { socket, osc_addr };
-                        (computer, addr)
-                    })
-                    .collect();
-                let soundscape = Default::default();
-                let installation = super::Installation { computers, soundscape };
-                (id, installation)
-            })
-            .collect()
+    pub fn name_string() -> String {
+        name().into()
+    }
+
+    pub fn simultaneous_sounds() -> Range<usize> {
+        SIMULTANEOUS_SOUNDS
     }
 }
 

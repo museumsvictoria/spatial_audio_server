@@ -84,7 +84,7 @@ pub struct State {
     #[serde(default)]
     pub master: Master,
     /// All installations in the exhibition along with their soundscape constraints.
-    #[serde(default = "default_installations")]
+    #[serde(default = "default_beyond_perception_installations")]
     pub installations: Installations,
     /// All soundscape groups within the exhibition.
     #[serde(default)]
@@ -156,7 +156,7 @@ pub struct Source {
 impl State {
     fn default_from_name(name: String) -> Self {
         let master = Default::default();
-        let installations = default_installations();
+        let installations = default_beyond_perception_installations();
         let soundscape_groups = Default::default();
         let speakers = Default::default();
         let sources = Default::default();
@@ -171,6 +171,33 @@ impl State {
             camera,
         }
     }
+
+    /// If all of the installations within `State` are unnamed, name them automatically.
+    ///
+    /// Returns `true` if installations were renamed, false if not.
+    fn auto_name_installations_if_all_unnamed(&mut self) -> bool {
+        if self.installations.values().all(|inst| &inst.name == installation::default::name()) {
+            for (id, installation) in self.installations.iter_mut() {
+                let name = match id.0 {
+                    0 => "Waves At Work",
+                    1 => "Ripples In Spacetime",
+                    2 => "Energetic Vibrations - Audio Visualiser",
+                    3 => "Energetic Vibrations - Projection Mapping",
+                    4 => "Turbulent Encounters",
+                    5 => "Cacophony",
+                    6 => "Wrapped In Spectrum",
+                    7 => "Turret 1",
+                    8 => "Turret 2",
+                    _ => continue,
+                };
+                installation.name = name.into();
+            }
+            true
+        } else {
+            false
+        }
+    }
+
 }
 
 impl Project {
@@ -197,6 +224,7 @@ impl Project {
 
         let assets = assets.as_ref();
         let audio_path = assets.join(AUDIO_DIRECTORY_STEM);
+        state.auto_name_installations_if_all_unnamed();
         state.sources.remove_invalid_sources(&audio_path);
         state.sources.load_missing_sources(audio_path);
         state.sources.remove_invalid_soloed();
@@ -249,8 +277,9 @@ impl Project {
             })
             .expect("failed to send loaded realtime source latency");
 
-        // Installations to soundscape and osc output.
+        // Installations to soundscape, osc output and audio output.
         for (&id, installation) in self.installations.iter() {
+            // Soundscape.
             let clone = installation.soundscape.clone();
             channels
                 .soundscape
@@ -258,6 +287,8 @@ impl Project {
                     soundscape.insert_installation(id, clone);
                 })
                 .expect("failed to send loaded installation soundscape state");
+
+            // OSC output thread.
             for (&computer, addr) in installation.computers.iter() {
                 let osc_tx = nannou::osc::sender()
                     .expect("failed to create OSC sender")
@@ -271,6 +302,14 @@ impl Project {
                     .send(msg)
                     .expect("failed to send loaded OSC target");
             }
+
+            // Audio output thread.
+            channels
+                .audio_output
+                .send(move |audio| {
+                    audio.insert_installation(id);
+                })
+                .expect("failed to send loaded installation to audio output thread");
         }
 
         // Soundscape groups to the soundscape thread.
@@ -610,6 +649,12 @@ where
     }
 }
 
+/// Search for and return the next available installation ID.
+pub fn next_installation_id(installations: &Installations) -> installation::Id {
+    let next_id = installations.keys().map(|id| id.0).fold(0, cmp::max) + 1;
+    installation::Id(next_id)
+}
+
 /// Search for and return the next available group ID.
 pub fn next_soundscape_group_id(groups: &SoundscapeGroups) -> soundscape::group::Id {
     let next_id = groups.keys().map(|id| id.0).fold(0, cmp::max) + 1;
@@ -618,10 +663,7 @@ pub fn next_soundscape_group_id(groups: &SoundscapeGroups) -> soundscape::group:
 
 /// Given the map of speakers, produce the next available unique `Id`.
 pub fn next_speaker_id(speakers: &Speakers) -> audio::speaker::Id {
-    let next_id = speakers
-        .keys()
-        .map(|id| id.0)
-        .fold(0, cmp::max) + 1;
+    let next_id = speakers.keys().map(|id| id.0).fold(0, cmp::max) + 1;
     audio::speaker::Id(next_id)
 }
 
@@ -708,22 +750,27 @@ impl DerefMut for Source {
 }
 
 /// Create the default map of installations for a project.
-pub fn default_installations() -> Installations {
-    installation::ALL
+pub fn default_beyond_perception_installations() -> Installations {
+    installation::BEYOND_PERCEPTION_NAMES
         .iter()
-        .map(|&id| {
-            let computers = (0..id.default_num_computers())
+        .enumerate()
+        .map(|(i, &name)| {
+            let id = installation::Id(i);
+            let n_computers = installation::beyond_perception_default_num_computers(name)
+                .unwrap_or(0);
+            let osc_addr = installation::osc_addr_string(name);
+            let computers = (0..n_computers)
                 .map(|i| {
                     let computer = installation::computer::Id(i);
                     let socket = "127.0.0.1:9002".parse().unwrap();
-                    let osc_addr_base = id.default_osc_addr_str().to_string();
-                    let osc_addr = format!("/{}/{}", osc_addr_base, i);
+                    let osc_addr = osc_addr.clone();
                     let addr = installation::computer::Address { socket, osc_addr };
                     (computer, addr)
                 })
                 .collect();
             let soundscape = Default::default();
-            let installation = Installation { computers, soundscape };
+            let name = name.into();
+            let installation = Installation { name, computers, soundscape };
             (id, installation)
         })
         .collect()

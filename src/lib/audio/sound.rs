@@ -87,6 +87,12 @@ pub struct ChannelPoints<'a> {
     index: usize,
 }
 
+#[derive(Debug)]
+pub enum Installations {
+    All,
+    Set(FxHashSet<installation::Id>),
+}
+
 impl Shared {
     /// Whether or not the soundscape is currently playing.
     pub fn is_playing(&self) -> bool {
@@ -410,12 +416,6 @@ impl Sound {
     pub fn source_id(&self) -> source::Id {
         self.shared.source_id
     }
-}
-
-#[derive(Debug)]
-pub enum Installations {
-    All,
-    Set(FxHashSet<installation::Id>),
 }
 
 impl From<Option<source::Role>> for Installations {
