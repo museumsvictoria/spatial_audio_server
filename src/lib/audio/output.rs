@@ -600,10 +600,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     ..
                 } = *installation;
 
-                let n_speakers = speakers.iter()
-                    .filter(|&(_, ref s)| s.speaker.installations.contains(&id))
-                    .count();
-
+                let n_speakers = speaker_analyses.len();
 
                 // Feed the buffer into the FFT detector, normalised for the number of speakers in
                 // the installation..

@@ -175,7 +175,7 @@ pub struct Model {
     /// A handle for submitting new sounds to the output stream.
     audio_output_stream: audio::output::Stream,
     // A handle to the ticker thread.
-    tick_thread: thread::JoinHandle<()>,
+    _tick_thread: thread::JoinHandle<()>,
 }
 
 // Data related to the suitability of a group or source for selection of use within the soundscape.
@@ -673,7 +673,7 @@ pub fn spawn(
     // Spawn a thread to generate and send ticks.
     let tick_tx = tx.clone();
     let tick_is_playing = is_playing.clone();
-    let tick_thread = thread::Builder::new()
+    let _tick_thread = thread::Builder::new()
         .name("soundscape_ticker".into())
         .spawn(move || {
             let mut last = time::Instant::now();
@@ -737,7 +737,7 @@ pub fn spawn(
         audio_input_stream,
         audio_output_stream,
         sound_id_gen,
-        tick_thread,
+        _tick_thread,
     };
 
     // Spawn the soundscape thread.

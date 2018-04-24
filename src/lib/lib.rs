@@ -34,7 +34,6 @@ mod camera;
 mod config;
 mod gui;
 mod installation;
-mod interaction;
 mod master;
 mod metres;
 mod project;
@@ -79,7 +78,7 @@ fn model(app: &App) -> Model {
         .unwrap_or_else(|err| {
             panic!("failed to create OSC receiver bound to port {}: {}", config.osc_input_port, err)
         });
-    let (_osc_in_thread_handle, osc_in_log_rx, interaction_rx) = osc::input::spawn(osc_receiver);
+    let (_osc_in_thread_handle, osc_in_log_rx, control_rx) = osc::input::spawn(osc_receiver);
 
     // Spawn the OSC output thread.
     let (_osc_out_thread_handle, osc_out_msg_tx, osc_out_log_rx) = osc::output::spawn();
@@ -154,7 +153,7 @@ fn model(app: &App) -> Model {
         osc_in_log_rx,
         osc_out_log_rx,
         osc_out_msg_tx,
-        interaction_rx,
+        control_rx,
         soundscape.clone(),
         audio_input_stream.clone(),
         audio_output_stream.clone(),

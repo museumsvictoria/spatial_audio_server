@@ -158,12 +158,6 @@ pub mod movement {
     use nannou::prelude::PI_F64;
     use utils::Range;
 
-    /// The number of movement options.
-    pub const NUM_MOVEMENT_OPTIONS: usize = 2;
-
-    /// The number of Generative movement options.
-    pub const NUM_GENERATIVE_OPTIONS: usize = 1;
-
     /// The absolute maximum speed of an agent.
     pub const MAX_SPEED: f64 = 20.0;
 

@@ -7,14 +7,14 @@ pub fn set(
     gui: &mut Gui,
     project: &Project,
 ) -> widget::Id {
-    let is_open = gui.state.is_open.interaction_log;
+    let is_open = gui.state.is_open.control_log;
     let log_canvas_h = 200.0;
-    let (area, event) = collapsible_area(is_open, "Interaction Log", gui.ids.side_menu)
+    let (area, event) = collapsible_area(is_open, "Control Log", gui.ids.side_menu)
         .align_middle_x_of(gui.ids.side_menu)
         .down_from(last_area_id, 0.0)
-        .set(gui.ids.interaction_log, gui);
+        .set(gui.ids.control_log, gui);
     if let Some(event) = event {
-        gui.state.is_open.interaction_log = event.is_open();
+        gui.state.is_open.control_log = event.is_open();
     }
 
     if let Some(area) = area {
@@ -26,30 +26,30 @@ pub fn set(
         area.set(canvas, gui);
 
         // The text widget used to display the log.
-        let log_string = match gui.state.interaction_log.len() {
+        let control_string = match gui.state.control_log.len() {
             0 => format!(
-                "No interactions received yet.\nListening on port {}...",
+                "No control values received yet.\nListening on port {}...",
                 project.config.osc_input_port,
             ),
-            _ => gui.state.interaction_log.format(),
+            _ => gui.state.control_log.format(),
         };
-        info_text(&log_string)
+        info_text(&control_string)
             .top_left_of(area.id)
             .kid_area_w_of(area.id)
-            .set(gui.ids.interaction_log_text, gui);
+            .set(gui.ids.control_log_text, gui);
 
         // Scrollbars.
         widget::Scrollbar::y_axis(area.id)
             .color(color::LIGHT_CHARCOAL)
             .auto_hide(false)
-            .set(gui.ids.interaction_log_scrollbar_y, gui);
+            .set(gui.ids.control_log_scrollbar_y, gui);
         widget::Scrollbar::x_axis(area.id)
             .color(color::LIGHT_CHARCOAL)
             .auto_hide(true)
-            .set(gui.ids.interaction_log_scrollbar_x, gui);
+            .set(gui.ids.control_log_scrollbar_x, gui);
 
         area.id
     } else {
-        gui.ids.interaction_log
+        gui.ids.control_log
     }
 }

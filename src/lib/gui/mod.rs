@@ -2,7 +2,6 @@ use audio;
 use camera::Camera;
 use config::Config;
 use fxhash::FxHashMap;
-use interaction::Interaction;
 use metres::Metres;
 use nannou;
 use nannou::prelude::*;
@@ -30,7 +29,7 @@ use self::speaker_editor::SpeakerEditor;
 
 mod custom_widget;
 pub mod installation_editor;
-pub mod interaction_log;
+pub mod control_log;
 pub mod master;
 pub mod monitor;
 pub mod osc_in_log;
@@ -100,8 +99,8 @@ pub struct State {
     osc_in_log: Log<OscInputLog>,
     /// A log of the most recently sent OSC messages for testing/debugging/monitoring.
     osc_out_log: Log<OscOutputLog>,
-    /// A log of the most recently received Interactions for testing/debugging/monitoring.
-    interaction_log: InteractionLog,
+    /// A log of the most recently received controls for testing/debugging/monitoring.
+    control_log: ControlLog,
     /// State related to the project editor.
     project_editor: ProjectEditor,
     /// Whether or not each of the collapsible areas are open within the sidebar.
@@ -119,7 +118,7 @@ struct IsOpen {
     side_menu: bool,
     osc_in_log: bool,
     osc_out_log: bool,
-    interaction_log: bool,
+    control_log: bool,
 }
 
 /// The number of audio input and output channels available on the input and output devices.
@@ -133,7 +132,7 @@ pub struct Channels {
     pub osc_in_log_rx: mpsc::Receiver<OscInputLog>,
     pub osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
     pub osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
-    pub interaction_rx: mpsc::Receiver<Interaction>,
+    pub control_rx: mpsc::Receiver<osc::input::Control>,
     pub soundscape: Soundscape,
     pub audio_input: audio::input::Stream,
     pub audio_output: audio::output::Stream,
@@ -161,7 +160,7 @@ struct Log<T> {
     limit: usize,
 }
 
-type InteractionLog = Log<Interaction>;
+type ControlLog = Log<osc::input::Control>;
 
 // A structure for monitoring the state of the audio thread for visualisation.
 struct AudioMonitor {
@@ -237,7 +236,7 @@ impl Default for IsOpen {
             source_editor: false,
             osc_in_log: false,
             osc_out_log: false,
-            interaction_log: false,
+            control_log: false,
         }
     }
 }
@@ -324,7 +323,7 @@ impl Model {
 
     /// Update the GUI model.
     ///
-    /// - Collect pending OSC and interaction messages for the logs.
+    /// - Collect pending OSC and control messages for the logs.
     /// - Instantiate the Ui's widgets.
     pub fn update(&mut self, default_project_config: &project::Config) {
         let Model {
@@ -350,9 +349,66 @@ impl Model {
             state.osc_out_log.push_msg(log);
         }
 
-        // Collect interactions for the interaction log.
-        for interaction in channels.interaction_rx.try_iter() {
-            state.interaction_log.push_msg(interaction);
+        // Handle control messages.
+        for control in channels.control_rx.try_iter() {
+            match &control {
+                &osc::input::Control::MasterVolume(osc::input::MasterVolume(volume)) => {
+                    // Update local copy.
+                    if let Some((ref mut project, _)) = *project {
+                        project.master.volume = volume;
+                    }
+
+                    // Update the audio output copy.
+                    channels
+                        .audio_output
+                        .send(move |audio| audio.master_volume = volume)
+                        .ok();
+                },
+
+                &osc::input::Control::SourceVolume(ref source_volume) => {
+                    let osc::input::SourceVolume { ref name, volume } = *source_volume;
+
+                    let project = match *project {
+                        None => continue,
+                        Some((ref mut proj, _)) => proj,
+                    };
+
+                    // Update local copy.
+                    let id = match project
+                        .state
+                        .sources
+                        .iter_mut()
+                        .find(|&(_, ref s)| &s.name[..] == name)
+                    {
+                        None => continue,
+                        Some((&id, ref mut source)) => {
+                            source.volume = volume;
+                            id
+                        },
+                    };
+
+                    // Update the soundscape copy.
+                    channels
+                        .soundscape
+                        .send(move |soundscape| {
+                            soundscape.update_source(&id, |source| source.volume = volume);
+                        })
+                        .expect("could not update source volume on soundscape");
+
+                    // Update the audio output copies.
+                    channels
+                        .audio_output
+                        .send(move |audio| {
+                            audio.update_sounds_with_source(&id, move |_, sound| {
+                                sound.volume = volume;
+                            });
+                        })
+                        .ok();
+                }
+            }
+
+            // Log the message.
+            state.control_log.push_msg(control);
         }
 
         // Update the map of active sounds.
@@ -480,13 +536,13 @@ impl State {
     fn new(config: &project::Config, audio_channels: AudioChannels) -> Self {
         let osc_in_log = Log::with_limit(config.osc_input_log_limit);
         let osc_out_log = Log::with_limit(config.osc_output_log_limit);
-        let interaction_log = Log::with_limit(config.interaction_log_limit);
+        let control_log = Log::with_limit(config.control_log_limit);
         let is_open = Default::default();
         let project_editor = ProjectEditor::default();
         State {
             osc_in_log,
             osc_out_log,
-            interaction_log,
+            control_log,
             audio_channels,
             project_editor,
             is_open,
@@ -500,7 +556,7 @@ impl Channels {
         osc_in_log_rx: mpsc::Receiver<OscInputLog>,
         osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
         osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
-        interaction_rx: mpsc::Receiver<Interaction>,
+        control_rx: mpsc::Receiver<osc::input::Control>,
         soundscape: Soundscape,
         audio_input: audio::input::Stream,
         audio_output: audio::output::Stream,
@@ -510,7 +566,7 @@ impl Channels {
             osc_in_log_rx,
             osc_out_log_rx,
             osc_out_msg_tx,
-            interaction_rx,
+            control_rx,
             soundscape,
             audio_input,
             audio_output,
@@ -627,13 +683,13 @@ impl Log<OscOutputLog> {
     }
 }
 
-impl InteractionLog {
+impl ControlLog {
     // Format the log in a single string of messages.
     fn format(&self) -> String {
         let mut s = String::new();
         let mut index = self.start_index + self.deque.len();
-        for &interaction in &self.deque {
-            let line = format!("{}: {:?}\n", index, interaction);
+        for control in &self.deque {
+            let line = format!("{}: {:?}\n", index, control);
             s.push_str(&line);
             index -= 1;
         }
@@ -741,11 +797,11 @@ widget_ids! {
         osc_out_log_text,
         osc_out_log_scrollbar_y,
         osc_out_log_scrollbar_x,
-        // Interaction Log.
-        interaction_log,
-        interaction_log_text,
-        interaction_log_scrollbar_y,
-        interaction_log_scrollbar_x,
+        // Control Log.
+        control_log,
+        control_log_text,
+        control_log_scrollbar_y,
+        control_log_scrollbar_x,
         // Installation Editor.
         installation_editor,
         installation_editor_list,
@@ -986,11 +1042,11 @@ fn set_side_menu_widgets(
         // For adding, changing and removing audio sources.
         last_area_id = source_editor::set(last_area_id, gui, project, project_state);
 
+        // The log of received controls.
+        last_area_id = control_log::set(last_area_id, gui, project);
+
         // The log of received OSC messages.
         last_area_id = osc_in_log::set(last_area_id, gui, project);
-
-        // The log of received Interactions.
-        last_area_id = interaction_log::set(last_area_id, gui, project);
     }
 
     // The log of sent OSC messages.
