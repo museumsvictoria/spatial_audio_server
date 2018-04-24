@@ -804,7 +804,11 @@ widget_ids! {
         control_log_scrollbar_x,
         // Installation Editor.
         installation_editor,
+        installation_editor_none,
         installation_editor_list,
+        installation_editor_add,
+        installation_editor_remove,
+        installation_editor_name,
         installation_editor_selected_canvas,
         installation_editor_computer_canvas,
         installation_editor_computer_text,

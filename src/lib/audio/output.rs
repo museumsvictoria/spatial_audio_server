@@ -19,7 +19,7 @@ use rustfft::num_complex::Complex;
 use rustfft::num_traits::Zero;
 use soundscape;
 use std;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::sync::mpsc;
 use time_calc::Samples;
 use utils;
@@ -94,6 +94,25 @@ impl Deref for ActiveSound {
     type Target = Sound;
     fn deref(&self) -> &Self::Target {
         &self.sound
+    }
+}
+
+impl DerefMut for ActiveSound {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.sound
+    }
+}
+
+impl Deref for ActiveSpeaker {
+    type Target = Speaker;
+    fn deref(&self) -> &Self::Target {
+        &self.speaker
+    }
+}
+
+impl DerefMut for ActiveSpeaker {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.speaker
     }
 }
 
@@ -183,20 +202,7 @@ impl Model {
         let exhausted_sounds = Vec::with_capacity(128);
 
         // A map from installations to their audio data and speaker analyses that can be re-used.
-        let installations = installation::ALL
-            .iter()
-            .map(|&id| {
-                let speaker_analyses = Vec::with_capacity(MAX_CHANNELS);
-                let buffer = Vec::with_capacity(1024);
-                let fft_detector = FftDetector::new();
-                let installation = Installation {
-                    speaker_analyses,
-                    buffer,
-                    fft_detector,
-                };
-                (id, installation)
-            })
-            .collect();
+        let installations = Default::default();
 
         // A buffer to re-use for DBAP speaker calculations.
         let dbap_speakers = Vec::with_capacity(MAX_CHANNELS);
@@ -244,6 +250,40 @@ impl Model {
         }
     }
 
+    /// Insert an installation for the given `Id`.
+    ///
+    /// Returns `true` if the installation did not yet exist or false otherwise.
+    pub fn insert_installation(&mut self, id: installation::Id) -> bool {
+        let speaker_analyses = Vec::with_capacity(MAX_CHANNELS);
+        let buffer = Vec::with_capacity(1024);
+        let fft_detector = FftDetector::new();
+        let installation = Installation {
+            speaker_analyses,
+            buffer,
+            fft_detector,
+        };
+        self.installations.insert(id, installation).is_none()
+    }
+
+    /// Remove the installation at the given `Id`.
+    ///
+    /// Also removes the installation from all speakers that have been assigned to it.
+    ///
+    /// Returns `true` if the installation was successfully removed.
+    ///
+    /// Returns `false` if there was no installation for the given `Id`.
+    pub fn remove_installation(&mut self, id: &installation::Id) -> bool {
+        for speaker in self.speakers.values_mut() {
+            speaker.installations.remove(id);
+        }
+        for sound in self.sounds.values_mut() {
+            if let sound::Installations::Set(ref mut set) = sound.installations {
+                set.remove(id);
+            }
+        }
+        self.installations.remove(id).is_some()
+    }
+
     /// Inserts the speaker and sends an `Add` message to the GUI.
     pub fn insert_speaker(&mut self, id: speaker::Id, speaker: Speaker) -> Option<Speaker> {
         // Re-use the old detectors if there are any.
@@ -287,7 +327,7 @@ impl Model {
             .unwrap_or(false)
     }
 
-    /// Inserts the sound and sends an `Start` active sound message to the GUI.
+    /// Inserts the sound and sends a `Start` active sound message to the GUI.
     pub fn insert_sound(&mut self, id: sound::Id, sound: ActiveSound) -> Option<ActiveSound> {
         let position = sound.position;
         let channels = sound.channels;
@@ -368,6 +408,7 @@ impl Model {
         self.frame_count = 0;
         self.soloed.clear();
         self.speakers.clear();
+        self.installations.clear();
 
         let Model { ref mut sounds, ref gui_audio_monitor_msg_tx, .. } = *self;
         for (sound_id, sound) in sounds.drain() {

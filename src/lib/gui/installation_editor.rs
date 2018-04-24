@@ -16,7 +16,8 @@ pub struct InstallationEditor {
 
 /// The currently selected installation.
 pub struct Selected {
-    index: usize,
+    id: installation::Id,
+    name: String,
     selected_computer: Option<SelectedComputer>,
 }
 
@@ -59,7 +60,9 @@ pub fn set(
     } = *project_state;
 
     // The height of the list of installations.
-    const LIST_HEIGHT: Scalar = ITEM_HEIGHT * 5.0;
+    const LIST_HEIGHT: Scalar = ITEM_HEIGHT * 4.0;
+    const ADD_H: Scalar = ITEM_HEIGHT;
+    const NAME_H: Scalar = ITEM_HEIGHT;
     const COMPUTER_LIST_HEIGHT: Scalar = ITEM_HEIGHT * 3.0;
     const PAD: Scalar = 6.0;
     const TEXT_PAD: Scalar = PAD * 2.0;
@@ -74,13 +77,14 @@ pub fn set(
     let computer_canvas_h = ITEM_HEIGHT + PAD + ITEM_HEIGHT + PAD + COMPUTER_LIST_HEIGHT;
     let soundscape_canvas_h = PAD + PAD * 3.0 + PAD + SLIDER_H + PAD;
     let selected_canvas_h = PAD
+        + NAME_H + PAD
         + computer_canvas_h + PAD
         + osc_canvas_h + PAD
         + soundscape_canvas_h + PAD;
 
     // The total height of the installation editor as a sum of the previous heights plus necessary
     // padding.
-    let installation_editor_h = LIST_HEIGHT + selected_canvas_h;
+    let installation_editor_h = LIST_HEIGHT + ADD_H + selected_canvas_h;
 
     let (area, event) = collapsible_area(is_open.installation_editor, "Installation Editor", ids.side_menu)
         .align_middle_x_of(ids.side_menu)
@@ -100,8 +104,58 @@ pub fn set(
     let canvas = widget::Canvas::new().pad(0.0).h(installation_editor_h);
     area.set(canvas, ui);
 
+    // A button for adding new installations.
+    for _click in widget::Button::new()
+        .label("+")
+        .kid_area_w_of(area.id)
+        .mid_top_with_margin_on(area.id, LIST_HEIGHT)
+        .h(ADD_H)
+        .set(ids.installation_editor_add, ui)
+    {
+        // Add a new installation.
+        let installation = installation::Installation::default();
+        let id = project::next_installation_id(installations);
+        let clone = installation.soundscape.clone();
+        let name = installation.name.clone();
+        installations.insert(id, installation);
+        let selected_computer = None;
+        *selected = Some(Selected { id, name, selected_computer });
+
+        // Update the soundscape thread.
+        channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.insert_installation(id, clone);
+            })
+            .ok();
+
+        // Update the audio output.
+        channels
+            .audio_output
+            .send(move |audio| {
+                audio.insert_installation(id);
+            })
+            .ok();
+    }
+
+    // If there are no installations, display some text for adding one.
+    if installations.is_empty() {
+        widget::Text::new("Add an installation with the \"+\" button below!")
+            .font_size(SMALL_FONT_SIZE)
+            .align_middle_x_of(area.id)
+            .down(PAD + ITEM_HEIGHT)
+            .set(ids.installation_editor_none, ui);
+        return area.id;
+    }
+
+    // The list of installation names sorted in alphabetical order.
+    let mut installations_vec: Vec<_> = installations.keys().cloned().collect();
+
+    // Sort the names.
+    installations_vec.sort_by(|a, b| a.0.cmp(&b.0));
+
     // Display the installation list.
-    let num_items = installation::ALL.len();
+    let num_items = installations.len();
     let (mut events, scrollbar) = widget::ListSelect::single(num_items)
         .item_size(ITEM_HEIGHT)
         .h(LIST_HEIGHT)
@@ -111,21 +165,28 @@ pub fn set(
         .scrollbar_next_to()
         .set(ids.installation_editor_list, ui);
 
-    while let Some(event) = events.next(ui, |i| selected.as_ref().map(|s| s.index) == Some(i)) {
+    // Track whether or not an item was removed.
+    let mut maybe_remove_index = None;
+
+    // The index of the selected installation.
+    let selected_index = selected.as_ref()
+        .and_then(|s| installations_vec.iter().position(|&id| id == s.id));
+
+    while let Some(event) = events.next(ui, |i| selected_index == Some(i)) {
         use nannou::ui::widget::list_select::Event;
         match event {
             // Instantiate a button for each installation.
             Event::Item(item) => {
-                let installation =
-                    installation::Id::from_usize(item.i).expect("no installation for index");
-                let is_selected = selected.as_ref().map(|s| s.index) == Some(item.i);
+                let id = installations_vec[item.i];
+                let label = &installations[&id].name;
+                let is_selected = selected_index == Some(item.i);
+
                 // Blue if selected, gray otherwise.
                 let color = if is_selected {
                     color::BLUE
                 } else {
                     color::CHARCOAL
                 };
-                let label = installation.display_str();
 
                 // Use `Button`s for the selectable items.
                 let button = widget::Button::new()
@@ -136,18 +197,49 @@ pub fn set(
                     ))))
                     .color(color);
                 item.set(button, ui);
+
+                // If the button or any of its children are capturing the mouse, display
+                // the `remove` button.
+                let show_remove_button = ui.global_input()
+                    .current
+                    .widget_capturing_mouse
+                    .map(|id| {
+                        id == item.widget_id
+                            || ui.widget_graph()
+                                .does_recursive_depth_edge_exist(item.widget_id, id)
+                    })
+                    .unwrap_or(false);
+
+                if !show_remove_button {
+                    continue;
+                }
+
+                if widget::Button::new()
+                    .label("X")
+                    .label_font_size(SMALL_FONT_SIZE)
+                    .color(color::DARK_RED.alpha(0.5))
+                    .w_h(ITEM_HEIGHT, ITEM_HEIGHT)
+                    .align_right_of(item.widget_id)
+                    .align_middle_y_of(item.widget_id)
+                    .parent(item.widget_id)
+                    .set(ids.installation_editor_remove, ui)
+                    .was_clicked()
+                {
+                    maybe_remove_index = Some(item.i);
+                }
             }
 
-            // Update the selected source.
+            // Update the selected installation.
             Event::Selection(index) => {
-                let id = installation::Id::from_usize(index).expect("no installation for index");
-                let addresses = &installations[&id].computers;
-                let selected_computer = match addresses.len() {
+                let id = installations_vec[index];
+                let installation = &installations[&id];
+                let name = installation.name.clone();
+                let selected_computer = match installation.computers.len() {
                     0 => None,
                     _ => {
                         let computer = installation::computer::Id(0);
                         let (socket_string, osc_addr) = {
-                            let address = &addresses[&computer];
+                            let address = &installation.computers[&computer];
                             (format!("{}", address.socket), address.osc_addr.clone())
                         };
                         Some(SelectedComputer {
@@ -158,7 +250,8 @@ pub fn set(
                     }
                 };
                 *selected = Some(Selected {
-                    index,
+                    id,
+                    name,
                     selected_computer,
                 });
             }
@@ -167,8 +260,46 @@ pub fn set(
         }
     }
 
+    // Instantiate the scrollbar widget if necessary.
     if let Some(scrollbar) = scrollbar {
         scrollbar.set(ui);
+    }
+
+    // Remove an installation if necessary.
+    if let Some(i) = maybe_remove_index {
+        let id = installations_vec.remove(i);
+
+        // Unselect the removed group.
+        if selected.as_ref().map(|s| s.id) == Some(id) {
+            *selected = None;
+        }
+
+        // Remove the local copy from the map.
+        installations.remove(&id);
+
+        // Remove this installation from the soundscape thread.
+        channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.remove_installation(&id);
+            })
+            .ok();
+
+        // Remove this installation from the audio output thread.
+        channels
+            .audio_output
+            .send(move |audio| {
+                audio.remove_installation(&id);
+            })
+            .ok();
+
+        // Remove this installation from the OSC output thread.
+        let rem = osc::output::OscTarget::RemoveInstallation(id);
+        let msg = osc::output::Message::Osc(rem);
+        channels
+            .osc_out_msg_tx
+            .send(msg)
+            .ok();
     }
 
     let area_rect = ui.rect_of(area.id).unwrap();
@@ -193,14 +324,61 @@ pub fn set(
     };
 
     let Selected {
-        ref mut index,
+        id,
+        ref mut name,
         ref mut selected_computer,
     } = *selected;
-    let id = installation::Id::from_usize(*index).expect("no installation for index");
+
+    // A textbox for editing the name of the installation.
+    let color = if name == &installations[&id].name {
+        color::BLACK
+    } else {
+        if installations.values().any(|inst| &inst.name == name) || name == "" {
+            color::DARK_RED
+        } else {
+            color::DARK_GREEN
+        }
+    };
+    for event in widget::TextBox::new(name)
+        .w(selected_canvas_kid_area.w())
+        .h(NAME_H)
+        .color(color)
+        .font_size(SMALL_FONT_SIZE)
+        .mid_top_of(ids.installation_editor_selected_canvas)
+        .set(ids.installation_editor_name, ui)
+    {
+        use nannou::ui::widget::text_box::Event;
+        match event {
+            Event::Update(s) => *name = s,
+            Event::Enter => {
+                // Update name and computer OSC addresses.
+                let installation = installations.get_mut(&id).unwrap();
+                installation.name = name.clone();
+
+                // Send updated addresses.
+                let osc_addr_base = installation::osc_addr_string(&installation.name);
+                for (&c_id, computer) in installation.computers.iter_mut() {
+                    let osc_addr = format!("/{}", osc_addr_base);
+
+                    // Update local copy.
+                    computer.osc_addr = osc_addr.clone();
+
+                    // Update osc copy.
+                    let update = osc::output::OscTarget::UpdateAddr(id, c_id, osc_addr);
+                    let msg = osc::output::Message::Osc(update);
+                    channels
+                        .osc_out_msg_tx
+                        .send(msg)
+                        .expect("could not update OSC target computer address");
+                }
+            },
+        }
+    }
 
     // The canvas for displaying the computer selection / editor.
     widget::Canvas::new()
-        .mid_top_of(ids.installation_editor_selected_canvas)
+        .middle_of(ids.installation_editor_selected_canvas)
+        .down_from(ids.installation_editor_name, PAD)
         .color(color::CHARCOAL)
         .w(selected_canvas_kid_area.w())
         .h(computer_canvas_h)
@@ -239,8 +417,7 @@ pub fn set(
             for i in n_computers..n {
                 let computer = installation::computer::Id(i);
                 let socket = "127.0.0.1:9002".parse().unwrap();
-                let osc_addr_base = id.default_osc_addr_str();
-                let osc_addr = format!("/{}/{}", osc_addr_base, i);
+                let osc_addr = installation::osc_addr_string(&installation.name);
                 let osc_tx = match osc_sender(&socket) {
                     Err(err) => {
                         eprintln!("failed to connect localhost OSC sender: {}", err);

@@ -360,6 +360,29 @@ impl Model {
         self.installations.insert(installation, state)
     }
 
+    /// Remove the given installation.
+    ///
+    /// Also removes the installation from all sources and speakers assignments.
+    ///
+    /// TODO: Possibly remove all active sounds currently closest to the installation?
+    pub fn remove_installation(
+        &mut self,
+        id: &installation::Id,
+    ) -> Option<installation::Soundscape>
+    {
+        // Remove from speakers.
+        for speaker in self.speakers.values_mut() {
+            speaker.installations.remove(id);
+        }
+
+        // Remove from sources.
+        for source in self.sources.values_mut() {
+            source.installations.remove(id);
+        }
+
+        self.installations.remove(id)
+    }
+
     /// Update the given installation's state.
     ///
     /// Returns `false` if the installation was not there.
@@ -1021,7 +1044,7 @@ fn generate_movement(
 // A unique, constant seed associated with the installation.
 fn installation_seed(installation: &installation::Id) -> [u32; 4] {
     // Convert the installation to its integer representation.
-    let u = installation.to_u32();
+    let u = installation.0 as u32;
     let seed = [u; 4];
     seed
 }

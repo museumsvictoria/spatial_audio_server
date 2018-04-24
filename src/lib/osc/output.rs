@@ -22,6 +22,8 @@ pub enum OscTarget {
         String,
     ),
     Remove(installation::Id, installation::computer::Id),
+    RemoveInstallation(installation::Id),
+    UpdateAddr(installation::Id, installation::computer::Id, String),
 }
 
 /// Data related to a single frame of audio.
@@ -145,6 +147,16 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
                     OscTarget::Remove(installation, computer) => {
                         if let Some(txs) = osc_txs.get_mut(&installation) {
                             txs.remove(&computer);
+                        }
+                    }
+                    OscTarget::RemoveInstallation(installation) => {
+                        osc_txs.remove(&installation);
+                    }
+                    OscTarget::UpdateAddr(installation, computer, addr) => {
+                        if let Some(txs) = osc_txs.get_mut(&installation) {
+                            if let Some(comp) = txs.get_mut(&computer) {
+                                comp.osc_addr = addr;
+                            }
                         }
                     }
                 },

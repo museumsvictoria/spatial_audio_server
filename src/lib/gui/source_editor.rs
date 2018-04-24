@@ -3,7 +3,6 @@ use audio::source::Role;
 use audio::source::wav::Playback;
 use gui::{collapsible_area, duration_label, hz_label, Gui, ProjectState, State};
 use gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
-use installation;
 use metres::Metres;
 use nannou::prelude::*;
 use nannou::ui;
@@ -77,6 +76,7 @@ pub fn set(
             ref camera,
             ref master,
             ref soundscape_groups,
+            ref installations,
             ref mut sources,
             ..
         },
@@ -1253,7 +1253,7 @@ pub fn set(
         Some(Role::Soundscape(soundscape)) => {
             // Destructure the soundscape roll to its fields.
             let audio::source::Soundscape {
-                mut installations,
+                installations: mut source_installations,
                 groups,
                 occurrence_rate,
                 simultaneous_sounds,
@@ -1283,14 +1283,14 @@ pub fn set(
             // A dropdownlist for assigning installations to the source.
             //
             // Only show installations that aren't yet assigned.
-            let installations_vec = installation::ALL
-                .iter()
-                .filter(|inst| !installations.contains(inst))
+            let installations_vec = installations
+                .keys()
+                .filter(|inst| !source_installations.contains(inst))
                 .cloned()
                 .collect::<Vec<_>>();
             let installation_strs = installations_vec
                 .iter()
-                .map(installation::Id::display_str)
+                .map(|inst_id| &installations[inst_id].name)
                 .collect::<Vec<_>>();
             for index in widget::DropDownList::new(&installation_strs, None)
                 .align_middle_x_of(ids.source_editor_selected_installations_canvas)
@@ -1302,7 +1302,7 @@ pub fn set(
                 .set(ids.source_editor_selected_installations_ddl, ui)
             {
                 let installation = installations_vec[index];
-                installations.insert(installation);
+                source_installations.insert(installation);
 
                 // Update the local copy.
                 let source = sources.get_mut(&id).unwrap();
@@ -1328,8 +1328,10 @@ pub fn set(
             }
 
             // A scrollable list showing each of the assigned installations.
-            let mut selected_installations = installations.iter().cloned().collect::<Vec<_>>();
-            selected_installations.sort_by(|a, b| a.display_str().cmp(b.display_str()));
+            let mut selected_installations = source_installations.iter().cloned().collect::<Vec<_>>();
+            selected_installations.sort_by(|a, b| {
+                installations[&a].name.cmp(&installations[&b].name)
+            });
             let (mut items, scrollbar) = widget::List::flow_down(selected_installations.len())
                 .item_size(ITEM_HEIGHT)
                 .h(INSTALLATION_LIST_H)
@@ -1342,7 +1344,7 @@ pub fn set(
             let mut maybe_remove_index = None;
             while let Some(item) = items.next(ui) {
                 let inst = selected_installations[item.i];
-                let label = inst.display_str();
+                let label = &installations[&inst].name;
 
                 // Use `Button`s for the selectable items.
                 let button = widget::Button::new()
