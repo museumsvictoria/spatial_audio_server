@@ -200,8 +200,8 @@ pub fn set(
                             audio::source::Kind::Realtime(ref rt) => (
                                 format!(
                                     "[{}-{}CH RT] {}",
-                                    rt.channels.start,
-                                    rt.channels.end - 1,
+                                    rt.channels.start + 1,
+                                    (rt.channels.end - 1) + 1,
                                     source.name
                                 ),
                                 false,
@@ -907,7 +907,7 @@ pub fn set(
             let start_channel_indices = 0..realtime.channels.end;
             let start_channel_labels = start_channel_indices
                 .clone()
-                .map(|ch| format!("Start Channel: {}", ch))
+                .map(|ch| format!("Start Channel: {}", ch + 1))
                 .collect::<Vec<_>>();
             let selected_start = Some(realtime.channels.start as usize);
             let channel_w = ui.kid_area_of(ids.source_editor_selected_realtime_canvas)
@@ -932,7 +932,7 @@ pub fn set(
             let mut end_channel_indices = realtime.channels.start..audio_channels.input;
             let end_channel_labels = end_channel_indices
                 .clone()
-                .map(|ch| format!("End Channel: {}", ch))
+                .map(|ch| format!("End Channel: {}", ch + 1))
                 .collect::<Vec<_>>();
             let selected_end =
                 Some((realtime.channels.end - (realtime.channels.start + 1)) as usize);
