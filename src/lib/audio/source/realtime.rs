@@ -2,7 +2,7 @@
 
 use std::ops;
 use std::sync::mpsc;
-use time_calc::Ms;
+use time_calc::{Ms, Samples};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Realtime {
@@ -23,6 +23,7 @@ pub struct Realtime {
 pub struct Signal {
     pub sample_rx: mpsc::Receiver<f32>,
     pub channels: usize,
+    pub remaining_samples: Option<usize>,
 }
 
 impl Signal {
@@ -30,11 +31,24 @@ impl Signal {
     pub fn channels(&self) -> usize {
         self.channels
     }
+
+    /// The number of frames remaining in the signal.
+    ///
+    /// Returns `None` if the signal is "continuous" or has no duration.
+    pub fn remaining_frames(&self) -> Option<Samples> {
+        self.remaining_samples.map(|s| Samples((s / self.channels) as _))
+    }
 }
 
 impl Iterator for Signal {
     type Item = f32;
     fn next(&mut self) -> Option<Self::Item> {
-        self.sample_rx.try_recv().ok()
+        self.sample_rx
+            .try_recv()
+            .ok()
+            .map(|sample| {
+                self.remaining_samples = self.remaining_samples.map(|n| n.saturating_sub(1));
+                sample
+            })
     }
 }

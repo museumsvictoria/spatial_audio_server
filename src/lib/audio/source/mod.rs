@@ -393,7 +393,7 @@ impl SignalKind {
     fn remaining_frames(&self) -> Option<Samples> {
         match *self {
             SignalKind::Wav { ref samples, .. } => samples.remaining_frames(),
-            SignalKind::Realtime { .. } => None,
+            SignalKind::Realtime { ref samples } => samples.remaining_frames(),
         }
     }
 
