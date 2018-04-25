@@ -23,7 +23,7 @@ The audio server runs on a single machine and is responsible for the following:
    - [Platforms](./README.md#platforms)
    - [Rust](./README.md#rust)
 2. [Packaging](./README.md#packaging)
-3. [Glossary / Common Terms](./README.md#glossary-common-terms)
+3. [Glossary / Common Terms](./README.md#glossary--common-terms)
 4. [Usage](./README.md#usage)
    - [Overview](./README.md#overview)
    - [Floorplan](./README.md#floorplan)
