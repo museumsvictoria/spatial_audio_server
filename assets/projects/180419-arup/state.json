@@ -1,0 +1,397 @@
+{
+  "name": "180419 Arup",
+  "master": {
+    "volume": 0.9730139,
+    "realtime_source_latency": 491.0824890136719,
+    "dbap_rolloff_db": 4.0
+  },
+  "installations": {
+    "WavesAtWork": {
+      "computers": {
+        "0": {
+          "socket": "127.0.0.1:9002",
+          "osc_addr": "/wave/0"
+        }
+      },
+      "soundscape": {
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 8
+        }
+      }
+    },
+    "Turret2": {
+      "computers": {},
+      "soundscape": {
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 8
+        }
+      }
+    },
+    "Cacophony": {
+      "computers": {
+        "0": {
+          "socket": "127.0.0.1:9002",
+          "osc_addr": "/caco/0"
+        }
+      },
+      "soundscape": {
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 8
+        }
+      }
+    },
+    "EnergeticVibrationsAudioVisualiser": {
+      "computers": {
+        "0": {
+          "socket": "127.0.0.1:9002",
+          "osc_addr": "/enav/0"
+        }
+      },
+      "soundscape": {
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 8
+        }
+      }
+    },
+    "Turret1": {
+      "computers": {},
+      "soundscape": {
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 8
+        }
+      }
+    },
+    "TurbulentEncounters": {
+      "computers": {
+        "0": {
+          "socket": "127.0.0.1:9002",
+          "osc_addr": "/turb/0"
+        }
+      },
+      "soundscape": {
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 8
+        }
+      }
+    },
+    "RipplesInSpacetime": {
+      "computers": {
+        "0": {
+          "socket": "127.0.0.1:9002",
+          "osc_addr": "/ripp/0"
+        },
+        "2": {
+          "socket": "127.0.0.1:9002",
+          "osc_addr": "/ripp/2"
+        },
+        "1": {
+          "socket": "127.0.0.1:9002",
+          "osc_addr": "/ripp/1"
+        },
+        "3": {
+          "socket": "127.0.0.1:9002",
+          "osc_addr": "/ripp/3"
+        }
+      },
+      "soundscape": {
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 8
+        }
+      }
+    },
+    "WrappedInSpectrum": {
+      "computers": {
+        "0": {
+          "socket": "127.0.0.1:9002",
+          "osc_addr": "/wrap/0"
+        },
+        "1": {
+          "socket": "127.0.0.1:9002",
+          "osc_addr": "/wrap/1"
+        }
+      },
+      "soundscape": {
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 100
+        }
+      }
+    },
+    "EnergeticVibrationsProjectionMapping": {
+      "computers": {
+        "0": {
+          "socket": "127.0.0.1:9002",
+          "osc_addr": "/enpm/0"
+        },
+        "2": {
+          "socket": "127.0.0.1:9002",
+          "osc_addr": "/enpm/2"
+        },
+        "1": {
+          "socket": "127.0.0.1:9002",
+          "osc_addr": "/enpm/1"
+        }
+      },
+      "soundscape": {
+        "simultaneous_sounds": {
+          "min": 1,
+          "max": 8
+        }
+      }
+    }
+  },
+  "soundscape_groups": {
+    "1": {
+      "name": "WiS - Loops",
+      "soundscape": {
+        "occurrence_rate": {
+          "min": 1.0,
+          "max": 240000.0
+        },
+        "simultaneous_sounds": {
+          "min": 2,
+          "max": 34
+        }
+      }
+    }
+  },
+  "speakers": {
+    "5": {
+      "name": "S5",
+      "audio": {
+        "point": {
+          "x": 24.74720145712243,
+          "y": 14.089068558961208
+        },
+        "channel": 4,
+        "installations": [
+          "WrappedInSpectrum"
+        ]
+      }
+    },
+    "2": {
+      "name": "S2",
+      "audio": {
+        "point": {
+          "x": 12.958159461536486,
+          "y": 14.099610089448325
+        },
+        "channel": 1,
+        "installations": [
+          "WrappedInSpectrum"
+        ]
+      }
+    },
+    "4": {
+      "name": "S4",
+      "audio": {
+        "point": {
+          "x": 22.078621750385197,
+          "y": 14.127798491413853
+        },
+        "channel": 3,
+        "installations": [
+          "WrappedInSpectrum"
+        ]
+      }
+    },
+    "1": {
+      "name": "S1",
+      "audio": {
+        "point": {
+          "x": 10.822189126648065,
+          "y": 14.117198720426814
+        },
+        "channel": 0,
+        "installations": [
+          "WrappedInSpectrum"
+        ]
+      }
+    },
+    "6": {
+      "name": "S6",
+      "audio": {
+        "point": {
+          "x": 27.215433844104589,
+          "y": 14.092271786457296
+        },
+        "channel": 5,
+        "installations": [
+          "WrappedInSpectrum"
+        ]
+      }
+    },
+    "3": {
+      "name": "S3",
+      "audio": {
+        "point": {
+          "x": 15.047712117981656,
+          "y": 14.113937252430797
+        },
+        "channel": 2,
+        "installations": [
+          "WrappedInSpectrum"
+        ]
+      }
+    }
+  },
+  "sources": {
+    "map": {
+      "84": {
+        "name": "Log Sine Sweep",
+        "audio": {
+          "kind": {
+            "Wav": {
+              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Log Sine Sweep.wav",
+              "channels": 2,
+              "duration": 1106106,
+              "sample_hz": 48000.0,
+              "should_loop": false,
+              "playback": "Retrigger"
+            }
+          },
+          "role": null,
+          "spread": 2.5,
+          "channel_radians": 1.5707964,
+          "volume": 0.6,
+          "muted": false
+        }
+      },
+      "81": {
+        "name": "Elemental - Chimes Big_3",
+        "audio": {
+          "kind": {
+            "Wav": {
+              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Chimes Big_3.wav",
+              "channels": 2,
+              "duration": 240000,
+              "sample_hz": 48000.0,
+              "should_loop": false,
+              "playback": "Retrigger"
+            }
+          },
+          "role": null,
+          "spread": 2.5,
+          "channel_radians": 1.5707964,
+          "volume": 0.6,
+          "muted": false
+        }
+      },
+      "86": {
+        "name": "Elemental - Electricity Impact_5",
+        "audio": {
+          "kind": {
+            "Wav": {
+              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Electricity Impact_5.wav",
+              "channels": 2,
+              "duration": 199312,
+              "sample_hz": 48000.0,
+              "should_loop": false,
+              "playback": "Retrigger"
+            }
+          },
+          "role": null,
+          "spread": 2.5,
+          "channel_radians": 1.5707964,
+          "volume": 0.6,
+          "muted": false
+        }
+      },
+      "83": {
+        "name": "Elemental - Flame Cast_3",
+        "audio": {
+          "kind": {
+            "Wav": {
+              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Flame Cast_3.wav",
+              "channels": 2,
+              "duration": 148660,
+              "sample_hz": 48000.0,
+              "should_loop": false,
+              "playback": "Retrigger"
+            }
+          },
+          "role": null,
+          "spread": 2.5,
+          "channel_radians": 1.5707964,
+          "volume": 0.6,
+          "muted": false
+        }
+      },
+      "80": {
+        "name": "Source 80",
+        "audio": {
+          "kind": {
+            "Realtime": {
+              "duration": 3000.0,
+              "channels": {
+                "start": 0,
+                "end": 1
+              }
+            }
+          },
+          "role": null,
+          "spread": 2.5,
+          "channel_radians": 1.5707964,
+          "volume": 0.6,
+          "muted": false
+        }
+      },
+      "85": {
+        "name": "Elemental - Air Movement_20",
+        "audio": {
+          "kind": {
+            "Wav": {
+              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Air Movement_20.wav",
+              "channels": 2,
+              "duration": 167556,
+              "sample_hz": 48000.0,
+              "should_loop": false,
+              "playback": "Retrigger"
+            }
+          },
+          "role": null,
+          "spread": 2.5,
+          "channel_radians": 1.5707964,
+          "volume": 0.6,
+          "muted": false
+        }
+      },
+      "82": {
+        "name": "Elemental - Air Movement_13",
+        "audio": {
+          "kind": {
+            "Wav": {
+              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Air Movement_13.wav",
+              "channels": 2,
+              "duration": 143056,
+              "sample_hz": 48000.0,
+              "should_loop": false,
+              "playback": "Retrigger"
+            }
+          },
+          "role": null,
+          "spread": 2.5,
+          "channel_radians": 1.5707964,
+          "volume": 0.6,
+          "muted": false
+        }
+      }
+    },
+    "soloed": []
+  },
+  "camera": {
+    "position": {
+      "x": 18.8596944997387,
+      "y": 13.259216013501636
+    },
+    "zoom": 0.3032007162082089,
+    "floorplan_pixels_per_metre": 148.0
+  }
+}

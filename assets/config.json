@@ -5,7 +5,7 @@
     "osc_input_port": 9001,
     "osc_input_log_limit": 50,
     "osc_output_log_limit": 10,
-    "interaction_log_limit": 50,
+    "control_log_limit": 50,
     "floorplan_pixels_per_metre": 148.0,
     "min_speaker_radius_metres": 0.25,
     "max_speaker_radius_metres": 1.0,
