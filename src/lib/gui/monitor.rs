@@ -13,7 +13,7 @@ use std::sync::{mpsc, Arc};
 use std::sync::atomic::{self, AtomicBool};
 use std::thread;
 
-pub type Sender = mpsc::SyncSender<gui::AudioMonitorMessage>;
+pub type Sender = mpsc::Sender<gui::AudioMonitorMessage>;
 pub type Receiver = mpsc::Receiver<gui::AudioMonitorMessage>;
 pub type Spawned = (Monitor, Sender, Receiver);
 
@@ -39,8 +39,8 @@ impl Monitor {
 
 /// Spawn the intermediary monitoring thread and return the communication channels.
 pub fn spawn(app_proxy: nannou::app::Proxy) -> io::Result<Spawned> {
-    let (audio_tx, audio_rx) = mpsc::sync_channel(1024);
-    let (gui_tx, gui_rx) = mpsc::sync_channel(1024);
+    let (audio_tx, audio_rx) = mpsc::channel();
+    let (gui_tx, gui_rx) = mpsc::channel();
     let is_closed = Arc::new(AtomicBool::new(false));
     let is_closed_2 = is_closed.clone();
 
@@ -64,15 +64,14 @@ pub fn spawn(app_proxy: nannou::app::Proxy) -> io::Result<Spawned> {
 
                 // Process the messages.
                 for msg in msgs.drain(..) {
-                    match gui_tx.try_send(msg) {
-                        Ok(_) => {
+                    match gui_tx.send(msg) {
+                        Ok(()) => {
                             // if proxy.wakeup().is_err() {
                             //     eprintln!("audio_monitor proxy could not wakeup app");
                             //     break 'run;
                             // }
                         },
-                        Err(mpsc::TrySendError::Disconnected(_)) => break 'run,
-                        _ => (),
+                        Err(_) => break 'run,
                     }
                 }
             }
