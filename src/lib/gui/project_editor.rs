@@ -22,6 +22,7 @@ pub fn set(
 ) -> widget::Id {
     let Gui {
         ref mut ui,
+        ref mut audio_monitor,
         ref ids,
         ref channels,
         ref assets,
@@ -81,6 +82,7 @@ pub fn set(
         let new_project = Project::new(assets, default_project_config);
         new_project.save(assets).expect("failed to create new project directory");
         new_project.reset_and_sync_all_threads(channels);
+        audio_monitor.clear();
         let new_project_state = ProjectState::default();
         project_editor.text_box_name = new_project.name.clone();
         *project = Some((new_project, new_project_state));
@@ -105,6 +107,7 @@ pub fn set(
             new_project.name = format!("{} copy", new_project.name);
             new_project.save(assets).expect("failed to create new project directory");
             new_project.reset_and_sync_all_threads(channels);
+            audio_monitor.clear();
             let new_project_state = ProjectState::default();
             project_editor.text_box_name = new_project.name.clone();
             *project = Some((new_project, new_project_state));
@@ -263,6 +266,7 @@ pub fn set(
                 // Load the project.
                 let loaded_project = Project::load(assets, &project_directory, default_project_config);
                 loaded_project.reset_and_sync_all_threads(channels);
+                audio_monitor.clear();
                 let loaded_project_state = ProjectState::default();
                 selected_project_slug = Some(slugify(&loaded_project.name));
                 project_editor.text_box_name = loaded_project.name.clone();
@@ -302,6 +306,7 @@ pub fn set(
             // Load the project.
             let loaded_project = Project::load(assets, &directory, default_project_config);
             loaded_project.reset_and_sync_all_threads(channels);
+            audio_monitor.clear();
             let loaded_project_state = ProjectState::default();
             project_editor.text_box_name = loaded_project.name.clone();
             *project = Some((loaded_project, loaded_project_state));

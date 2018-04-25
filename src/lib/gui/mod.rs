@@ -72,7 +72,7 @@ pub struct Gui<'a> {
     images: &'a Images,
     ids: &'a mut Ids,
     state: &'a mut State,
-    audio_monitor: &'a AudioMonitor,
+    audio_monitor: &'a mut AudioMonitor,
     channels: &'a Channels,
     sound_id_gen: &'a audio::sound::IdGenerator,
     assets: &'a PathBuf,
@@ -163,10 +163,30 @@ struct Log<T> {
 type ControlLog = Log<osc::input::Control>;
 
 // A structure for monitoring the state of the audio thread for visualisation.
+#[derive(Default)]
 struct AudioMonitor {
     master_peak: f32,
     active_sounds: ActiveSoundMap,
     speakers: FxHashMap<audio::speaker::Id, ChannelLevels>,
+}
+
+impl AudioMonitor {
+    /// Clears all state and resets the last received master peak volume.
+    pub fn clear(&mut self) {
+        self.master_peak = 0.0;
+        self.active_sounds.clear();
+        self.speakers.clear();
+    }
+
+    /// Clears all invalid sounds and speakers from the monitor.
+    ///
+    /// - All `ActiveSound`s that have a `source::Id` that cannot be found in the project are
+    /// removed.
+    /// - All `Speaker`s that have a `speaker::Id` that cannot be found in the project are removed.
+    pub fn clear_invalid(&mut self, project: &Project) {
+        self.active_sounds.retain(|_, s| project.sources.contains_key(&s.source_id));
+        self.speakers.retain(|id, _| project.speakers.contains_key(id));
+    }
 }
 
 // The state of an active sound.
@@ -303,10 +323,7 @@ impl Model {
         };
 
         // Initialise the audio monitor.
-        let master_peak = 0.0;
-        let active_sounds = Default::default();
-        let speakers = Default::default();
-        let audio_monitor = AudioMonitor { master_peak, active_sounds, speakers };
+        let audio_monitor = Default::default();
 
         Model {
             ui,
@@ -459,10 +476,10 @@ impl Model {
 
                         // If the Id of the sound being removed matches the current preview, remove
                         // it.
-                        if let Some((_, ref mut state)) = *project {
-                            match state.source_editor.preview.current {
+                        if let Some((_, ref mut project_state)) = *project {
+                            match project_state.source_editor.preview.current {
                                 Some((SourcePreviewMode::OneShot, s_id)) if id == s_id => {
-                                    state.source_editor.preview.current = None;
+                                    project_state.source_editor.preview.current = None;
                                 }
                                 _ => (),
                             }
@@ -483,6 +500,12 @@ impl Model {
                     }
                 },
             }
+        }
+
+        // Check that all active sounds are still valid in case the GUI switched the project.
+        match *project {
+            Some((ref mut project, _)) => audio_monitor.clear_invalid(project),
+            None => audio_monitor.clear(),
         }
 
         // Set the widgets.
@@ -1439,7 +1462,7 @@ fn set_widgets(
             ref mut state,
             ref mut ui,
             ref channels,
-            audio_monitor,
+            ref audio_monitor,
             ..
         } = *gui;
 
