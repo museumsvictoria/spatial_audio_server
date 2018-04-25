@@ -7,6 +7,8 @@ use std::sync::mpsc;
 const BEYOND_PERCEPTION_ADDR: &'static str = "/bp";
 const SOURCE_VOLUME_ADDR: &'static str = "/source_volume";
 const MASTER_VOLUME_ADDR: &'static str = "/master_volume";
+const PLAY_SOUNDSCAPE: &'static str = "/play_soundscape";
+const PAUSE_SOUNDSCAPE: &'static str = "/pause_soundscape";
 
 /// A record of a received message.
 #[derive(Debug)]
@@ -22,6 +24,8 @@ pub struct Log {
 pub enum Control {
     SourceVolume(SourceVolume),
     MasterVolume(MasterVolume),
+    PauseSoundscape,
+    PlaySoundscape,
 }
 
 /// An OSC input message that was parsed as the master volume for the exhibition.
@@ -80,6 +84,16 @@ fn parse_master_volume(s: &str) -> bool {
     s == MASTER_VOLUME_ADDR
 }
 
+// Finds the "/play_soundscape" string. Returns `true` if found.
+fn parse_play_soundscape(s: &str) -> bool {
+    s == PLAY_SOUNDSCAPE
+}
+
+// Finds the "/pause_soundscape" string. Returns `true` if found.
+fn parse_pause_soundscape(s: &str) -> bool {
+    s == PAUSE_SOUNDSCAPE
+}
+
 impl Control {
     fn from_osc_msg(msg: &osc::Message) -> Option<Self> {
         parse_bp(&msg.addr)
@@ -99,6 +113,14 @@ impl Control {
                         return Some(source_volume.into())
                     }
                     _ => (),
+                }
+
+                if parse_play_soundscape(s) {
+                    return Some(Control::PlaySoundscape);
+                }
+
+                if parse_pause_soundscape(s) {
+                    return Some(Control::PauseSoundscape);
                 }
 
                 None

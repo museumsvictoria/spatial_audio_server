@@ -422,6 +422,14 @@ impl Model {
                         })
                         .ok();
                 }
+
+                &osc::input::Control::PlaySoundscape => {
+                    channels.soundscape.play().ok();
+                }
+
+                &osc::input::Control::PauseSoundscape => {
+                    channels.soundscape.pause().ok();
+                }
             }
 
             // Log the message.
