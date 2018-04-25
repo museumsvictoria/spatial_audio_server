@@ -146,7 +146,7 @@ pub struct Model {
     /// A buffer for collecting sounds that have been removed due to completing.
     exhausted_sounds: Vec<sound::Id>,
     /// Channel for communicating active sound info to the GUI.
-    gui_audio_monitor_msg_tx: mpsc::SyncSender<gui::AudioMonitorMessage>,
+    gui_audio_monitor_msg_tx: gui::monitor::Sender,
     /// Channel for sending sound analysis data to the OSC output thread.
     osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
     /// A handle to the soundscape thread - for notifying when a sound is complete.
@@ -182,7 +182,7 @@ impl<'a> Iterator for SoundsMut<'a> {
 impl Model {
     /// Initialise the `Model`.
     pub fn new(
-        gui_audio_monitor_msg_tx: mpsc::SyncSender<gui::AudioMonitorMessage>,
+        gui_audio_monitor_msg_tx: gui::monitor::Sender,
         osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
         soundscape_tx: mpsc::Sender<soundscape::Message>,
     ) -> Self {
@@ -295,7 +295,7 @@ impl Model {
         let speaker = ActiveSpeaker { speaker, env_detector };
         let speaker_msg = gui::SpeakerMessage::Add;
         let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-        self.gui_audio_monitor_msg_tx.try_send(msg).ok();
+        self.gui_audio_monitor_msg_tx.send(msg).ok();
         self.speakers.insert(id, speaker);
         old_speaker
     }
@@ -306,7 +306,7 @@ impl Model {
         if removed.is_some() {
             let speaker_msg = gui::SpeakerMessage::Remove;
             let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-            self.gui_audio_monitor_msg_tx.try_send(msg).ok();
+            self.gui_audio_monitor_msg_tx.send(msg).ok();
         }
         removed.map(|ActiveSpeaker { speaker, .. }| speaker)
     }
@@ -340,7 +340,7 @@ impl Model {
             normalised_progress,
         };
         let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
-        self.gui_audio_monitor_msg_tx.try_send(msg).ok();
+        self.gui_audio_monitor_msg_tx.send(msg).ok();
         self.sounds.insert(id, sound)
     }
 
@@ -382,7 +382,7 @@ impl Model {
             // Notify the gui.
             let sound_msg = gui::ActiveSoundMessage::End { sound };
             let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
-            self.gui_audio_monitor_msg_tx.try_send(msg).ok();
+            self.gui_audio_monitor_msg_tx.send(msg).ok();
 
             // Notify the soundscape thread.
             let update = move |soundscape: &mut soundscape::Model| {
@@ -415,7 +415,7 @@ impl Model {
             // Send signal of completion back to GUI thread.
             let sound_msg = gui::ActiveSoundMessage::End { sound };
             let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
-            gui_audio_monitor_msg_tx.try_send(msg).ok();
+            gui_audio_monitor_msg_tx.send(msg).ok();
         }
     }
 }
@@ -469,7 +469,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 normalised_progress,
             };
             let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, update);
-            gui_audio_monitor_msg_tx.try_send(msg).ok();
+            gui_audio_monitor_msg_tx.send(msg).ok();
 
             let ActiveSound {
                 ref mut sound,
@@ -535,7 +535,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     let (rms, peak) = env_detector.current();
                     let sound_msg = gui::ActiveSoundMessage::UpdateChannel { index, rms, peak };
                     let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
-                    gui_audio_monitor_msg_tx.try_send(msg).ok();
+                    gui_audio_monitor_msg_tx.send(msg).ok();
                 }
             }
 
@@ -606,7 +606,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             // Send the detector state for the speaker to the GUI.
             let speaker_msg = gui::SpeakerMessage::Update { rms, peak };
             let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-            gui_audio_monitor_msg_tx.try_send(msg).ok();
+            gui_audio_monitor_msg_tx.send(msg).ok();
 
             // Sum raw audio data for FFTs.
             for id in &active.speaker.installations {
@@ -714,7 +714,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             // Send signal of completion back to GUI thread.
             let sound_msg = gui::ActiveSoundMessage::End { sound };
             let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
-            gui_audio_monitor_msg_tx.try_send(msg).ok();
+            gui_audio_monitor_msg_tx.send(msg).ok();
 
             // Notify the soundscape thread.
             let update = move |soundscape: &mut soundscape::Model| {
@@ -730,7 +730,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
         // Find the peak amplitude and send it via the monitor channel.
         let peak = buffer.iter().fold(0.0, |peak, &s| s.max(peak));
-        gui_audio_monitor_msg_tx.try_send(gui::AudioMonitorMessage::Master { peak }).ok();
+        gui_audio_monitor_msg_tx.send(gui::AudioMonitorMessage::Master { peak }).ok();
 
         // Step the frame count.
         *frame_count += buffer.len_frames() as u64;
