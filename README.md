@@ -81,17 +81,17 @@ about Rust here:
 
 ## Packaging
 
-The easiest way to package the audio server for deliver to an installation is
-to use the `nannou-package` tool. This tool is useful for packaging nannou
-projects into a named and dated architecture-specific archive for distribution.
-The `nannou-package` tool does the following:
+The easiest way to package the audio server once built is to use the
+`nannou-package` tool. This tool is useful for packaging nannou projects into a
+named and dated architecture-specific archive for distribution. The
+`nannou-package` tool does the following:
 
 1. Finds the parent Cargo.toml directory.
-2. Finds the latest target/release/<exe>.
-3. Creates a "builds" directory in the project root.
-4. Creates "/name-arch-os-yyyymmdd-hhmmss/" inside "builds".
-5. Copies the /target/release/<exe> into the new directory.
-6. Copies the assets directory into this new directory if it exists.
+2. Finds the latest `target/release/<exe>`.
+3. Creates a `builds/` directory in the project root.
+4. Creates `/name-arch-os-yyyymmdd-hhmmss/` inside `builds/`.
+5. Copies the `/target/release/<exe>` into the new directory.
+6. Copies the `assets/` directory into this new directory if it exists.
 7. Zips the entire new directory.
 8. Removes the new directory.
 
