@@ -396,6 +396,7 @@ pub fn set(
         .h(selected_canvas_h)
         .y(selected_canvas_y.middle())
         .align_middle_x_of(ids.side_menu)
+        .parent(area.id)
         .set(ids.source_editor_selected_canvas, ui);
 
     let selected_canvas_kid_area = ui.kid_area_of(ids.source_editor_selected_canvas)
@@ -885,7 +886,12 @@ pub fn set(
                 };
             }
 
-            // Playback duration.
+            // Maximum playback duration.
+            //
+            // This represents:
+            //
+            // - The duration over which a source previewed via "One Shot" will play.
+            // - The maximum playback duration of a soundscape sound using this source.
             let label = duration_label(&realtime.duration);
             let min = 0.0;
             let max = utils::HR_MS;
@@ -1587,7 +1593,7 @@ pub fn set(
             // - If it is a looping WAV or a realtime source the max is some arbitrary limit.
             let skew = sources[&id].kind.playback_duration_skew();
             let max_duration = match sources[&id].kind {
-                audio::source::Kind::Realtime(_) => audio::source::MAX_PLAYBACK_DURATION,
+                audio::source::Kind::Realtime(ref realtime) => realtime.duration,
                 audio::source::Kind::Wav(ref wav) => match wav.should_loop {
                     true => audio::source::MAX_PLAYBACK_DURATION,
                     false => wav.duration.to_ms(audio::SAMPLE_RATE),

@@ -315,9 +315,14 @@ pub fn spawn_from_realtime(
     }
 
     // The signal from which the sound will draw samples.
+    let remaining_samples = match duration {
+        input::Duration::Infinite => None,
+        input::Duration::Frames(frames) => Some(frames * n_channels),
+    };
     let samples = source::realtime::Signal {
         channels: n_channels,
         sample_rx,
+        remaining_samples,
     };
     let kind = source::SignalKind::Realtime { samples };
     let mut signal = source::Signal::new(kind, attack_duration_frames, release_duration_frames);
