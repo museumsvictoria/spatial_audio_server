@@ -108,13 +108,13 @@ pub fn osc_addr_string(name: &str) -> String {
 /// The default number of computers for the beyond perception installation with the given name.
 pub fn beyond_perception_default_num_computers(name: &str) -> Option<usize> {
     let n = match name {
-        "Waves At Work" => 1,
-        "Ripples In Spacetime" => 4,
-        "Energetic Vibrations - Audio Visualiser" => 1,
+        "Waves At Work" => 0,
+        "Ripples In Spacetime" => 0,
+        "Energetic Vibrations - Audio Visualiser" => 0,
         "Energetic Vibrations - Projection Mapping" => 3,
-        "Turbulent Encounters" => 1,
-        "Cacophony" => 1,
-        "Wrapped In Spectrum" => 2,
+        "Turbulent Encounters" => 0,
+        "Cacophony" => 0,
+        "Wrapped In Spectrum" => 0,
         "Turret 1" => 0,
         "Turret 2" => 0,
         _ => return None,

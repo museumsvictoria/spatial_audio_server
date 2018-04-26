@@ -16,5 +16,6 @@
       0
     ]
   },
-  "selected_project_slug": "my-project-1"
+  "selected_project_slug": "my-project-1",
+  "cpu_saving_mode": false
 }

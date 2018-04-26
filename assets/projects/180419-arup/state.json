@@ -6,7 +6,8 @@
     "dbap_rolloff_db": 4.0
   },
   "installations": {
-    "WavesAtWork": {
+    "0": {
+      "name": "Waves At Work",
       "computers": {
         "0": {
           "socket": "127.0.0.1:9002",
@@ -20,7 +21,8 @@
         }
       }
     },
-    "Turret2": {
+    "8": {
+      "name": "Turret 2",
       "computers": {},
       "soundscape": {
         "simultaneous_sounds": {
@@ -29,7 +31,8 @@
         }
       }
     },
-    "Cacophony": {
+    "5": {
+      "name": "Cacophony",
       "computers": {
         "0": {
           "socket": "127.0.0.1:9002",
@@ -43,7 +46,8 @@
         }
       }
     },
-    "EnergeticVibrationsAudioVisualiser": {
+    "2": {
+      "name": "Energetic Vibrations - Audio Visualiser",
       "computers": {
         "0": {
           "socket": "127.0.0.1:9002",
@@ -57,7 +61,8 @@
         }
       }
     },
-    "Turret1": {
+    "7": {
+      "name": "Turret 1",
       "computers": {},
       "soundscape": {
         "simultaneous_sounds": {
@@ -66,7 +71,8 @@
         }
       }
     },
-    "TurbulentEncounters": {
+    "4": {
+      "name": "Turbulent Encounters",
       "computers": {
         "0": {
           "socket": "127.0.0.1:9002",
@@ -80,7 +86,8 @@
         }
       }
     },
-    "RipplesInSpacetime": {
+    "1": {
+      "name": "Ripples In Spacetime",
       "computers": {
         "0": {
           "socket": "127.0.0.1:9002",
@@ -106,7 +113,8 @@
         }
       }
     },
-    "WrappedInSpectrum": {
+    "6": {
+      "name": "Wrapped In Spectrum",
       "computers": {
         "0": {
           "socket": "127.0.0.1:9002",
@@ -124,7 +132,8 @@
         }
       }
     },
-    "EnergeticVibrationsProjectionMapping": {
+    "3": {
+      "name": "Energetic Vibrations - Projection Mapping",
       "computers": {
         "0": {
           "socket": "127.0.0.1:9002",
@@ -172,7 +181,7 @@
         },
         "channel": 4,
         "installations": [
-          "WrappedInSpectrum"
+          6
         ]
       }
     },
@@ -185,7 +194,7 @@
         },
         "channel": 1,
         "installations": [
-          "WrappedInSpectrum"
+          6
         ]
       }
     },
@@ -198,7 +207,7 @@
         },
         "channel": 3,
         "installations": [
-          "WrappedInSpectrum"
+          6
         ]
       }
     },
@@ -211,7 +220,7 @@
         },
         "channel": 0,
         "installations": [
-          "WrappedInSpectrum"
+          6
         ]
       }
     },
@@ -224,7 +233,7 @@
         },
         "channel": 5,
         "installations": [
-          "WrappedInSpectrum"
+          6
         ]
       }
     },
@@ -237,7 +246,7 @@
         },
         "channel": 2,
         "installations": [
-          "WrappedInSpectrum"
+          6
         ]
       }
     }

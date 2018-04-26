@@ -52,6 +52,10 @@ pub struct Installation {
     speaker_analyses: Vec<SpeakerAnalysis>,
     /// The detector used for incrementally calculating the FFT.
     fft_detector: FftDetector,
+    /// The number of computers assigned to the installation to which audio data will be sent.
+    ///
+    /// If this value is `0`, the FFT calculation is not performed in order to save CPU.
+    computers: usize,
 }
 
 impl ActiveSound {
@@ -253,7 +257,7 @@ impl Model {
     /// Insert an installation for the given `Id`.
     ///
     /// Returns `true` if the installation did not yet exist or false otherwise.
-    pub fn insert_installation(&mut self, id: installation::Id) -> bool {
+    pub fn insert_installation(&mut self, id: installation::Id, computers: usize) -> bool {
         let speaker_analyses = Vec::with_capacity(MAX_CHANNELS);
         let buffer = Vec::with_capacity(1024);
         let fft_detector = FftDetector::new();
@@ -261,6 +265,7 @@ impl Model {
             speaker_analyses,
             buffer,
             fft_detector,
+            computers,
         };
         self.installations.insert(id, installation).is_none()
     }
@@ -623,6 +628,11 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     Some(installation) => installation,
                 };
 
+                // If the installation has no computers, skip it.
+                if installation.computers == 0 {
+                    continue;
+                }
+
                 let index = channel_i;
                 let analysis = SpeakerAnalysis { peak, rms, index };
                 installation.speaker_analyses.push(analysis);
@@ -636,7 +646,13 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
         // Send the collected analysis to the OSC output thread.
         for (&id, installation) in installations.iter_mut() {
+            // If there are no speakers, skip the installation.
             if speakers.is_empty() {
+                continue;
+            }
+
+            // If the installation has no computers, there's no point analysing audio.
+            if installation.computers == 0 {
                 continue;
             }
 
