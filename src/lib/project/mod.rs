@@ -23,6 +23,7 @@ use slug::slugify;
 use soundscape;
 use std::{cmp, fs, io};
 use std::ffi::OsStr;
+use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::path::{Component, Path, PathBuf};
 use utils;
@@ -506,10 +507,47 @@ impl Sources {
     }
 }
 
-/// Check for invalid WAV sources
+/// Updates the path from the given new relative path.
 ///
-/// If there are any ".wav" files in `assets/audio` that have not yet been loaded into the
-/// stored sources, load them as `Wav` kind sources.
+/// E.g.
+///
+/// If `path` is "/foo/bar/baz/qux" and `relative` is "/flim/baz" the resulting path will be
+/// "/flim/baz/qux".
+fn update_path_from_relative<P, R>(path: P, relative: R) -> Option<PathBuf>
+where
+    P: AsRef<Path>,
+    R: AsRef<Path>,
+{
+    let path = path.as_ref();
+    let relative = relative.as_ref();
+
+    let mut components = path.components();
+    let relative_stem = relative.file_stem().and_then(|os_str| os_str.to_str());
+    components
+        .find(|component| match *component {
+            Component::Normal(os_str) if os_str.to_str() == relative_stem => true,
+            _ => false,
+        })
+        .map(|_| {
+            relative.components()
+                .chain(components)
+                .map(|c| c.as_os_str())
+                .collect()
+        })
+}
+
+#[test]
+fn test_update_path_from_relative() {
+    let path = Path::new("/foo/bar/baz/qux");
+    let relative = Path::new("/flim/baz");
+    let expected = Path::new("/flim/baz/qux");
+    assert_eq!(update_path_from_relative(path, relative), Some(PathBuf::from(expected)));
+}
+
+/// Check for invalid WAV sources.
+///
+/// If the source path's could not be correctly updated, we attempt to re-attach the path from the
+/// `audio` component of the path and onwards.
 pub fn remove_invalid_sources<P>(audio_path: P, sources: &mut Sources)
 where
     P: AsRef<Path>,
@@ -523,39 +561,31 @@ where
     let mut to_remove = vec![];
     for (&id, source) in sources.map.iter_mut() {
         if let audio::source::Kind::Wav(ref mut wav) = source.audio.kind {
-            // If the path is valid, continue.
-            if wav.path.exists() {
-                continue;
-            }
-
-            // If the path doesn't exist, check to see if it contains the audio path stem.
+            // Check to see that the WAV path contains the `audio` directory in its path.
             //
             // If so, check the path at the new location relative to the audio path.
             //
             // If we can find it, return the new absolute path.
-            let new_path: Option<PathBuf> = {
-                let mut components = wav.path.components();
-                let audio_path_stem = audio_path.file_stem().and_then(|os_str| os_str.to_str());
-                components
-                    .find(|component| match *component {
-                        Component::Normal(os_str) if os_str.to_str() == audio_path_stem => true,
-                        _ => false,
-                    })
-                    .map(|_| {
-                        audio_path.components()
-                            .chain(components)
-                            .map(|c| c.as_os_str())
-                            .collect()
-                    })
-            };
+            let new_path = update_path_from_relative(&wav.path, audio_path);
 
             // Update the wavs path, or remove the source if we couldn't find it.
             if let Some(new_path) = new_path {
                 if new_path.exists() {
-                    wav.path = new_path;
+                    // Reload the WAV file to make sure we have up-to-date info.
+                    let mut new_wav = match audio::source::Wav::from_path(new_path.clone()) {
+                        Ok(wav) => wav,
+                        Err(err) => {
+                            eprintln!("Failed to load wav from path \"{}\": {}. It will be ignored.",
+                                      new_path.display(), err);
+                            continue;
+                        },
+                    };
+                    new_wav.should_loop = wav.should_loop;
+                    new_wav.playback = wav.playback;
+                    mem::swap(wav, &mut new_wav);
                     continue;
                 }
-                eprintln!("Could not find WAV source at \"{}\" or at \"{}\". It will be ignored",
+                eprintln!("Could not find WAV source at \"{}\" or at \"{}\". It will be ignored.",
                           wav.path.display(),
                           new_path.display());
             } else {
@@ -610,7 +640,9 @@ where
             for s in sources.map.values() {
                 match s.audio.kind {
                     audio::source::Kind::Wav(ref wav) => if wav.path == path {
-                        continue 'paths;
+                        if wav.path == path {
+                            continue 'paths;
+                        }
                     },
                     _ => (),
                 }
