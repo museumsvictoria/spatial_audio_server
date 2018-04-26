@@ -472,3 +472,17 @@ layout of the OSC output message sent by the audio server.
 ![Audio Server Output OSC Packet Layout](https://user-images.githubusercontent.com/4587373/33974824-b4d0fe96-e0de-11e7-8927-db715242b09b.png)
 
 The OSC address can be edited per-computer under the Installation Editor GUI.
+
+### CPU Saving Mode
+
+CPU saving mode can be toggled via the "Control + Space" keyboard shortcut.
+Enabling CPU saving mode will avoid re-drawing the complex GUI each frame in
+favour of saving as many CPU cycles for audio processing as possible.
+
+This mode is particularly suitable for long-running installations.
+
+The top-level `config.json` specifies whether or not CPU saving mode will be
+enabled or not when opening the audio server. This value is updated each time
+the audio server is closed. E.g. if CPU saving mode is enabled when closed, then
+this will be saved within the `config.json` so that next time the audio server
+starts it will start with CPU saving mode enabled.
