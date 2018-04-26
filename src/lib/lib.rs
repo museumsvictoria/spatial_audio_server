@@ -241,5 +241,4 @@ fn exit(app: &App, model: Model) {
 
     // Wait for the composer thread to finish.
     soundscape_thread.join().expect("failed to join the soundscape thread when exiting");
-
 }
