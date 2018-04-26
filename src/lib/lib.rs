@@ -196,7 +196,7 @@ fn event(_app: &App, mut model: Model, event: Event) -> Model {
 
 // Draw the state of the application to the screen.
 fn view(app: &App, model: &Model, frame: Frame) -> Frame {
-    model.gui.ui.draw_to_frame(app, &frame).expect("failed to draw to frame");
+    model.gui.ui.draw_to_frame_if_changed(app, &frame).expect("failed to draw to frame");
     frame
 }
 
@@ -209,6 +209,9 @@ fn exit(app: &App, model: Model) {
         audio_monitor,
         ..
     } = model;
+
+    // Update whether or not cpu saving mode should be enabled when re-opening.
+    config.cpu_saving_mode = gui.cpu_saving_mode;
 
     // Update the selected project directory slug if necessary.
     if let Some(selected_project_slug) = gui.selected_project_slug() {
