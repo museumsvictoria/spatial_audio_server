@@ -456,7 +456,6 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
         // For each sound, request `buffer.len()` number of frames and sum them onto the
         // relevant output channels.
         for (&sound_id, sound) in sounds.iter_mut() {
-
             // Update the GUI with the position of the sound.
             let source_id = sound.source_id();
             let position = sound.position;
@@ -540,6 +539,10 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             }
 
             // Mix the audio from the signal onto each of the output channels.
+            if speakers.is_empty() {
+                continue;
+            }
+
             for (i, channel_point) in sound.channel_points().enumerate() {
                 // Update the dbap_speakers buffer with their distances to this sound channel.
                 dbap_speakers.clear();
@@ -560,6 +563,11 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                         let weight = speaker::dbap_weight(&sound.installations, &active.speaker.installations);
                         dbap_speakers.push(dbap::Speaker { distance, weight });
                     }
+                }
+
+                // If no speakers were found, skip this channel.
+                if dbap_speakers.is_empty() {
+                    continue;
                 }
 
                 // Update the speaker gains.
