@@ -305,10 +305,11 @@ impl Project {
             }
 
             // Audio output thread.
+            let computers = installation.computers.len();
             channels
                 .audio_output
                 .send(move |audio| {
-                    audio.insert_installation(id);
+                    audio.insert_installation(id, computers);
                 })
                 .expect("failed to send loaded installation to audio output thread");
         }

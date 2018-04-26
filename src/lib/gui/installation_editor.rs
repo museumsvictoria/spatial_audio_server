@@ -133,7 +133,8 @@ pub fn set(
         channels
             .audio_output
             .send(move |audio| {
-                audio.insert_installation(id);
+                let computers = 0;
+                audio.insert_installation(id, computers);
             })
             .ok();
     }
@@ -449,6 +450,14 @@ pub fn set(
                 *selected_computer = None;
             }
         }
+
+        // Update the audio output copy with the correct number of computers.
+        channels
+            .audio_output
+            .send(move |audio| {
+                audio.insert_installation(id, n);
+            })
+            .ok();
     }
 
     // Display the computer list for this installation.
