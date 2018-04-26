@@ -50,6 +50,8 @@ pub struct Model {
     pub ui: Ui,
     /// The currently selected project.
     pub project: Option<(Project, ProjectState)>,
+    /// Whether or not the GUI is currently in CPU-saving mode.
+    pub cpu_saving_mode: bool,
     /// All images used within the GUI.
     images: Images,
     /// A unique ID for each widget.
@@ -69,6 +71,7 @@ pub struct Model {
 /// A convenience wrapper that borrows the GUI state necessary for instantiating widgets.
 pub struct Gui<'a> {
     ui: UiCell<'a>,
+    cpu_saving_mode: bool,
     images: &'a Images,
     ids: &'a mut Ids,
     state: &'a mut State,
@@ -325,8 +328,12 @@ impl Model {
         // Initialise the audio monitor.
         let audio_monitor = Default::default();
 
+        // Whether or not CPU saving mode is enabled.
+        let cpu_saving_mode = config.cpu_saving_mode;
+
         Model {
             ui,
+            cpu_saving_mode,
             images,
             state,
             ids,
@@ -349,6 +356,7 @@ impl Model {
             ref mut project,
             ref mut state,
             ref mut audio_monitor,
+            ref mut cpu_saving_mode,
             ref images,
             ref channels,
             ref sound_id_gen,
@@ -519,24 +527,35 @@ impl Model {
         // Set the widgets.
         let ui = ui.set_widgets();
 
-        // Check for `Ctrl+S` or `Cmd+S` for saving.
+        // Check for `Ctrl+S` or `Cmd+S` for saving, or `Ctrl+Space` for cpu saving mode.
         for event in ui.global_input().events().ui() {
             if let ui::event::Ui::Press(_, press) = *event {
-                if let ui::event::Button::Keyboard(ui::input::Key::S) = press.button {
-                    let save_mod =
-                        press.modifiers.contains(ui::input::keyboard::ModifierKey::CTRL)
-                        || press.modifiers.contains(ui::input::keyboard::ModifierKey::GUI);
-                    if save_mod {
-                        if let Some((ref project, _)) = *project {
-                            project.save(assets).expect("failed to save project on keyboard shortcut");
+                match press.button {
+                    ui::event::Button::Keyboard(ui::input::Key::S) => {
+                        let save_mod =
+                            press.modifiers.contains(ui::input::keyboard::ModifierKey::CTRL)
+                            || press.modifiers.contains(ui::input::keyboard::ModifierKey::GUI);
+                        if save_mod {
+                            if let Some((ref project, _)) = *project {
+                                project.save(assets).expect("failed to save project on keyboard shortcut");
+                            }
                         }
                     }
+
+                    ui::event::Button::Keyboard(ui::input::Key::Space) => {
+                        if press.modifiers.contains(ui::input::keyboard::ModifierKey::CTRL) {
+                            *cpu_saving_mode = !*cpu_saving_mode;
+                        }
+                    }
+
+                    _ => (),
                 }
             }
         }
 
         let mut gui = Gui {
             ui,
+            cpu_saving_mode: *cpu_saving_mode,
             ids,
             images,
             state,
@@ -972,6 +991,10 @@ widget_ids! {
         floorplan_speaker_labels[],
         floorplan_sounds[],
         floorplan_channel_to_speaker_lines[],
+
+        // Text drawn in the CPU-saving mode.
+        cpu_saving_mode,
+        cpu_saving_mode_shortcut,
     }
 }
 
@@ -1104,6 +1127,24 @@ fn set_widgets(
         .middle_of(gui.window)
         .wh_of(gui.window)
         .set(gui.ids.background, gui);
+
+    // If the GUI is in CPU saving mode, just draw the text to show how to get back to live mode.
+    if gui.cpu_saving_mode {
+        widget::Text::new("CPU Saving Mode")
+            .middle_of(gui.ids.background)
+            .font_size(64)
+            .color(color::DARK_CHARCOAL)
+            .set(gui.ids.cpu_saving_mode, gui);
+
+        widget::Text::new("Press `Ctrl + Space` to switch back to live mode.")
+            .down(24.0)
+            .align_middle_x_of(gui.ids.cpu_saving_mode)
+            .font_size(24)
+            .color(color::DARK_CHARCOAL)
+            .set(gui.ids.cpu_saving_mode_shortcut, gui);
+
+        return;
+    }
 
     // A thin menu bar on the left.
     //
