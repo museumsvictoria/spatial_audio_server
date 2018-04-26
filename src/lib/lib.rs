@@ -65,6 +65,11 @@ where
 
 // Initialise the state of the application.
 fn model(app: &App) -> Model {
+    // Set the app to wait on events.
+    //
+    // We will wake it up if it is necessary to re-instantiate and redraw the GUI.
+    app.set_loop_mode(LoopMode::wait(3));
+
     // Find the assets directory.
     let assets = app.assets_path()
         .expect("could not find assets directory");
