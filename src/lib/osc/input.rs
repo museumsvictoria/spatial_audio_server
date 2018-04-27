@@ -70,10 +70,15 @@ fn parse_bp(s: &str) -> Option<&str> {
     }
 }
 
-// Finds the "/source_volume" string and returns
+// Finds the "/source_volume" string and returns the name of the source.
 fn parse_source_volume(s: &str) -> Option<&str> {
     if s.starts_with(SOURCE_VOLUME_ADDR) {
-        Some(&s[SOURCE_VOLUME_ADDR.len()..])
+        let slice_start = SOURCE_VOLUME_ADDR.len() + "/".len();
+        if slice_start < s.len() {
+            Some(&s[slice_start..])
+        } else {
+            None
+        }
     } else {
         None
     }
