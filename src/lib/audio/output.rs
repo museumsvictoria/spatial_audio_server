@@ -626,7 +626,10 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
                 for channel in 0..buffer.channels() {
                     // Find the speaker for this channel.
-                    let speaker_id = &channels_to_speakers[&channel];
+                    let speaker_id = match channels_to_speakers.get(&channel) {
+                        Some(id) => id,
+                        None => continue,
+                    };
                     let active = &speakers[speaker_id];
 
                     // Get the previous gain for this channel.
