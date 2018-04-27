@@ -378,6 +378,22 @@ impl Model {
         count
     }
 
+    /// Remove all sounds that were spawned via the source with the given `Id`.
+    ///
+    /// Returns the number of sounds that were updated.
+    pub fn remove_sounds_with_source(&mut self, id: &source::Id) -> usize {
+        let mut count = 0;
+        self.sounds.retain(|_, ref s| {
+            if s.source_id() == *id {
+                count += 1;
+                false
+            } else {
+                true
+            }
+        });
+        count
+    }
+
     /// Removes the sound and sends an `End` active sound message to the GUI.
     ///
     /// Returns `false` if the sound did not exist

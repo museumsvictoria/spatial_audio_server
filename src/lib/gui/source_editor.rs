@@ -526,11 +526,23 @@ pub fn set(
                         }).expect("soundscape was closed");
                     },
 
-                    // If it is no longer a soundscape, remove it from the soundscape thread.
+                    // If it is no longer a soundscape.
                     (Some(Role::Soundscape(_)), _) => {
-                        channels.soundscape.send(move |soundscape| {
-                            soundscape.remove_source(&id);
-                        }).expect("soundscape was closed");
+                        // Remove the source from the soundscape.
+                        channels
+                            .soundscape
+                            .send(move |soundscape| {
+                                soundscape.remove_source(&id);
+                            })
+                            .expect("soundscape was closed");
+
+                        // Remove all sounds with this source from the audio output thread.
+                        channels
+                            .audio_output
+                            .send(move |audio| {
+                                audio.remove_sounds_with_source(&id);
+                            })
+                            .expect("soundscape was closed");
                     },
 
                     _ => (),
