@@ -27,6 +27,14 @@ use utils;
 /// Simplified type alias for the nannou audio output stream used by the audio server.
 pub type Stream = nannou::audio::Stream<Model>;
 
+type Channel = usize;
+
+// The most recently recorded DBAP speaker gain for each speaker per active sound.
+//
+// TODO: Should possibly move these into their associated `ActiveSound`s - will be easier to track
+// removal etc this way.
+type DbapSpeakerGains = FxHashMap<sound::Id, FxHashMap<Channel, FxHashMap<speaker::Id, f32>>>;
+
 /// A sound that is currently active on the audio thread.
 pub struct ActiveSound {
     sound: Sound,
@@ -157,12 +165,21 @@ pub struct Model {
     soundscape_tx: mpsc::Sender<soundscape::Message>,
     /// Data related to a single installation necessary for the audio output thread.
     installations: FxHashMap<installation::Id, Installation>,
-    /// A buffer to re-use for DBAP speaker calculations.
+
+    /// A buffer to re-use for collecting speakers ready for performing the DBAP calc.
     ///
-    /// The index of the speaker is its channel.
+    /// The index for each speaker is it's channel within the output audio stream buffer.
     dbap_speakers: Vec<dbap::Speaker>,
-    /// A buffer to re-use for storing the gain for each speaker produced by DBAP.
-    dbap_speaker_gains: Vec<f32>,
+    /// A map that tracks the last calculated buffer's DBAP gain per speaker per sound.
+    ///
+    /// This allows for linearly interpolating from the speaker gains of the previous buffer to the
+    /// gains for the current buffer to avoid clipping.
+    dbap_speaker_gains: DbapSpeakerGains,
+    /// A buffer to re-use for storing the current gain for each speaker produced by DBAP.
+    current_dbap_speaker_gains: Vec<f32>,
+    /// A buffer to re-use for collecting the previous dbap gain per speaker.
+    previous_dbap_speaker_gains: Vec<f32>,
+
     /// The FFT planner used to prepare the FFT calculations and share data between them.
     fft_planner: fft::Planner,
     /// The FFT to re-use by each of the `Detector`s.
@@ -211,8 +228,10 @@ impl Model {
         // A buffer to re-use for DBAP speaker calculations.
         let dbap_speakers = Vec::with_capacity(MAX_CHANNELS);
 
-        // A buffer to re-use for storing gains produced by DBAP.
-        let dbap_speaker_gains = Vec::with_capacity(MAX_CHANNELS);
+        // For tracking DBAP speaker gains.
+        let dbap_speaker_gains = FxHashMap::default();
+        let current_dbap_speaker_gains = Vec::with_capacity(MAX_CHANNELS);
+        let previous_dbap_speaker_gains = Vec::with_capacity(MAX_CHANNELS);
 
         // The FFT to re-use by each of the `Detector`s.
         let in_window = [Complex::<f32>::zero(); FFT_WINDOW_LEN];
@@ -248,6 +267,8 @@ impl Model {
             soundscape_tx,
             dbap_speakers,
             dbap_speaker_gains,
+            current_dbap_speaker_gains,
+            previous_dbap_speaker_gains,
             fft,
             fft_planner,
             fft_frequency_amplitudes_2,
@@ -382,24 +403,28 @@ impl Model {
     ///
     /// Returns the number of sounds that were updated.
     pub fn remove_sounds_with_source(&mut self, id: &source::Id) -> usize {
-        let mut count = 0;
-        self.sounds.retain(|_, ref s| {
-            if s.source_id() == *id {
-                count += 1;
-                false
-            } else {
-                true
-            }
-        });
+        let ids: Vec<_> = self.sounds.iter()
+            .filter(|&(_, s)| s.source_id() == *id)
+            .map(|(&id, _)| id)
+            .collect();
+        let count = ids.len();
+        for id in ids {
+            self.remove_sound(id);
+        }
         count
     }
 
     /// Removes the sound and sends an `End` active sound message to the GUI.
     ///
+    /// Also removes the sound from DBAP tracking.
+    ///
     /// Returns `false` if the sound did not exist
     pub fn remove_sound(&mut self, id: sound::Id) -> bool {
         let removed = self.sounds.remove(&id);
         if let Some(sound) = removed {
+            // Remove the sound from DBAP gain tracking.
+            self.dbap_speaker_gains.remove(&id);
+
             // Notify the gui.
             let sound_msg = gui::ActiveSoundMessage::End { sound };
             let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
@@ -456,6 +481,8 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref mut speakers,
             ref mut dbap_speakers,
             ref mut dbap_speaker_gains,
+            ref mut current_dbap_speaker_gains,
+            ref mut previous_dbap_speaker_gains,
             ref gui_audio_monitor_msg_tx,
             ref osc_output_msg_tx,
             ref soundscape_tx,
@@ -473,6 +500,23 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             installation.buffer.resize(buffer.len_frames(), 0.0);
             installation.buffer.iter_mut().for_each(|s| *s = 0.0);
         }
+
+        // Update the map from buffer channels to their speakers.
+        //
+        // Only track speakers whose channels are valid for the current buffer.
+        //
+        // TODO: Should probably move this into model for re-use, but its not showing up in
+        // profiling.
+        let channels_to_speakers: FxHashMap<_, _> = speakers
+            .iter()
+            .filter_map(|(&id, s)| {
+                if s.channel < buffer.channels() {
+                    Some((s.channel, id))
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         // For each sound, request `buffer.len()` number of frames and sum them onto the
         // relevant output channels.
@@ -564,26 +608,44 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 continue;
             }
 
-            for (i, channel_point) in sound.channel_points().enumerate() {
+            // Get the currently stored DBAP speaker gains for this sound.
+            let dbap_speaker_gains = dbap_speaker_gains
+                .entry(sound_id)
+                .or_insert_with(FxHashMap::default);
+
+            for (sound_channel, channel_point) in sound.channel_points().enumerate() {
                 // Update the dbap_speakers buffer with their distances to this sound channel.
                 dbap_speakers.clear();
+                current_dbap_speaker_gains.clear();
+                previous_dbap_speaker_gains.clear();
+
+                // Get the DBAP gains for this channel of the sound.
+                let dbap_speaker_gains = dbap_speaker_gains
+                    .entry(sound_channel)
+                    .or_insert_with(FxHashMap::default);
+
                 for channel in 0..buffer.channels() {
                     // Find the speaker for this channel.
-                    // TODO: Could speed this up by maintaining a map from channels to speaker IDs.
-                    if let Some(active) = speakers.values().find(|s| s.speaker.channel == channel) {
-                        let channel_point_f = Point2 {
-                            x: channel_point.x.0,
-                            y: channel_point.y.0,
-                        };
-                        let speaker = &active.speaker.point;
-                        let speaker_f = Point2 {
-                            x: speaker.x.0,
-                            y: speaker.y.0,
-                        };
-                        let distance = dbap::blurred_distance_2(channel_point_f, speaker_f, DISTANCE_BLUR);
-                        let weight = speaker::dbap_weight(&sound.installations, &active.speaker.installations);
-                        dbap_speakers.push(dbap::Speaker { distance, weight });
-                    }
+                    let speaker_id = &channels_to_speakers[&channel];
+                    let active = &speakers[speaker_id];
+
+                    // Get the previous gain for this channel.
+                    let previous_gain = dbap_speaker_gains.get(speaker_id).map(|&g| g).unwrap_or(0.0);
+                    previous_dbap_speaker_gains.push(previous_gain);
+
+                    // Get the current gain by performing DBAP calc.
+                    let channel_point_f = Point2 {
+                        x: channel_point.x.0,
+                        y: channel_point.y.0,
+                    };
+                    let speaker = &active.speaker.point;
+                    let speaker_f = Point2 {
+                        x: speaker.x.0,
+                        y: speaker.y.0,
+                    };
+                    let distance = dbap::blurred_distance_2(channel_point_f, speaker_f, DISTANCE_BLUR);
+                    let weight = speaker::dbap_weight(&sound.installations, &active.speaker.installations);
+                    dbap_speakers.push(dbap::Speaker { distance, weight });
                 }
 
                 // If no speakers were found, skip this channel.
@@ -592,21 +654,36 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 }
 
                 // Update the speaker gains.
-                dbap_speaker_gains.clear();
                 let gains = dbap::SpeakerGains::new(&dbap_speakers, dbap_rolloff_db);
-                dbap_speaker_gains.extend(gains.map(|f| f as f32));
+                current_dbap_speaker_gains.extend(gains.map(|f| f as f32));
+
+                fn lerp(a: f32, b: f32, lerp: f32) -> f32 {
+                    a + (b - a) * lerp
+                }
 
                 // For every frame in the buffer, mix the unmixed sample.
-                let mut sample_index = i;
-                for frame in buffer.frames_mut() {
+                let frames_len = buffer.len_frames() as f32;
+                let mut sample_index = sound_channel;
+                for (frame_i, frame) in buffer.frames_mut().enumerate() {
                     let channel_sample = unmixed_samples[sample_index];
-                    for (channel, &speaker_gain) in dbap_speaker_gains.iter().enumerate() {
+                    let gains = current_dbap_speaker_gains.iter()
+                        .zip(&*previous_dbap_speaker_gains)
+                        .enumerate();
+                    let lerp_amt = frame_i as f32 / frames_len;
+                    for (channel, (&current_gain, &previous_gain)) in gains {
                         // Only write to the channels that will be read by the audio device.
                         if let Some(sample) = frame.get_mut(channel) {
+                            let speaker_gain = lerp(previous_gain, current_gain, lerp_amt);
                             *sample += channel_sample * speaker_gain * sound.volume;
                         }
                     }
                     sample_index += sound.channels;
+                }
+
+                // Update the stored dbap_speaker_gains map for this sound channel.
+                for (channel, &current) in current_dbap_speaker_gains.iter().enumerate() {
+                    let speaker_id = channels_to_speakers[&channel];
+                    *dbap_speaker_gains.entry(speaker_id).or_insert(current) = current;
                 }
             }
         }
@@ -684,9 +761,10 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 let n_speakers = speaker_analyses.len();
 
                 // Feed the buffer into the FFT detector, normalised for the number of speakers in
-                // the installation..
+                // the installation.
                 for &sample in buffer {
-                    // TODO: This division might be better on lmh and bins.
+                    // TODO: This division might be more efficient on lmh and bins but not certain
+                    // that it is correct/transitive.
                     fft_detector.push(sample / n_speakers as f32);
                 }
 
@@ -748,7 +826,10 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
         // Remove all sounds that have been exhausted.
         for sound_id in exhausted_sounds.drain(..) {
-            // Possibly send this with the `End` message to avoid de-allocating on audio thread.
+            // Remove the sound from DBAP gain tracking.
+            dbap_speaker_gains.remove(&sound_id);
+
+            // Send this with the `End` message to avoid de-allocating on audio thread.
             let sound = sounds.remove(&sound_id).unwrap();
 
             // Send signal of completion back to GUI thread.
