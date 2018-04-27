@@ -376,10 +376,78 @@ pub fn set(
         }
     }
 
+    // The canvas for displaying the soundscape constraints.
+    widget::Canvas::new()
+        .align_middle_x_of(ids.installation_editor_selected_canvas)
+        .down(PAD)
+        .parent(ids.installation_editor_selected_canvas)
+        .color(color::CHARCOAL)
+        .w(selected_canvas_kid_area.w())
+        .h(soundscape_canvas_h)
+        .pad(PAD)
+        .set(ids.installation_editor_soundscape_canvas, ui);
+
+    // OSC output address header.
+    widget::Text::new("Soundscape - Simultaneous Sounds")
+        .font_size(SMALL_FONT_SIZE)
+        .top_left_of(ids.installation_editor_soundscape_canvas)
+        .set(ids.installation_editor_soundscape_text, ui);
+
+    /////////////////////////
+    // SIMULTANEOUS SOUNDS //
+    /////////////////////////
+
+    let range = installations[&id].soundscape.simultaneous_sounds;
+    let label = format!("{} to {} sounds at once", range.min, range.max);
+    let total_min_num = 0.0;
+    let total_max_num = 100.0;
+    let min = range.min as f64;
+    let max = range.max as f64;
+    let total_min = total_min_num as f64;
+    let total_max = total_max_num as f64;
+    for (edge, value) in widget::RangeSlider::new(min, max, total_min, total_max)
+        .skew(0.5)
+        .kid_area_w_of(ids.installation_editor_soundscape_canvas)
+        .h(SLIDER_H)
+        .label_font_size(SMALL_FONT_SIZE)
+        .color(ui::color::LIGHT_CHARCOAL)
+        .align_left()
+        .label(&label)
+        .down(PAD * 2.0)
+        .set(ids.installation_editor_soundscape_simultaneous_sounds_slider, ui)
+    {
+        let num = value as usize;
+
+        // Update the local copy.
+        let new_range = {
+            let installation = installations.get_mut(&id).unwrap();
+            match edge {
+                widget::range_slider::Edge::Start => {
+                    installation.soundscape.simultaneous_sounds.min = num;
+                },
+                widget::range_slider::Edge::End => {
+                    installation.soundscape.simultaneous_sounds.max = num;
+                }
+            }
+            installation.soundscape.simultaneous_sounds
+        };
+
+        // Update the soundscape copy.
+        channels.soundscape.send(move |soundscape| {
+            soundscape.update_installation(&id, |installation| {
+                installation.simultaneous_sounds = new_range;
+            });
+        }).ok();
+    }
+
+    ///////////////
+    // COMPUTERS //
+    ///////////////
+
     // The canvas for displaying the computer selection / editor.
     widget::Canvas::new()
         .middle_of(ids.installation_editor_selected_canvas)
-        .down_from(ids.installation_editor_name, PAD)
+        .down_from(ids.installation_editor_soundscape_canvas, PAD)
         .color(color::CHARCOAL)
         .w(selected_canvas_kid_area.w())
         .h(computer_canvas_h)
@@ -625,70 +693,6 @@ pub fn set(
                 selected_computer.osc_addr = new_string;
             }
         }
-    }
-
-    // The canvas for displaying the osc output address editor.
-    widget::Canvas::new()
-        .align_middle_x_of(ids.installation_editor_selected_canvas)
-        .down_from(ids.installation_editor_osc_canvas, PAD)
-        .parent(ids.installation_editor_selected_canvas)
-        .color(color::CHARCOAL)
-        .w(selected_canvas_kid_area.w())
-        .h(soundscape_canvas_h)
-        .pad(PAD)
-        .set(ids.installation_editor_soundscape_canvas, ui);
-
-    // OSC output address header.
-    widget::Text::new("Soundscape - Simultaneous Sounds")
-        .font_size(SMALL_FONT_SIZE)
-        .top_left_of(ids.installation_editor_soundscape_canvas)
-        .set(ids.installation_editor_soundscape_text, ui);
-
-    /////////////////////////
-    // SIMULTANEOUS SOUNDS //
-    /////////////////////////
-
-    let range = installations[&id].soundscape.simultaneous_sounds;
-    let label = format!("{} to {} sounds at once", range.min, range.max);
-    let total_min_num = 0.0;
-    let total_max_num = 100.0;
-    let min = range.min as f64;
-    let max = range.max as f64;
-    let total_min = total_min_num as f64;
-    let total_max = total_max_num as f64;
-    for (edge, value) in widget::RangeSlider::new(min, max, total_min, total_max)
-        .skew(0.5)
-        .kid_area_w_of(ids.installation_editor_soundscape_canvas)
-        .h(SLIDER_H)
-        .label_font_size(SMALL_FONT_SIZE)
-        .color(ui::color::LIGHT_CHARCOAL)
-        .align_left()
-        .label(&label)
-        .down(PAD * 2.0)
-        .set(ids.installation_editor_soundscape_simultaneous_sounds_slider, ui)
-    {
-        let num = value as usize;
-
-        // Update the local copy.
-        let new_range = {
-            let installation = installations.get_mut(&id).unwrap();
-            match edge {
-                widget::range_slider::Edge::Start => {
-                    installation.soundscape.simultaneous_sounds.min = num;
-                },
-                widget::range_slider::Edge::End => {
-                    installation.soundscape.simultaneous_sounds.max = num;
-                }
-            }
-            installation.soundscape.simultaneous_sounds
-        };
-
-        // Update the soundscape copy.
-        channels.soundscape.send(move |soundscape| {
-            soundscape.update_installation(&id, |installation| {
-                installation.simultaneous_sounds = new_range;
-            });
-        }).ok();
     }
 
     area.id
