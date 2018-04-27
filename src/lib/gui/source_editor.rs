@@ -60,6 +60,7 @@ pub fn set(
     let Gui {
         ref mut ui,
         ref mut ids,
+        ref mut audio_monitor,
         channels,
         sound_id_gen,
         state:
@@ -292,6 +293,9 @@ pub fn set(
                     source_editor.selected = None;
                 }
             }
+
+            // Remove any monitored sounds using this source ID.
+            audio_monitor.active_sounds.retain(|_, s| s.source_id != remove_id);
 
             // Remove the local copy.
             sources.remove(&remove_id);

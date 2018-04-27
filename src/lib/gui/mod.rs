@@ -169,7 +169,7 @@ type ControlLog = Log<osc::input::Control>;
 #[derive(Default)]
 struct AudioMonitor {
     master_peak: f32,
-    active_sounds: ActiveSoundMap,
+    pub active_sounds: ActiveSoundMap,
     speakers: FxHashMap<audio::speaker::Id, ChannelLevels>,
 }
 
