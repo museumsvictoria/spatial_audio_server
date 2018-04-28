@@ -65,9 +65,12 @@ pub fn spawn(app_proxy: nannou::app::Proxy) -> io::Result<Spawned> {
                 for msg in msgs.drain(..) {
                     match gui_tx.send(msg) {
                         Ok(()) => {
-                            if app_proxy.wakeup().is_err() {
-                                eprintln!("audio_monitor proxy could not wakeup app");
-                                break 'run;
+                            // Proxy is currently buggy on linux so we only enable this for macos.
+                            if cfg!(target_os = "macos") {
+                                if app_proxy.wakeup().is_err() {
+                                    eprintln!("audio_monitor proxy could not wakeup app");
+                                    break 'run;
+                                }
                             }
                         },
                         Err(_) => break 'run,
