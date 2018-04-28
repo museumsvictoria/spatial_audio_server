@@ -570,6 +570,14 @@ impl Model {
     /// Whether or not the GUI currently contains representations of active sounds.
     ///
     /// This is used at the top-level to determine what application loop mode to use.
+    ///
+    /// NOTE: This was used to determine whether or not the GUI need be re-instantiated on an
+    /// update method. However, this seemed to cause some GUI visualisation issues on macos
+    /// where the GUI wouldn't show on startup. This has since been fixed and macos now uses a
+    /// waiting event loop, however now it is awakened when necessary via the `gui::monitor`
+    /// thread and as a result this method remains unused. It is left here as it might become
+    /// useful in the future.
+    #[allow(dead_code)]
     pub fn is_animating(&self) -> bool {
         !self.audio_monitor.active_sounds.is_empty()
     }
@@ -1077,11 +1085,8 @@ fn set_side_menu_widgets(
     project: &mut Option<(Project, ProjectState)>,
     default_project_config: &project::Config,
 ) {
-    // The panel for selecting, adding and removing projects.
-    let mut last_area_id = gui.ids.side_menu_button;
-
     // Project Editor - for adding, saving and removing projects.
-    last_area_id = project_editor::set(gui, project, default_project_config);
+    let mut last_area_id = project_editor::set(gui, project, default_project_config);
 
     // Many of the sidebar widgets can only be displayed if a project is selected.
     if let Some((ref mut project, ref mut project_state)) = *project {
