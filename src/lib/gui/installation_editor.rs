@@ -127,7 +127,7 @@ pub fn set(
             .send(move |soundscape| {
                 soundscape.insert_installation(id, clone);
             })
-            .ok();
+            .expect("failed to send new installation to soundscape thread");
 
         // Update the audio output.
         channels
@@ -136,7 +136,7 @@ pub fn set(
                 let computers = 0;
                 audio.insert_installation(id, computers);
             })
-            .ok();
+            .expect("failed to send new installation to audio output thread");
     }
 
     // If there are no installations, display some text for adding one.
@@ -284,7 +284,7 @@ pub fn set(
             .send(move |soundscape| {
                 soundscape.remove_installation(&id);
             })
-            .ok();
+            .expect("failed to send message for removing installation from soundscape thread");
 
         // Remove this installation from the audio output thread.
         channels
@@ -292,7 +292,7 @@ pub fn set(
             .send(move |audio| {
                 audio.remove_installation(&id);
             })
-            .ok();
+            .expect("failed to send message for removing installation from audio output thread");
 
         // Remove this installation from the OSC output thread.
         let rem = osc::output::OscTarget::RemoveInstallation(id);
@@ -300,7 +300,7 @@ pub fn set(
         channels
             .osc_out_msg_tx
             .send(msg)
-            .ok();
+            .expect("failed to send message for removing installation from OSC output thread");
     }
 
     let area_rect = ui.rect_of(area.id).unwrap();
@@ -433,11 +433,14 @@ pub fn set(
         };
 
         // Update the soundscape copy.
-        channels.soundscape.send(move |soundscape| {
-            soundscape.update_installation(&id, |installation| {
-                installation.simultaneous_sounds = new_range;
-            });
-        }).ok();
+        channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.update_installation(&id, |installation| {
+                    installation.simultaneous_sounds = new_range;
+                });
+            })
+            .expect("failed to send installation update to soundscape thread");
     }
 
     ///////////////
@@ -496,19 +499,23 @@ pub fn set(
                 };
                 let add = osc::output::OscTarget::Add(id, computer, osc_tx, osc_addr.clone());
                 let msg = osc::output::Message::Osc(add);
-                if channels.osc_out_msg_tx.send(msg).ok().is_some() {
-                    let addr = installation::computer::Address { socket, osc_addr };
-                    installation.computers.insert(computer, addr);
-                }
+                channels
+                    .osc_out_msg_tx
+                    .send(msg)
+                    .expect("failed to send new installation computer to OSC output thread");
+                let addr = installation::computer::Address { socket, osc_addr };
+                installation.computers.insert(computer, addr);
             }
         } else if n_computers > n {
             for i in n..n_computers {
                 let computer = installation::computer::Id(i);
                 let rem = osc::output::OscTarget::Remove(id, computer);
                 let msg = osc::output::Message::Osc(rem);
-                if channels.osc_out_msg_tx.send(msg).ok().is_some() {
-                    installation.computers.remove(&computer);
-                }
+                channels
+                    .osc_out_msg_tx
+                    .send(msg)
+                    .expect("failed to remove installation computer from OSC output thread");
+                installation.computers.remove(&computer);
             }
             if selected_computer
                 .as_ref()
@@ -525,7 +532,7 @@ pub fn set(
             .send(move |audio| {
                 audio.insert_installation(id, n);
             })
-            .ok();
+            .expect("failed to send installation computer count update to audio output thread");
     }
 
     // Display the computer list for this installation.
@@ -635,10 +642,12 @@ pub fn set(
         let add =
             osc::output::OscTarget::Add(id, selected.computer, osc_tx, osc_addr.clone());
         let msg = osc::output::Message::Osc(add);
-        if channels.osc_out_msg_tx.send(msg).ok().is_some() {
-            let addr = installation::computer::Address { socket, osc_addr };
-            computers.insert(selected.computer, addr);
-        }
+        channels
+            .osc_out_msg_tx
+            .send(msg)
+            .expect("failed to send updated OSC address to OSC output thread");
+        let addr = installation::computer::Address { socket, osc_addr };
+        computers.insert(selected.computer, addr);
     }
 
     // The textbox for editing the OSC output IP address.

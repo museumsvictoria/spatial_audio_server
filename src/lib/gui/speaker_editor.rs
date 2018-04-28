@@ -217,7 +217,7 @@ pub fn set(
                 .send(move |audio| {
                     audio.remove_speaker(speaker_id);
                 })
-                .ok();
+                .expect("failed to remove speaker from audio output thread");
 
             // Remove the soundscape copy.
             channels
@@ -225,7 +225,7 @@ pub fn set(
                 .send(move |soundscape| {
                     soundscape.remove_speaker(&speaker_id);
                 })
-                .ok();
+                .expect("failed to remove speaker from soundscape thread");
         }
     }
 
@@ -261,7 +261,7 @@ pub fn set(
                 .send(move |audio| {
                     audio.insert_speaker(id, speaker);
                 })
-                .ok();
+                .expect("failed to send speaker to audio output thread");
 
             // Update the soundscape copy.
             let soundscape_speaker = soundscape::Speaker::from_audio_speaker(&audio);
@@ -270,7 +270,7 @@ pub fn set(
                 .send(move |soundscape| {
                     soundscape.insert_speaker(id, soundscape_speaker);
                 })
-                .ok();
+                .expect("failed to send speaker to soundscape thread");
 
             // Update the local copy.
             let speaker = project::Speaker { name, audio };
@@ -363,7 +363,7 @@ pub fn set(
             .send(move |audio| {
                 audio.insert_speaker(id, speaker);
             })
-            .ok();
+            .expect("failed to send speaker to audio output thread");
 
         // If an existing speaker was assigned to `index`, swap it with the original
         // selection.
@@ -386,7 +386,7 @@ pub fn set(
                 .send(move |audio| {
                     audio.insert_speaker(other_id, other_speaker);
                 })
-                .ok();
+                .expect("failed to send speaker to audio output thread");
         }
     }
 
@@ -438,7 +438,7 @@ pub fn set(
             .send(move |audio| {
                 audio.insert_speaker_installation(id, installation);
             })
-            .ok();
+            .expect("failed to update speaker installation for audio output thread");
 
         // Update the soundscape copy.
         gui.channels
@@ -448,7 +448,7 @@ pub fn set(
                     speaker.installations.insert(installation);
                 });
             })
-            .ok();
+            .expect("failed to update speaker installations for soundscape thread");
     }
 
     // A scrollable list showing each of the assigned installations.
@@ -533,7 +533,7 @@ pub fn set(
             .send(move |audio| {
                 audio.remove_speaker_installation(id, &inst);
             })
-            .ok();
+            .expect("failed to remove installation from speaker on audio output thread");
 
         // Update the soundscape copy.
         gui.channels
@@ -543,7 +543,7 @@ pub fn set(
                     speaker.installations.remove(&inst);
                 });
             })
-            .ok();
+            .expect("failed to remove installation from speaker on soundscape thread");
     }
 
     area.id

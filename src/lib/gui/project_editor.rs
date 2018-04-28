@@ -317,19 +317,19 @@ pub fn set(
             channels
                 .soundscape
                 .send(move |soundscape| soundscape.clear_project_specific_data())
-                .ok();
+                .expect("failed to send `clear_project_specific_data` message to soundscape thread");
             channels
                 .audio_input
                 .send(move |audio| audio.clear_project_specific_data())
-                .ok();
+                .expect("failed to send `clear_project_specific_data` message to audio input thread");
             channels
                 .audio_output
                 .send(move |audio| audio.clear_project_specific_data())
-                .ok();
+                .expect("failed to send `clear_project_specific_data` message to audio output thread");
             channels
                 .osc_out_msg_tx
                 .send(osc::output::Message::ClearProjectSpecificData)
-                .ok();
+                .expect("failed to send `ClearProjectSpecificData` message to OSC output thread");
         }
     }
 

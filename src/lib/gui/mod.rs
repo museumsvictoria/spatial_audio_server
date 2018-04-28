@@ -387,7 +387,7 @@ impl Model {
                     channels
                         .audio_output
                         .send(move |audio| audio.master_volume = volume)
-                        .ok();
+                        .expect("failed to send updated master volume to audio output thread");
                 },
 
                 &osc::input::Control::SourceVolume(ref source_volume) => {
@@ -418,7 +418,7 @@ impl Model {
                         .send(move |soundscape| {
                             soundscape.update_source(&id, |source| source.volume = volume);
                         })
-                        .expect("could not update source volume on soundscape");
+                        .expect("failed to send updated source volume to soundscape thread");
 
                     // Update the audio output copies.
                     channels
@@ -428,15 +428,21 @@ impl Model {
                                 sound.volume = volume;
                             });
                         })
-                        .ok();
+                        .expect("failed to send updated source volume to audio output thread");
                 }
 
                 &osc::input::Control::PlaySoundscape => {
-                    channels.soundscape.play().ok();
+                    channels
+                        .soundscape
+                        .play()
+                        .expect("failed to send `Play` message to soundscape thread");
                 }
 
                 &osc::input::Control::PauseSoundscape => {
-                    channels.soundscape.pause().ok();
+                    channels
+                        .soundscape
+                        .pause()
+                        .expect("failed to send `Pause` message to soundscape thread");
                 }
             }
 
@@ -1442,7 +1448,7 @@ fn set_widgets(
                         .send(move |audio| {
                             audio.insert_speaker(speaker_id, speaker_clone);
                         })
-                        .ok();
+                        .expect("failed to send updated speaker to audio output thread");
 
                     // Update the soundscape copy.
                     channels
@@ -1450,7 +1456,7 @@ fn set_widgets(
                         .send(move |soundscape| {
                             soundscape.update_speaker(&speaker_id, |s| s.point = new_p);
                         })
-                        .ok();
+                        .expect("failed to send speaker update to soundscape thread");
                 }
                 new_p
             };
@@ -1575,7 +1581,7 @@ fn set_widgets(
                                         s.position.point = new_p;
                                     });
                                 })
-                                .ok();
+                                .expect("failed to send sound position to audio output thread");
                         }
 
                         audio::sound::Position {
