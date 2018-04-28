@@ -5,6 +5,8 @@ A cross-platform, n-channel spatial audio server developed by
 Framework](http://nannou.cc/). Audio Server was commissioned by Scienceworks of
 Melbourne Museum Victoria for the Beyond Perception exhibition.
 
+![Audio Server Screenshot](https://imgur.com/2qXJtjc.png)
+
 The audio server runs on a single machine and is responsible for the following:
 
 - Stores all audio WAV content.
@@ -28,11 +30,13 @@ The audio server runs on a single machine and is responsible for the following:
    - [Overview](./README.md#overview)
    - [Floorplan](./README.md#floorplan)
    - [Projects](./README.md#projects)
+   - [Master](./README.md#master)
    - [Installations](./README.md#installations)
    - [Speakers](./README.md#speakers)
    - [Soundscape Groups](./README.md#soundscape-groups)
    - [Sources](./README.md#sources)
    - [OSC](./README.md#osc)
+   - [CPU Saving Mode](./README.md#cpu-saving-mode)
 
 ## Building
 
@@ -178,6 +182,8 @@ The primary view within the audio server GUI is the floorplan. Here we can get
 a top-down view of the exhibition for which we will create the spatial
 soundscape.
 
+[Floorplan](https://imgur.com/0C0NPY0.png)
+
 The floorplan can be navigated by clicking, scrolling and dragging the mouse to
 control a virtual 2D camera that looks over the space. Scrolling up causes the
 camera to zoom in while scrolling down causes the camera to zoom out.
@@ -196,6 +202,8 @@ The audio server is aware of the scale of the floorplan, derived from the
 Projects allow for adding, removing, saving and loading audio server
 different configurations. Projects can be useful for testing ideas, backing
 up progress and creating feature soundscapes.
+
+![Projects](https://imgur.com/aY7PBJr.png)
 
 Projects are automatically saved when you switch from one project to another,
 when you press "Ctrl + S" and when you exit the program by closing it or
@@ -224,11 +232,27 @@ This subdirectory should contain two files:
    to everything including installations, speakers, soundscape groups and
    sources.
 
+### Master
+
+The master panel provides parameters that affect the entire exhibition.
+
+![Master](https://imgur.com/08yowCY.png)
+
+
+- **Exhibition Volume** for controlling the volume for the entire exhibition.
+- **Realtime Source Latency** describes the latency applied to realtime input
+  sources in order to avoid letting the audio input stream from drifting ahead
+  of the audio output stream.
+- **DBAP Rolloff** allows for tweaking the affect of distance between sounds and
+  speakers on the resulting gain.
+
 ### Installations
 
 In the audio server, an "Installation" is considered to be one specific area
 within the overall exhibition. E.g. "Cacophony" is one **installation** that
 exists within the "Beyond Perception" **exhibition**.
+
+![Installations](https://imgur.com/vVzBo95.png)
 
 A user may setup all desired installations in the "Installation Editor" panel.
 Here we can add new installations with the "+" button and remove them with the
@@ -256,6 +280,8 @@ Setup the speakers under the "Speaker Editor" panel. Here we can assign what
 audio output channels on the system default output audio device will be used to
 play back each speaker.
 
+![Speakers](https://imgur.com/ex2u3Nl.png)
+
 In the textbox directly below the speaker selection, we can give the speaker a
 custom name by typing it in and hitting `Enter`, which may make it easier to
 find this speaker if we are to refer to it again in the future.
@@ -277,6 +303,8 @@ important in that it is used as a guide for how soundscape sounds assigned to
 each installation may travel throughout the exhibition.
 
 ### Soundscape Groups
+
+![Soundscape Editor](https://imgur.com/rrHm8i3.png)
 
 Add, remove and configure the **soundscape groups** under the "Soundscape
 Editor" panel. Soundscape groups are used to apply certain soundscape
@@ -315,6 +343,8 @@ rate of 1 per minute and a max of 2 simultaneous sounds.
 
 Sources are the origin for all audio that passes through the audio server.
 
+![Source Editor](https://imgur.com/2g4vSmN.png)
+
 All source addition, editing and removal occurs under the "Source Editor" GUI
 panel. There are two types of sources available:
 
@@ -330,6 +360,8 @@ must be in sync (e.g. they contain music) these sources must be set to
 "Continuous" or they will not be played back with the correct timing. WAV
 sources will always show at the top of the scrollable source list.
 
+  ![WAV DATA](https://imgur.com/yDfzzIV.png)
+
 - **Realtime sources**. These will source audio from the system's current
 default input audio device. Realtime sources must be added manually by pressing
 the "+ Realtime" button. Realtime sources will always appear at the bottom of
@@ -339,6 +371,8 @@ over which a realtime source may play back. This duration is also the duration
 over which a realtime source will play when previewed with the "One Shot" mode.
 We can also specify the range of input channels on the audio input device that
 will be used to source the audio data.
+
+  ![REALTIME DATA](https://imgur.com/rFX6kWm.png)
 
 Under the scrollable source list there is a textbox with which a custom name
 may be specified for the source by typing the name and pressing `Enter`. WAV
@@ -387,11 +421,15 @@ These include:
   second channel to the right of the sound. A small visualisation of the
   channel layout can be found under these two sliders.
 
+  ![Source Common](https://imgur.com/aOeOuRd.png)
+
 If the source is assigned the **SCAPE** role, a large area of soundscape
 parameters can be found towards the bottom of the "Source Editor" panel. These
 are similar to the constraints we have previously seen within the "Installation
 Editor" and "Soundscape Editor" GUI areas, but more detailed and customisable
 per-source (rather than per-installation or per-group).
+
+![Source Soundscape](https://imgur.com/WVlPGJY.png)
 
 Each soundscape source must specify the set of installations the source will be
 allowed to spawn in. A soundscape source must also be assigned to one or more
