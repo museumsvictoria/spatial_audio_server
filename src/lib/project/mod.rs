@@ -244,19 +244,19 @@ impl Project {
         channels
             .soundscape
             .send(move |soundscape| soundscape.clear_project_specific_data())
-            .ok();
+            .expect("failed to send `clear_project_specific_data` message to soundscape thread");
         channels
             .audio_input
             .send(move |audio| audio.clear_project_specific_data())
-            .ok();
+            .expect("failed to send `clear_project_specific_data` message to audio input thread");
         channels
             .audio_output
             .send(move |audio| audio.clear_project_specific_data())
-            .ok();
+            .expect("failed to send `clear_project_specific_data` message to audio output thread");
         channels
             .osc_out_msg_tx
             .send(osc::output::Message::ClearProjectSpecificData)
-            .ok();
+            .expect("failed to send `ClearProjectSpecificData` message to OSC output thread");
 
         // TODO: Consider updating config stuff here?
 
@@ -322,7 +322,7 @@ impl Project {
                 .send(move |soundscape| {
                     soundscape.insert_group(id, clone);
                 })
-                .ok();
+                .expect("failed to send soundscape group to soundscape thread");
         }
 
         // Speakers to the soundscape and audio output threads.
@@ -333,14 +333,14 @@ impl Project {
                 .send(move |audio| {
                     audio.insert_speaker(id, clone);
                 })
-                .ok();
+                .expect("failed to send speaker to audio output thread");
             let soundscape_speaker = soundscape::Speaker::from_audio_speaker(&speaker.audio);
             channels
                 .soundscape
                 .send(move |soundscape| {
                     soundscape.insert_speaker(id, soundscape_speaker);
                 })
-                .ok();
+                .expect("failed to send speaker to soundscape thread");
         }
 
         // Sources to the audio input and soundscape threads.
@@ -352,7 +352,7 @@ impl Project {
                     .send(move |audio| {
                         audio.sources.insert(id, clone);
                     })
-                    .ok();
+                    .expect("failed to send source to audio input thread");
             }
             if let Some(clone) = soundscape::Source::from_audio_source(&source) {
                 channels
@@ -360,7 +360,7 @@ impl Project {
                     .send(move |soundscape| {
                         soundscape.insert_source(id, clone);
                     })
-                    .ok();
+                    .expect("failed to send source to soundscape thread");
             }
         }
 

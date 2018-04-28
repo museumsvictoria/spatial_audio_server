@@ -1399,7 +1399,7 @@ fn tick(model: &mut Model, tick: Tick) {
                         sound.position = position;
                     });
                 })
-                .ok();
+                .expect("failed to send audio output thread updated sound position");
         }
     }
 

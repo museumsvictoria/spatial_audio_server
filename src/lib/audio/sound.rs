@@ -266,7 +266,7 @@ pub fn spawn_from_wav(
         .send(move |audio| {
             audio.insert_sound(id, output_active_sound);
         })
-        .ok();
+        .expect("failed to send new sound to audio output thread");
 
     handle
 }
@@ -384,14 +384,14 @@ pub fn spawn_from_realtime(
                 .or_insert_with(Vec::new)
                 .push(input_active_sound);
         })
-        .ok();
+        .expect("failed to send new realtime input sound to audio input thread");
 
     // Send the active sound to the audio input thread.
     audio_output
         .send(move |audio| {
             audio.insert_sound(id, output_active_sound);
         })
-        .ok();
+        .expect("failed to send new sound to audio output thread");
 
     handle
 }
@@ -487,7 +487,8 @@ impl IdGenerator {
     }
 
     pub fn generate_next(&self) -> Id {
-        let mut next = self.next.lock().unwrap();
+        let mut next = self.next.lock()
+            .expect("failed to acquire mutex for generating new `sound::Id`");
         let id = *next;
         *next = Id(id.0.wrapping_add(1));
         id

@@ -97,9 +97,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> wi
         master.volume = new_volume;
 
         // Update the audio output thread's master volume.
-        channels.audio_output.send(move |audio| {
-            audio.master_volume = new_volume;
-        }).ok();
+        channels
+            .audio_output
+            .send(move |audio| {
+                audio.master_volume = new_volume;
+            })
+            .expect("failed to send updated master volume to audio output thread");
     }
 
     // The realtime source latency slider.
@@ -124,7 +127,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> wi
             .send(move |soundscape| {
                 soundscape.realtime_source_latency = Ms(new_latency);
             })
-            .ok();
+            .expect("failed to send updated realtime source latency volume to soundscape thread");
     }
 
     // The master volume slider.
@@ -143,9 +146,12 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> wi
         master.dbap_rolloff_db = new_rolloff;
 
         // Update the audio output thread's rolloff.
-        channels.audio_output.send(move |audio| {
-            audio.dbap_rolloff_db = new_rolloff;
-        }).ok();
+        channels
+            .audio_output
+            .send(move |audio| {
+                audio.dbap_rolloff_db = new_rolloff;
+            })
+            .expect("failed to send updated DBAP rolloff to audio output thread");
     }
 
     area.id

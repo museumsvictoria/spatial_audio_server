@@ -271,7 +271,7 @@ pub fn set(
                             .send(move |audio| {
                                 audio.remove_sound(sound_id);
                             })
-                            .ok();
+                            .expect("failed to remove previewed sound from audio output thread");
                         source_editor.preview.current = None;
                     }
                 }
@@ -307,7 +307,7 @@ pub fn set(
                     audio.sources.remove(&remove_id);
                     audio.active_sounds.remove(&remove_id);
                 })
-                .ok();
+                .expect("failed to remove source from audio input thread");
 
             // Remove soundscape copy.
             channels
@@ -315,7 +315,7 @@ pub fn set(
                 .send(move |soundscape| {
                     soundscape.remove_source(&remove_id);
                 })
-                .expect("soundscape was closed");
+                .expect("failed to remove source from soundscape thread");
         }
     }
 
@@ -386,7 +386,7 @@ pub fn set(
             .send(move |audio| {
                 audio.sources.insert(id, realtime);
             })
-            .ok();
+            .expect("failed to send new source to audio input thread");
     }
 
     let area_rect = ui.rect_of(area.id).unwrap();
@@ -521,9 +521,12 @@ pub fn set(
                     (_, Some(Role::Soundscape(_))) => {
                         let soundscape_source = soundscape::Source::from_audio_source(&source.audio)
                             .expect("source did not have soundscape role");
-                        channels.soundscape.send(move |soundscape| {
-                            soundscape.insert_source(id, soundscape_source);
-                        }).expect("soundscape was closed");
+                        channels
+                            .soundscape
+                            .send(move |soundscape| {
+                                soundscape.insert_source(id, soundscape_source);
+                            })
+                            .expect("failed to send soundscape source to soundscape thread");
                     },
 
                     // If it is no longer a soundscape.
@@ -534,7 +537,7 @@ pub fn set(
                             .send(move |soundscape| {
                                 soundscape.remove_source(&id);
                             })
-                            .expect("soundscape was closed");
+                            .expect("failed to remove soundscape source from soundscape thread");
 
                         // Remove all sounds with this source from the audio output thread.
                         channels
@@ -542,7 +545,7 @@ pub fn set(
                             .send(move |audio| {
                                 audio.remove_sounds_with_source(&id);
                             })
-                            .expect("soundscape was closed");
+                            .expect("failed to remove soundscape source sounds from audio output thread");
                     },
 
                     _ => (),
@@ -592,7 +595,7 @@ pub fn set(
                         .send(move |audio| {
                             audio.remove_sound(sound_id);
                         })
-                        .ok();
+                        .expect("failed to remove sound from audio output thread");
 
                     preview.current = None;
                     if mode != new_mode {
@@ -750,13 +753,16 @@ pub fn set(
                 wav.should_loop = new_loop;
 
                 // Update the soundscape thread copy.
-                channels.soundscape.send(move |soundscape| {
-                    soundscape.update_source(&id, |source| {
-                        if let audio::source::Kind::Wav(ref mut wav) = source.kind {
-                            wav.should_loop = new_loop;
-                        }
-                    });
-                }).ok();
+                channels
+                    .soundscape
+                    .send(move |soundscape| {
+                        soundscape.update_source(&id, |source| {
+                            if let audio::source::Kind::Wav(ref mut wav) = source.kind {
+                                wav.should_loop = new_loop;
+                            }
+                        });
+                    })
+                    .expect("failed to send source should_loop toggle to soundscape thread");
 
                 // TODO: On the audio output thread, swap out any sounds that use this WAV source
                 // with a looping version.
@@ -834,22 +840,28 @@ pub fn set(
                         wav.playback = new_playback;
 
                         // Update the soundscape copy.
-                        channels.soundscape.send(move |soundscape| {
-                            soundscape.update_source(&id, |source| {
-                                if let audio::source::Kind::Wav(ref mut wav) = source.kind {
-                                    wav.playback = new_playback;
-                                }
-                            });
-                        }).ok();
+                        channels
+                            .soundscape
+                            .send(move |soundscape| {
+                                soundscape.update_source(&id, |source| {
+                                    if let audio::source::Kind::Wav(ref mut wav) = source.kind {
+                                        wav.playback = new_playback;
+                                    }
+                                });
+                            })
+                            .expect("failed to send source playback mode to soundscape thread");
 
                         // Update all audio thread copies.
-                        channels.audio_output.send(move |audio| {
-                            audio.update_sounds_with_source(&id, move |_, sound| {
-                                if let audio::source::SignalKind::Wav { ref mut playback, .. } = sound.signal.kind {
-                                    *playback = new_playback;
-                                }
-                            });
-                        }).ok();
+                        channels
+                            .audio_output
+                            .send(move |audio| {
+                                audio.update_sounds_with_source(&id, move |_, sound| {
+                                    if let audio::source::SignalKind::Wav { ref mut playback, .. } = sound.signal.kind {
+                                        *playback = new_playback;
+                                    }
+                                });
+                            })
+                            .expect("failed to send source playback mode to audio output thread");
                     },
                     _ => (),
                 }
@@ -885,20 +897,26 @@ pub fn set(
                     $update_fn(realtime);
 
                     // Update the audio input thread copy.
-                    channels.audio_input.send(move |audio| {
-                        if let Some(realtime) = audio.sources.get_mut(&id) {
-                            $update_fn(realtime);
-                        }
-                    }).ok();
-
-                    // Update the soundscape thread copy.
-                    channels.soundscape.send(move |soundscape| {
-                        soundscape.update_source(&id, |source| {
-                            if let audio::source::Kind::Realtime(ref mut realtime) = source.kind {
+                    channels
+                        .audio_input
+                        .send(move |audio| {
+                            if let Some(realtime) = audio.sources.get_mut(&id) {
                                 $update_fn(realtime);
                             }
-                        });
-                    }).expect("soundscape was closed");
+                        })
+                        .expect("failed to send realtime source update to audio input thread");
+
+                    // Update the soundscape thread copy.
+                    channels
+                        .soundscape
+                        .send(move |soundscape| {
+                            soundscape.update_source(&id, |source| {
+                                if let audio::source::Kind::Realtime(ref mut realtime) = source.kind {
+                                    $update_fn(realtime);
+                                }
+                            });
+                        })
+                        .expect("failed to send realtime source update to soundscape thread");
                 };
             }
 
@@ -1018,7 +1036,7 @@ pub fn set(
             .send(move |soundscape| {
                 soundscape.update_source(&id, |source| source.volume = new_volume);
             })
-            .expect("could not update source volume on soundscape");
+            .expect("failed to send source volume update to soundscape thread");
 
         // Update the audio output copies.
         channels
@@ -1028,7 +1046,7 @@ pub fn set(
                     sound.volume = new_volume;
                 });
             })
-            .ok();
+            .expect("failed to send source volume update to audio output thread");
     }
 
     // Buttons for solo and mute behaviour.
@@ -1060,7 +1078,7 @@ pub fn set(
                 .send(move |audio| {
                     audio.soloed.clear();
                 })
-                .ok();
+                .expect("failed to send message for clearing soloed sources to audio output thread");
         }
 
         // Update local copy.
@@ -1080,7 +1098,7 @@ pub fn set(
                     audio.soloed.remove(&id);
                 }
             })
-            .ok();
+            .expect("failed to send soloed sources update to audio output thread");
     }
 
     // Mute button.
@@ -1100,7 +1118,7 @@ pub fn set(
             .send(move |soundscape| {
                 soundscape.update_source(&id, |source| source.muted = new_mute);
             })
-            .ok();
+            .expect("failed to send muted sources update to soundscape thread");
 
         // Update audio output copy.
         channels
@@ -1110,7 +1128,7 @@ pub fn set(
                     sound.muted = new_mute;
                 });
             })
-            .ok();
+            .expect("failed to send muted sources update to audio output thread");
     }
 
     // Display the channel layout.
@@ -1146,16 +1164,22 @@ pub fn set(
         sources.get_mut(&id).unwrap().audio.spread = spread_m;
 
         // Update soundscape copy if it's there.
-        channels.soundscape.send(move |soundscape| {
-            soundscape.update_source(&id, |source| source.spread = spread_m);
-        }).expect("soundscape was closed");
+        channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.update_source(&id, |source| source.spread = spread_m);
+            })
+            .expect("failed to send source channel spread to soundscape thread");
 
         // Update the audio output copies.
-        channels.audio_output.send(move |audio| {
-            audio.update_sounds_with_source(&id, move |_, sound| {
-                sound.spread = spread_m;
-            });
-        }).ok();
+        channels
+            .audio_output
+            .send(move |audio| {
+                audio.update_sounds_with_source(&id, move |_, sound| {
+                    sound.spread = spread_m;
+                });
+            })
+            .expect("failed to send source channel spread to audio output thread");
     }
 
     // Slider for controlling how channels should be rotated.
@@ -1175,18 +1199,24 @@ pub fn set(
         sources.get_mut(&id).unwrap().audio.channel_radians = channel_radians;
 
         // Update the soundscape copy.
-        channels.soundscape.send(move |soundscape| {
-            soundscape.update_source(&id, move |source| {
-                source.channel_radians = channel_radians;
-            });
-        }).expect("soundscape was closed");
+        channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.update_source(&id, move |source| {
+                    source.channel_radians = channel_radians;
+                });
+            })
+            .expect("failed to send source channel radians to soundscape thread");
 
         // Update the audio output copies.
-        channels.audio_output.send(move |audio| {
-            for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
-                sound.channel_radians = channel_radians;
-            }
-        }).ok();
+        channels
+            .audio_output
+            .send(move |audio| {
+                for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
+                    sound.channel_radians = channel_radians;
+                }
+            })
+            .expect("failed to send source channel radians to audio output thread");
     }
 
     // The field over which the channel layout will be visualised.
@@ -1333,20 +1363,26 @@ pub fn set(
                 }
 
                 // Update the soundscape copy.
-                channels.soundscape.send(move |soundscape| {
-                    soundscape.update_source(&id, |source| {
-                        source.installations.insert(installation);
-                    });
-                }).expect("soundscape channel closed");
+                channels
+                    .soundscape
+                    .send(move |soundscape| {
+                        soundscape.update_source(&id, |source| {
+                            source.installations.insert(installation);
+                        });
+                    })
+                    .expect("failed to send assigned installation to source on soundscape thread");
 
                 // Update sounds
-                channels.audio_output.send(move |audio| {
-                    for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
-                        if let audio::sound::Installations::Set(ref mut set) = sound.installations {
-                            set.insert(installation);
+                channels
+                    .audio_output
+                    .send(move |audio| {
+                        for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
+                            if let audio::sound::Installations::Set(ref mut set) = sound.installations {
+                                set.insert(installation);
+                            }
                         }
-                    }
-                }).ok();
+                    })
+                    .expect("failed to send assigned installation to sounds on audio output thread");
             }
 
             // A scrollable list showing each of the assigned installations.
@@ -1423,20 +1459,26 @@ pub fn set(
                 }
 
                 // Remove the soundscape copy.
-                channels.soundscape.send(move |soundscape| {
-                    soundscape.update_source(&id, move |source| {
-                        source.installations.remove(&inst);
-                    });
-                }).expect("soundscape channel closed");
+                channels
+                    .soundscape
+                    .send(move |soundscape| {
+                        soundscape.update_source(&id, move |source| {
+                            source.installations.remove(&inst);
+                        });
+                    })
+                    .expect("failed to remove installation from source on soundscape thread");
 
                 // Remove the installation from sounds driven by this source on the output stream.
-                channels.audio_output.send(move |audio| {
-                    for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
-                        if let audio::sound::Installations::Set(ref mut set) = sound.installations {
-                            set.remove(&inst);
+                channels
+                    .audio_output
+                    .send(move |audio| {
+                        for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
+                            if let audio::sound::Installations::Set(ref mut set) = sound.installations {
+                                set.remove(&inst);
+                            }
                         }
-                    }
-                }).ok();
+                    })
+                    .expect("failed to remove installation from source on audio output thread");
             }
 
             ////////////////////////////
@@ -1539,11 +1581,14 @@ pub fn set(
                 };
 
                 // Update the soundscape copy.
-                channels.soundscape.send(move |soundscape| {
-                    soundscape.update_source(&id, |source| {
-                        source.occurrence_rate = new_rate;
-                    });
-                }).ok();
+                channels
+                    .soundscape
+                    .send(move |soundscape| {
+                        soundscape.update_source(&id, |source| {
+                            source.occurrence_rate = new_rate;
+                        });
+                    })
+                    .expect("failed to send updated source occurrence rate to soundscape thread");
             }
 
             /////////////////////////
@@ -1586,11 +1631,14 @@ pub fn set(
                 };
 
                 // Update the soundscape copy.
-                channels.soundscape.send(move |soundscape| {
-                    soundscape.update_source(&id, |source| {
-                        source.simultaneous_sounds = new_num;
-                    });
-                }).ok();
+                channels
+                    .soundscape
+                    .send(move |soundscape| {
+                        soundscape.update_source(&id, |source| {
+                            source.simultaneous_sounds = new_num;
+                        });
+                    })
+                    .expect("failed to send source simultaenous sounds to soundscape thread");
             }
 
             ///////////////////////
@@ -1650,11 +1698,14 @@ pub fn set(
                 };
 
                 // Update the soundscape copy.
-                channels.soundscape.send(move |soundscape| {
-                    soundscape.update_source(&id, |source| {
-                        source.playback_duration = new_duration;
-                    });
-                }).ok();
+                channels
+                    .soundscape
+                    .send(move |soundscape| {
+                        soundscape.update_source(&id, |source| {
+                            source.playback_duration = new_duration;
+                        });
+                    })
+                    .expect("failed to send new playback duration to source on soundscape thread");
             }
 
             /////////////////////
@@ -1703,11 +1754,14 @@ pub fn set(
                 };
 
                 // Update the soundscape copy.
-                channels.soundscape.send(move |soundscape| {
-                    soundscape.update_source(&id, |source| {
-                        source.attack_duration = new_duration;
-                    });
-                }).ok();
+                channels
+                    .soundscape
+                    .send(move |soundscape| {
+                        soundscape.update_source(&id, |source| {
+                            source.attack_duration = new_duration;
+                        });
+                    })
+                    .expect("failed to send source attack duration to soundscape thread");
             }
 
             //////////////////////
@@ -1756,11 +1810,14 @@ pub fn set(
                 };
 
                 // Update the soundscape copy.
-                channels.soundscape.send(move |soundscape| {
-                    soundscape.update_source(&id, |source| {
-                        source.release_duration = new_duration;
-                    });
-                }).ok();
+                channels
+                    .soundscape
+                    .send(move |soundscape| {
+                        soundscape.update_source(&id, |source| {
+                            source.release_duration = new_duration;
+                        });
+                    })
+                    .expect("failed to send source release duration to soundscape thread");
             }
 
             //////////////////////////////////
@@ -1808,15 +1865,18 @@ pub fn set(
                             }
 
                             // Update the soundscape copy.
-                            channels.soundscape.send(move |soundscape| {
-                                soundscape.update_source(&id, move |source| {
-                                    if selected {
-                                        source.groups.remove(&group_id);
-                                    } else {
-                                        source.groups.insert(group_id);
-                                    }
-                                });
-                            }).ok();
+                            channels
+                                .soundscape
+                                .send(move |soundscape| {
+                                    soundscape.update_source(&id, move |source| {
+                                        if selected {
+                                            source.groups.remove(&group_id);
+                                        } else {
+                                            source.groups.insert(group_id);
+                                        }
+                                    });
+                                })
+                                .expect("failed to send source soundscape group update to soundscape thread");
                         }
 
                     }
@@ -2046,7 +2106,7 @@ pub fn set(
                                     agent.directional = new_directional;
                                 });
                             })
-                            .ok();
+                            .expect("failed to send source movement update to soundscape thread");
                     }
 
                     ///////////////
@@ -2113,7 +2173,7 @@ pub fn set(
                                     agent.max_speed = new_max_speed;
                                 });
                             })
-                            .ok();
+                            .expect("failed to send movement update to soundscape thread");
                     }
 
                     ///////////////
@@ -2180,7 +2240,7 @@ pub fn set(
                                     agent.max_force = new_max_force;
                                 });
                             })
-                            .ok();
+                            .expect("failed to send movement update to soundscape thread");
                     }
 
                     //////////////////
@@ -2247,7 +2307,7 @@ pub fn set(
                                     agent.max_rotation = new_max_rotation;
                                 });
                             })
-                            .ok();
+                            .expect("failed to send movement update to soundscape thread");
                     }
                 },
 
@@ -2319,7 +2379,7 @@ pub fn set(
                                     ngon.vertices = new_vertices;
                                 });
                             })
-                            .ok();
+                            .expect("failed to send movement update to soundscape thread");
                     }
 
                     ////////////////
@@ -2387,7 +2447,7 @@ pub fn set(
                                     ngon.nth = new_nth;
                                 });
                             })
-                            .ok();
+                            .expect("failed to send movement update to soundscape thread");
                     }
 
 
@@ -2457,7 +2517,7 @@ pub fn set(
                                     ngon.normalised_dimensions.x = new_width;
                                 });
                             })
-                            .ok();
+                            .expect("failed to send movement update to soundscape thread");
                     }
 
                     ////////////
@@ -2508,7 +2568,7 @@ pub fn set(
                                     ngon.normalised_dimensions.y = new_height;
                                 });
                             })
-                            .ok();
+                            .expect("failed to send movement update to soundscape thread");
                     }
 
                     ////////////////////
@@ -2574,7 +2634,7 @@ pub fn set(
                                     ngon.radians_offset = new_radians_offset;
                                 });
                             })
-                            .ok();
+                            .expect("failed to send movement update to soundscape thread");
                     }
 
                     ///////////
@@ -2641,10 +2701,8 @@ pub fn set(
                                     ngon.speed = new_speed;
                                 });
                             })
-                            .ok();
+                            .expect("failed to send movement update to soundscape thread");
                     }
-
-
                 },
             }
         },

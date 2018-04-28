@@ -107,9 +107,15 @@ pub fn set(
         .set(ids.soundscape_editor_is_playing, ui)
     {
         if new_is_playing {
-            channels.soundscape.play().ok();
+            channels
+                .soundscape
+                .play()
+                .expect("failed to send play command to soundscape thread");
         } else {
-            channels.soundscape.pause().ok();
+            channels
+                .soundscape
+                .pause()
+                .expect("failed to send pause command to soundscape thread");
         }
     }
 
@@ -280,9 +286,12 @@ pub fn set(
         soundscape_groups.remove(&id);
 
         // Remove this group from any sources on the soundscape thread.
-        channels.soundscape.send(move |soundscape| {
-            soundscape.remove_group(&id);
-        }).ok();
+        channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.remove_group(&id);
+            })
+            .expect("failed to remove soundscape group from soundscape thread");
     }
 
     ////////////////////
@@ -400,11 +409,14 @@ pub fn set(
         };
 
         // Update the soundscape copy.
-        channels.soundscape.send(move |soundscape| {
-            soundscape.update_group(&id, |group| {
-                group.occurrence_rate = new_rate;
-            });
-        }).ok();
+        channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.update_group(&id, |group| {
+                    group.occurrence_rate = new_rate;
+                });
+            })
+            .expect("failed to send updated occurrence rate to soundscape thread");
     }
 
     /////////////////////////
@@ -448,11 +460,14 @@ pub fn set(
         };
 
         // Update the soundscape copy.
-        channels.soundscape.send(move |soundscape| {
-            soundscape.update_group(&id, |group| {
-                group.simultaneous_sounds = new_rate;
-            });
-        }).ok();
+        channels
+            .soundscape
+            .send(move |soundscape| {
+                soundscape.update_group(&id, |group| {
+                    group.simultaneous_sounds = new_rate;
+                });
+            })
+            .expect("failed to send updated simultaneous sounds constraint to soundscape thread");
     }
 
     area.id
