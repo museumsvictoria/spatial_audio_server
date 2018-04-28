@@ -50,7 +50,6 @@ pub fn spawn(app_proxy: nannou::app::Proxy) -> io::Result<Spawned> {
             // TODO: Work out how to use this in a way that is not so expensive on Mac.
             // Perhaps use some atomic bool flag which indicates whether or not the GUI needs
             // waking up.
-            let _app_proxy = app_proxy;
             // Attempt to forward every message and wakeup the GUI when successful.
             let mut msgs = vec![];
             'run: while !is_closed_2.load(atomic::Ordering::Relaxed) {
@@ -66,10 +65,13 @@ pub fn spawn(app_proxy: nannou::app::Proxy) -> io::Result<Spawned> {
                 for msg in msgs.drain(..) {
                     match gui_tx.send(msg) {
                         Ok(()) => {
-                            // if proxy.wakeup().is_err() {
-                            //     eprintln!("audio_monitor proxy could not wakeup app");
-                            //     break 'run;
-                            // }
+                            // Proxy is currently buggy on linux so we only enable this for macos.
+                            if cfg!(target_os = "macos") {
+                                if app_proxy.wakeup().is_err() {
+                                    eprintln!("audio_monitor proxy could not wakeup app");
+                                    break 'run;
+                                }
+                            }
                         },
                         Err(_) => break 'run,
                     }

@@ -65,6 +65,17 @@ where
 
 // Initialise the state of the application.
 fn model(app: &App) -> Model {
+    // If on macos, set the loop to wait mode.
+    //
+    // We only do this on macos as the app::Proxy is still a bit buggy on linux and windows has not
+    // yet been tested.
+    if cfg!(target_os = "macos") {
+        // Set the app to wait on events.
+        //
+        // We will wake it up if it is necessary to re-instantiate and redraw the GUI.
+        app.set_loop_mode(LoopMode::wait(3));
+    }
+
     // Find the assets directory.
     let assets = app.assets_path()
         .expect("could not find assets directory");
