@@ -1,4 +1,4 @@
-# Audio Server
+# Spatial Audio Server
 
 A cross-platform, n-channel spatial audio server developed by
 [MindBuffer](https://www.mindbuffer.net/) using the [Nannou Creative Coding
