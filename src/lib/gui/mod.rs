@@ -407,7 +407,7 @@ impl Model {
                     {
                         None => continue,
                         Some((&id, ref mut source)) => {
-                            source.volume = volume;
+                            source.volume *= volume;
                             id
                         },
                     };
@@ -416,7 +416,7 @@ impl Model {
                     channels
                         .soundscape
                         .send(move |soundscape| {
-                            soundscape.update_source(&id, |source| source.volume = volume);
+                            soundscape.update_source(&id, |source| source.volume *= volume);
                         })
                         .expect("failed to send updated source volume to soundscape thread");
 
@@ -425,7 +425,7 @@ impl Model {
                         .audio_output
                         .send(move |audio| {
                             audio.update_sounds_with_source(&id, move |_, sound| {
-                                sound.volume = volume;
+                                sound.volume *= volume;
                             });
                         })
                         .expect("failed to send updated source volume to audio output thread");
