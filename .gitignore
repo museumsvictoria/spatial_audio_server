@@ -12,3 +12,5 @@ Cargo.lock
 /target/
 **/*.rs.bk
 Cargo.lock
+# Ignore audio for testing
+/assets/audio/
