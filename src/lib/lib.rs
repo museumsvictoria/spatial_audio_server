@@ -27,7 +27,8 @@ use config::Config;
 use nannou::prelude::*;
 use soundscape::Soundscape;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
+use std::sync::atomic::AtomicUsize;
 
 mod audio;
 mod camera;
@@ -53,6 +54,7 @@ struct Model {
     soundscape: Soundscape,
     config: Config,
     audio_monitor: gui::monitor::Monitor,
+    wav_reader: audio::source::wav::reader::Handle,
 }
 
 // The path to the server's config file.
@@ -99,8 +101,15 @@ fn model(app: &App) -> Model {
     let (audio_monitor, audio_monitor_tx, audio_monitor_rx) = gui::monitor::spawn(app_proxy)
         .expect("failed to spawn audio_monitor thread");
 
+    // Spawn the thread used for reading wavs.
+    let wav_reader = audio::source::wav::reader::spawn();
+
     // A channel for sending and receiving on the soundscape thread.
     let (soundscape_tx, soundscape_rx) = mpsc::channel();
+
+    // The playhead frame count shared between GUI, soundscape and audio output thread for
+    // synchronising continuous WAV soures.
+    let frame_count = Arc::new(AtomicUsize::new(0));
 
     // Initialise the audio input model and create the input stream.
     let input_device = app.audio.default_input_device()
@@ -123,9 +132,11 @@ fn model(app: &App) -> Model {
     let max_supported_output_channels = output_device.max_supported_output_channels();
     let audio_output_channels = std::cmp::min(max_supported_output_channels, audio::MAX_CHANNELS);
     let audio_output_model = audio::output::Model::new(
+        frame_count.clone(),
         audio_monitor_tx,
         osc_out_msg_tx.clone(),
         soundscape_tx.clone(),
+        wav_reader.clone(),
     );
     let audio_output_stream = app.audio
         .new_output_stream(audio_output_model, audio::output::render)
@@ -142,9 +153,11 @@ fn model(app: &App) -> Model {
 
     // Spawn the composer thread.
     let soundscape = soundscape::spawn(
+        frame_count.clone(),
         config.seed,
         soundscape_tx,
         soundscape_rx,
+        wav_reader.clone(),
         audio_input_stream.clone(),
         audio_output_stream.clone(),
         sound_id_gen.clone(),
@@ -161,11 +174,13 @@ fn model(app: &App) -> Model {
 
     // Initalise the GUI model.
     let gui_channels = gui::Channels::new(
+        frame_count,
         osc_in_log_rx,
         osc_out_log_rx,
         osc_out_msg_tx,
         control_rx,
         soundscape.clone(),
+        wav_reader.clone(),
         audio_input_stream.clone(),
         audio_output_stream.clone(),
         audio_monitor_rx,
@@ -186,6 +201,7 @@ fn model(app: &App) -> Model {
         config,
         gui,
         audio_monitor,
+        wav_reader,
     }
 }
 
@@ -218,6 +234,7 @@ fn exit(app: &App, model: Model) {
         mut config,
         soundscape,
         audio_monitor,
+        wav_reader,
         ..
     } = model;
 
@@ -250,9 +267,11 @@ fn exit(app: &App, model: Model) {
     // This should be instant as `GUI` has exited and the receiving channel should be dropped.
     audio_monitor.join().expect("failed to join audio_monitor thread when exiting");
 
-    // Send exit signals to the audio and composer threads.
-    let soundscape_thread = soundscape.exit().expect("only the main thread should exit soundscape");
-
-    // Wait for the composer thread to finish.
+    // Send exit signal to the composer thread.
+    let soundscape_thread = soundscape.exit().expect("failed to exit soundscape thread");
     soundscape_thread.join().expect("failed to join the soundscape thread when exiting");
+
+    // Send exit signal to the wav reader thread.
+    let wav_reader_thread = wav_reader.exit().expect("failed to exit wav_reader thread");
+    wav_reader_thread.join().expect("failed to join the wav_reader thread when exiting");
 }

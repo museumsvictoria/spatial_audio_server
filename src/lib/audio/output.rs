@@ -20,7 +20,8 @@ use rustfft::num_traits::Zero;
 use soundscape;
 use std;
 use std::ops::{Deref, DerefMut};
-use std::sync::mpsc;
+use std::sync::{atomic, mpsc, Arc};
+use std::sync::atomic::AtomicUsize;
 use time_calc::Samples;
 use utils;
 
@@ -140,7 +141,7 @@ pub struct Model {
     ///
     /// this is used for synchronising `continuous` wavs to the audio timeline with sample-perfect
     /// accuracy.
-    pub frame_count: u64,
+    pub frame_count: Arc<AtomicUsize>,
     /// the master volume, controlled via the gui applied at the very end of processing.
     pub master_volume: f32,
     /// the dbap rolloff decibel amount, used to attenuate speaker gains over distances.
@@ -157,14 +158,11 @@ pub struct Model {
     unmixed_samples: Vec<f32>,
     /// A buffer for collecting sounds that have been removed due to completing.
     exhausted_sounds: Vec<sound::Id>,
-    /// Channel for communicating active sound info to the GUI.
-    gui_audio_monitor_msg_tx: gui::monitor::Sender,
-    /// Channel for sending sound analysis data to the OSC output thread.
-    osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
-    /// A handle to the soundscape thread - for notifying when a sound is complete.
-    soundscape_tx: mpsc::Sender<soundscape::Message>,
     /// Data related to a single installation necessary for the audio output thread.
     installations: FxHashMap<installation::Id, Installation>,
+
+    /// Inter-thread communication channels.
+    channels: Channels,
 
     /// A buffer to re-use for collecting speakers ready for performing the DBAP calc.
     ///
@@ -188,6 +186,17 @@ pub struct Model {
     fft_frequency_amplitudes_2: Box<[f32; FFT_WINDOW_LEN / 2]>,
 }
 
+struct Channels {
+    /// Channel for communicating active sound info to the GUI.
+    gui_audio_monitor_msg_tx: gui::monitor::Sender,
+    /// Channel for sending sound analysis data to the OSC output thread.
+    osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
+    /// A handle to the soundscape thread - for notifying when a sound is complete.
+    soundscape_tx: mpsc::Sender<soundscape::Message>,
+    /// A handle to the wav_reader thread - for notifying when a sound has ended.
+    wav_reader: source::wav::reader::Handle,
+}
+
 /// An iterator yielding all `Sound`s in the model.
 pub struct SoundsMut<'a> {
     iter: std::collections::hash_map::IterMut<'a, sound::Id, ActiveSound>,
@@ -203,9 +212,11 @@ impl<'a> Iterator for SoundsMut<'a> {
 impl Model {
     /// Initialise the `Model`.
     pub fn new(
+        frame_count: Arc<AtomicUsize>,
         gui_audio_monitor_msg_tx: gui::monitor::Sender,
         osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
         soundscape_tx: mpsc::Sender<soundscape::Message>,
+        wav_reader: source::wav::reader::Handle,
     ) -> Self {
         // The currently soloed sources (none by default).
         let soloed = Default::default();
@@ -249,8 +260,12 @@ impl Model {
         // Initialise the rolloff to the default value.
         let dbap_rolloff_db = super::DEFAULT_DBAP_ROLLOFF_DB;
 
-        // Initialise the frame count.
-        let frame_count = 0;
+        let channels = Channels {
+            gui_audio_monitor_msg_tx,
+            osc_output_msg_tx,
+            soundscape_tx,
+            wav_reader,
+        };
 
         Model {
             frame_count,
@@ -262,9 +277,7 @@ impl Model {
             unmixed_samples,
             exhausted_sounds,
             installations,
-            gui_audio_monitor_msg_tx,
-            osc_output_msg_tx,
-            soundscape_tx,
+            channels,
             dbap_speakers,
             dbap_speaker_gains,
             current_dbap_speaker_gains,
@@ -321,7 +334,7 @@ impl Model {
         let speaker = ActiveSpeaker { speaker, env_detector };
         let speaker_msg = gui::SpeakerMessage::Add;
         let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-        self.gui_audio_monitor_msg_tx.send(msg).ok();
+        self.channels.gui_audio_monitor_msg_tx.send(msg).ok();
         self.speakers.insert(id, speaker);
         old_speaker
     }
@@ -332,7 +345,7 @@ impl Model {
         if removed.is_some() {
             let speaker_msg = gui::SpeakerMessage::Remove;
             let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-            self.gui_audio_monitor_msg_tx.send(msg).ok();
+            self.channels.gui_audio_monitor_msg_tx.send(msg).ok();
         }
         removed.map(|ActiveSpeaker { speaker, .. }| speaker)
     }
@@ -366,7 +379,7 @@ impl Model {
             normalised_progress,
         };
         let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
-        self.gui_audio_monitor_msg_tx.send(msg).ok();
+        self.channels.gui_audio_monitor_msg_tx.send(msg).ok();
         self.sounds.insert(id, sound)
     }
 
@@ -424,17 +437,8 @@ impl Model {
         if let Some(sound) = removed {
             // Remove the sound from DBAP gain tracking.
             self.dbap_speaker_gains.remove(&id);
-
-            // Notify the gui.
-            let sound_msg = gui::ActiveSoundMessage::End { sound };
-            let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
-            self.gui_audio_monitor_msg_tx.send(msg).ok();
-
-            // Notify the soundscape thread.
-            let update = move |soundscape: &mut soundscape::Model| {
-                soundscape.remove_active_sound(&id);
-            };
-            self.soundscape_tx.send(soundscape::UpdateFn::from(update).into()).ok();
+            // Notify threads.
+            self.channels.notify_sound_end(id, sound);
             true
         } else {
             false
@@ -451,18 +455,34 @@ impl Model {
     ///
     /// This is called when we switch between projects within the GUI.
     pub fn clear_project_specific_data(&mut self) {
-        self.frame_count = 0;
+        self.frame_count.store(0, atomic::Ordering::Relaxed);
         self.soloed.clear();
         self.speakers.clear();
         self.installations.clear();
 
-        let Model { ref mut sounds, ref gui_audio_monitor_msg_tx, .. } = *self;
+        let Model { ref mut sounds, ref channels, .. } = *self;
         for (sound_id, sound) in sounds.drain() {
-            // Send signal of completion back to GUI thread.
-            let sound_msg = gui::ActiveSoundMessage::End { sound };
-            let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
-            gui_audio_monitor_msg_tx.send(msg).ok();
+            // Notify threads of sound removal.
+            channels.notify_sound_end(sound_id, sound);
         }
+    }
+}
+
+impl Channels {
+    fn notify_sound_end(&self, id: sound::Id, sound: ActiveSound) {
+        // GUI thread.
+        let sound_msg = gui::ActiveSoundMessage::End { sound };
+        let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
+        self.gui_audio_monitor_msg_tx.send(msg).ok();
+
+        // Soundscape thread.
+        let update = move |soundscape: &mut soundscape::Model| {
+            soundscape.remove_active_sound(&id);
+        };
+        self.soundscape_tx.send(soundscape::UpdateFn::from(update).into()).ok();
+
+        // WAV reader thread.
+        self.wav_reader.end(id).ok();
     }
 }
 
@@ -483,9 +503,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref mut dbap_speaker_gains,
             ref mut current_dbap_speaker_gains,
             ref mut previous_dbap_speaker_gains,
-            ref gui_audio_monitor_msg_tx,
-            ref osc_output_msg_tx,
-            ref soundscape_tx,
+            ref channels,
             ref mut fft,
             ref mut fft_planner,
             ref mut fft_frequency_amplitudes_2,
@@ -524,16 +542,16 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             // Update the GUI with the position of the sound.
             let source_id = sound.source_id();
             let position = sound.position;
-            let channels = sound.channels;
+            let n_channels = sound.channels;
             let normalised_progress = sound.normalised_progress();
             let update = gui::ActiveSoundMessage::Update {
                 source_id,
                 position,
-                channels,
+                channels: n_channels,
                 normalised_progress,
             };
             let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, update);
-            gui_audio_monitor_msg_tx.send(msg).ok();
+            channels.gui_audio_monitor_msg_tx.send(msg).ok();
 
             let ActiveSound {
                 ref mut sound,
@@ -566,16 +584,6 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 continue;
             }
 
-            // If the source is a `Continuous` WAV, ensure it is seeked to the correct position.
-            if let source::SignalKind::Wav { ref playback, ref mut samples } = sound.signal.kind {
-                if let source::wav::Playback::Continuous = *playback {
-                    if let Err(err) = samples.seek(*frame_count) {
-                        eprintln!("failed to seek file for continuous WAV source: {}", err);
-                        continue;
-                    }
-                }
-            }
-
             // Clear the unmixed samples, ready to collect the new ones.
             unmixed_samples.clear();
             {
@@ -599,7 +607,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     let (rms, peak) = env_detector.current();
                     let sound_msg = gui::ActiveSoundMessage::UpdateChannel { index, rms, peak };
                     let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
-                    gui_audio_monitor_msg_tx.send(msg).ok();
+                    channels.gui_audio_monitor_msg_tx.send(msg).ok();
                 }
             }
 
@@ -715,7 +723,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             // Send the detector state for the speaker to the GUI.
             let speaker_msg = gui::SpeakerMessage::Update { rms, peak };
             let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-            gui_audio_monitor_msg_tx.send(msg).ok();
+            channels.gui_audio_monitor_msg_tx.send(msg).ok();
 
             // Sum raw audio data for FFTs.
             for id in &active.speaker.installations {
@@ -824,7 +832,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 speakers,
             };
             let msg = osc::output::Message::Audio(id, data);
-            osc_output_msg_tx.send(msg).ok();
+            channels.osc_output_msg_tx.send(msg).ok();
         }
 
         // Remove all sounds that have been exhausted.
@@ -835,16 +843,8 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             // Send this with the `End` message to avoid de-allocating on audio thread.
             let sound = sounds.remove(&sound_id).unwrap();
 
-            // Send signal of completion back to GUI thread.
-            let sound_msg = gui::ActiveSoundMessage::End { sound };
-            let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
-            gui_audio_monitor_msg_tx.send(msg).ok();
-
-            // Notify the soundscape thread.
-            let update = move |soundscape: &mut soundscape::Model| {
-                soundscape.remove_active_sound(&sound_id);
-            };
-            soundscape_tx.send(soundscape::UpdateFn::from(update).into()).ok();
+            // Notify the other threads.
+            channels.notify_sound_end(sound_id, sound);
         }
 
         // Apply the master volume.
@@ -854,10 +854,10 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
         // Find the peak amplitude and send it via the monitor channel.
         let peak = buffer.iter().fold(0.0, |peak, &s| s.max(peak));
-        gui_audio_monitor_msg_tx.send(gui::AudioMonitorMessage::Master { peak }).ok();
+        channels.gui_audio_monitor_msg_tx.send(gui::AudioMonitorMessage::Master { peak }).ok();
 
         // Step the frame count.
-        *frame_count += buffer.len_frames() as u64;
+        frame_count.fetch_add(buffer.len_frames(), atomic::Ordering::Relaxed);
     }
 
     (model, buffer)

@@ -17,7 +17,8 @@ use slug::slugify;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::ops::{Deref, DerefMut};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
+use std::sync::atomic::AtomicUsize;
 use time_calc::Ms;
 use utils::{self, HumanReadableTime, SEC_MS, MIN_MS, HR_MS};
 
@@ -132,11 +133,13 @@ struct AudioChannels {
 
 /// Channels for communication with the various threads running on the audio server.
 pub struct Channels {
+    pub frame_count: Arc<AtomicUsize>,
     pub osc_in_log_rx: mpsc::Receiver<OscInputLog>,
     pub osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
     pub osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
     pub control_rx: mpsc::Receiver<osc::input::Control>,
     pub soundscape: Soundscape,
+    pub wav_reader: audio::source::wav::reader::Handle,
     pub audio_input: audio::input::Stream,
     pub audio_output: audio::output::Stream,
     pub audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
@@ -617,21 +620,25 @@ impl State {
 impl Channels {
     /// Initialise the GUI communication channels.
     pub fn new(
+        frame_count: Arc<AtomicUsize>,
         osc_in_log_rx: mpsc::Receiver<OscInputLog>,
         osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
         osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
         control_rx: mpsc::Receiver<osc::input::Control>,
         soundscape: Soundscape,
+        wav_reader: audio::source::wav::reader::Handle,
         audio_input: audio::input::Stream,
         audio_output: audio::output::Stream,
         audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
     ) -> Self {
         Channels {
+            frame_count,
             osc_in_log_rx,
             osc_out_log_rx,
             osc_out_msg_tx,
             control_rx,
             soundscape,
+            wav_reader,
             audio_input,
             audio_output,
             audio_monitor_msg_rx,

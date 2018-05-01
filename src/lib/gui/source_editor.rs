@@ -10,6 +10,7 @@ use nannou::ui::prelude::*;
 use project::{self, Project};
 use soundscape;
 use std::{self, cmp, mem, ops};
+use std::sync::atomic;
 use time_calc::{Ms, Samples};
 use utils;
 
@@ -642,6 +643,8 @@ pub fn set(
                         release_duration,
                         should_cycle,
                         max_duration,
+                        channels.frame_count.load(atomic::Ordering::Relaxed) as _,
+                        &channels.wav_reader,
                         &channels.audio_input,
                         &channels.audio_output,
                         *realtime_source_latency,
