@@ -295,6 +295,22 @@ impl FastWave{
     pub fn len(&self) -> u32 {
         self.reader.len()
     }
+
+    fn fill_ahead<S: hound::Sample>(&mut self, amount: usize){
+        let test_it = self.reader.samples::<S>();
+        for i in 0..amount {
+            match test_it.next() {
+                Some(Err(err)) => {
+                    eprintln!("failed to read sample: {}", err);
+                },
+                Some(Ok(sample)) => {
+                    //self.sample_index += 1;
+                    self.sample_tx.send(sample.to_sample::<f32>());
+                },
+                None => (),
+            }
+        }
+    }
     /*
     pub fn samples<'wr, S: hound::Sample>(&'wr mut self) -> WavSamples<'wr, BufReader<File>, S>{
         self.reader.samples::<S>()
@@ -302,18 +318,8 @@ impl FastWave{
     */
     pub fn samples<'wr, S: hound::Sample>(&'wr mut self) -> FastSamples {
         // TODO this might be too slow
-        let test_it = self.reader.samples::<S>();
-        match test_it.next() {
-            Some(Err(err)) => {
-                eprintln!("failed to read sample: {}", err);
-            },
-            Some(Ok(sample)) => {
-                //self.sample_index += 1;
-                self.sample_tx.send(sample.to_sample::<f32>());
-            },
-            None => (),
-        }
-        FastSamples{ sample_rx: self.sample_rx.clone() }
+        self.fill_ahead::<S>(500);
+        FastSamples{ sample_rx: self.sample_rx }
     }
 }
 
@@ -328,7 +334,7 @@ impl Iterator for FastSamples
     fn next(&mut self) -> Option<Result<f32, hound::Error>> {
         match self.sample_rx.try_recv() {
             Ok(s) => Some(Ok(s)),
-            Err(e) => Err(hound::Error::IoError(e)),
+            Err(e) => Err(hound::Error::IoError()),
         }
     }
 }
