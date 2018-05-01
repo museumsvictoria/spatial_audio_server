@@ -220,7 +220,8 @@ impl Iterator for SampleStream {
                     },
                     Some(Ok(sample)) => {
                         self.sample_index += 1;
-                        return Some(sample.to_sample::<f32>());
+                        //return Some(sample.to_sample::<f32>());
+                        return Some(sample);
                     },
                     None => (),
                 }
@@ -262,20 +263,20 @@ impl Iterator for CycledSampleStream {
 
 struct FastWave{
     reader: hound::WavReader<BufReader<File>>,
-    sample_tx: mpsc::Sender<hound::Sample>,
-    sample_rx: mpsc::Receiver<hound::Sample>,
+    sample_tx: mpsc::Sender<f32>,
+    sample_rx: mpsc::Receiver<f32>,
 }
 
 
 
-impl FastWave
-{
+impl FastWave{
     pub fn from_path<P>(path: P) -> Result<Self, hound::Error>
         where
         P: AsRef<Path>,
         {
             let reader = hound::WavReader::open(path)?;
-            Ok(FastWave{ reader })
+            let (sample_tx, sample_rx) = mpsc::channel::<f32>();
+            Ok(FastWave{ reader, sample_tx, sample_rx })
         }
 
     pub fn spec(&self) -> WavSpec {
@@ -299,7 +300,7 @@ impl FastWave
         self.reader.samples::<S>()
     }
     */
-    pub fn samples<'wr, S: hound::Sample>(&'wr mut self) -> FastSamples<S> {
+    pub fn samples<'wr, S: hound::Sample>(&'wr mut self) -> FastSamples {
         // TODO this might be too slow
         let test_it = self.reader.samples::<S>();
         match test_it.next() {
@@ -312,20 +313,19 @@ impl FastWave
             },
             None => (),
         }
-        FastSamples::<S>{ sample_rx: self.sample_rx.clone() };
+        FastSamples{ sample_rx: self.sample_rx.clone() }
     }
 }
 
-struct FastSamples<S>{
-    sample_rx: mpsc::Receiver<S>,
+struct FastSamples{
+    sample_rx: mpsc::Receiver<f32>,
 }
 
-impl<S> Iterator for FastSamples<S> 
-where S: hound::Sample
+impl Iterator for FastSamples 
 {
-    type Item = Result<S, hound::Error>;
+    type Item = Result<f32, hound::Error>;
 
-    fn next(&mut self) -> Option<Result<S, hound::Error>> {
+    fn next(&mut self) -> Option<Result<f32, hound::Error>> {
         match self.sample_rx.try_recv() {
             Ok(s) => Some(Ok(s)),
             Err(e) => Err(hound::Error::IoError(e)),
