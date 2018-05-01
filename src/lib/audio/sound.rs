@@ -154,6 +154,7 @@ pub fn spawn_from_source(
 ) -> Handle
 {
     let installations = source.role.clone().into();
+    let fs_command_tx = output_stream.shared.fs_command_tx.clone();
     match source.kind {
         source::Kind::Wav(ref wav) => {
             spawn_from_wav(
@@ -171,6 +172,7 @@ pub fn spawn_from_source(
                 continuous_preview,
                 max_duration_frames,
                 output_stream,
+                fs_command_tx,
             )
         },
 
@@ -213,12 +215,13 @@ pub fn spawn_from_wav(
     continuous_preview: bool,
     max_duration_frames: Option<Samples>,
     audio_output: &output::Stream,
+    fs_command_tx: mpsc::Sender<source::fast_wave::FastWavesCommand>,
 ) -> Handle
 {
     // The wave samples iterator.
     let samples = match wav.should_loop || continuous_preview {
-        false => source::wav::SampleStream::from_path(&wav.path).unwrap().into(),
-        true => source::wav::SampleStream::from_path(&wav.path).unwrap().cycle().into(),
+        false => source::wav::SampleStream::from_path(&wav.path, fs_command_tx).unwrap().into(),
+        true => source::wav::SampleStream::from_path(&wav.path, fs_command_tx).unwrap().cycle().into(),
     };
 
     // The source signal.

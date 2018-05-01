@@ -186,6 +186,8 @@ pub struct Model {
     fft: Fft,
     /// A buffer for retrieving the frequency amplitudes from the `fft`.
     fft_frequency_amplitudes_2: Box<[f32; FFT_WINDOW_LEN / 2]>,
+    /// A command channel to the fast wave
+    fs_command_tx: mpsc::Sender<source::fast_wave::FastWavesCommand>,
 }
 
 /// An iterator yielding all `Sound`s in the model.
@@ -206,6 +208,7 @@ impl Model {
         gui_audio_monitor_msg_tx: gui::monitor::Sender,
         osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
         soundscape_tx: mpsc::Sender<soundscape::Message>,
+        fs_command_tx: mpsc::Sender<source::fast_wave::FastWavesCommand>,
     ) -> Self {
         // The currently soloed sources (none by default).
         let soloed = Default::default();
@@ -272,6 +275,7 @@ impl Model {
             fft,
             fft_planner,
             fft_frequency_amplitudes_2,
+            fs_command_tx,
         }
     }
 
@@ -489,6 +493,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref mut fft,
             ref mut fft_planner,
             ref mut fft_frequency_amplitudes_2,
+            ..
         } = model;
 
         // Always silence the buffer to begin.
@@ -897,4 +902,18 @@ pub fn speaker_is_in_proximity(point: &Point2<Metres>, speaker: &Point2<Metres>)
     };
     let distance_2 = Metres(point_f.distance2(speaker_f));
     distance_2 < PROXIMITY_LIMIT_2
+}
+
+pub fn spawn_fast_wave() -> (
+    std::thread::JoinHandle<()>,
+    mpsc::Sender<source::fast_wave::FastWavesCommand>,
+) {
+    let (msg_tx, msg_rx) = mpsc::channel();
+    let handle = std::thread::Builder::new()
+        .name("fast_wave".into())
+        .spawn(move || {
+            source::run_fast_wave(msg_rx);
+        })
+        .unwrap();
+    (handle, msg_tx)
 }

@@ -7,6 +7,7 @@ use soundscape;
 use std::ops;
 use time_calc::{Ms, Samples};
 use utils::{self, Range};
+use std::sync::mpsc;
 
 pub use self::movement::Movement;
 pub use self::realtime::Realtime;
@@ -14,6 +15,7 @@ pub use self::wav::Wav;
 
 pub mod realtime;
 pub mod wav;
+pub mod fast_wave;
 
 pub const MAX_PLAYBACK_DURATION: Ms = Ms(utils::DAY_MS);
 
@@ -740,4 +742,8 @@ impl Default for Soundscape {
             movement,
         }
     }
+}
+
+pub fn run_fast_wave(fast_waves_rx: mpsc::Receiver<fast_wave::FastWavesCommand>){
+    fast_wave::run(fast_waves_rx);
 }

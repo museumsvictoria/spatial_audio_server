@@ -102,6 +102,8 @@ fn model(app: &App) -> Model {
     // A channel for sending and receiving on the soundscape thread.
     let (soundscape_tx, soundscape_rx) = mpsc::channel();
 
+    let (_fs_handle, fs_command_tx) = audio::output::spawn_fast_wave();
+
     // Initialise the audio input model and create the input stream.
     let input_device = app.audio.default_input_device()
         .expect("no default input device available on the system");
@@ -126,6 +128,7 @@ fn model(app: &App) -> Model {
         audio_monitor_tx,
         osc_out_msg_tx.clone(),
         soundscape_tx.clone(),
+        fs_command_tx,
     );
     let audio_output_stream = app.audio
         .new_output_stream(audio_output_model, audio::output::render)
