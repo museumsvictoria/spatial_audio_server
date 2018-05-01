@@ -1,10 +1,12 @@
 use audio;
-use hound::{self, SampleFormat};
+use hound::{self, SampleFormat, WavSpec, WavSamples};
 use nannou::audio::sample::Sample;
 use std::io::{self, BufReader};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use time_calc::{Ms, SampleHz, Samples};
+
+use std::sync::mpsc;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Wav {
@@ -74,7 +76,8 @@ impl Wav {
 
 /// An iterator streaming f32 samples from a WAV file.
 pub struct SampleStream {
-    reader: hound::WavReader<BufReader<File>>,
+    //reader: hound::WavReader<BufReader<File>>,
+    reader: FastWave,
     spec: hound::WavSpec,
     sample_index: usize,
 }
@@ -100,7 +103,8 @@ impl SampleStream {
     where
         P: AsRef<Path>,
     {
-        let reader = hound::WavReader::open(path)?;
+        //let reader = hound::WavReader::open(path)?;
+        let reader = FastWave::from_path(path)?;
         let spec = reader.spec();
         let sample_index = 0;
         Ok(SampleStream { sample_index, reader, spec })
@@ -252,6 +256,79 @@ impl Iterator for CycledSampleStream {
             if self.stream.reader.seek(0).is_err() {
                 return None;
             }
+        }
+    }
+}
+
+struct FastWave{
+    reader: hound::WavReader<BufReader<File>>,
+    sample_tx: mpsc::Sender<hound::Sample>,
+    sample_rx: mpsc::Receiver<hound::Sample>,
+}
+
+
+
+impl FastWave
+{
+    pub fn from_path<P>(path: P) -> Result<Self, hound::Error>
+        where
+        P: AsRef<Path>,
+        {
+            let reader = hound::WavReader::open(path)?;
+            Ok(FastWave{ reader })
+        }
+
+    pub fn spec(&self) -> WavSpec {
+        self.reader.spec()
+    }
+
+    pub fn duration(&self) -> u32 {
+        self.reader.duration()
+    }
+
+    pub fn seek(&mut self, time: u32) -> io::Result<()> {
+        self.reader.seek(time)
+        //Ok(())
+    }
+
+    pub fn len(&self) -> u32 {
+        self.reader.len()
+    }
+    /*
+    pub fn samples<'wr, S: hound::Sample>(&'wr mut self) -> WavSamples<'wr, BufReader<File>, S>{
+        self.reader.samples::<S>()
+    }
+    */
+    pub fn samples<'wr, S: hound::Sample>(&'wr mut self) -> FastSamples<S> {
+        // TODO this might be too slow
+        let test_it = self.reader.samples::<S>();
+        match test_it.next() {
+            Some(Err(err)) => {
+                eprintln!("failed to read sample: {}", err);
+            },
+            Some(Ok(sample)) => {
+                //self.sample_index += 1;
+                self.sample_tx.send(sample.to_sample::<f32>());
+            },
+            None => (),
+        }
+        FastSamples::<S>{ sample_rx: self.sample_rx.clone() };
+    }
+}
+
+struct FastSamples<S>{
+    sample_rx: mpsc::Receiver<S>,
+}
+
+impl<S> Iterator for FastSamples<S> 
+where S: hound::Sample
+{
+    type Item = Result<S, hound::Error>;
+
+    fn next(&mut self) -> Option<Result<S, hound::Error>> {
+        match self.sample_rx.try_recv() {
+            Ok(s) => Some(Ok(s)),
+            Err(e) => Err(hound::Error::IoError(e)),
         }
     }
 }
