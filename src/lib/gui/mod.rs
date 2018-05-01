@@ -140,6 +140,7 @@ pub struct Channels {
     pub audio_input: audio::input::Stream,
     pub audio_output: audio::output::Stream,
     pub audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
+    pub fs_command_tx: mpsc::Sender<audio::source::fast_wave::FastWavesCommand>
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -625,6 +626,7 @@ impl Channels {
         audio_input: audio::input::Stream,
         audio_output: audio::output::Stream,
         audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
+        fs_command_tx: mpsc::Sender<audio::source::fast_wave::FastWavesCommand>,
     ) -> Self {
         Channels {
             osc_in_log_rx,
@@ -635,6 +637,7 @@ impl Channels {
             audio_input,
             audio_output,
             audio_monitor_msg_rx,
+            fs_command_tx,
         }
     }
 }

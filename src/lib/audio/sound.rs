@@ -151,10 +151,10 @@ pub fn spawn_from_source(
     input_stream: &input::Stream,
     output_stream: &output::Stream,
     latency: Ms,
+    fs_command_tx: mpsc::Sender<source::fast_wave::FastWavesCommand>,
 ) -> Handle
 {
     let installations = source.role.clone().into();
-    let fs_command_tx = output_stream.shared.fs_command_tx.clone();
     match source.kind {
         source::Kind::Wav(ref wav) => {
             spawn_from_wav(

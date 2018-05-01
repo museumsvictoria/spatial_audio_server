@@ -128,7 +128,6 @@ fn model(app: &App) -> Model {
         audio_monitor_tx,
         osc_out_msg_tx.clone(),
         soundscape_tx.clone(),
-        fs_command_tx,
     );
     let audio_output_stream = app.audio
         .new_output_stream(audio_output_model, audio::output::render)
@@ -151,6 +150,7 @@ fn model(app: &App) -> Model {
         audio_input_stream.clone(),
         audio_output_stream.clone(),
         sound_id_gen.clone(),
+        fs_command_tx.clone(),
     );
 
     // Create a window.
@@ -172,6 +172,7 @@ fn model(app: &App) -> Model {
         audio_input_stream.clone(),
         audio_output_stream.clone(),
         audio_monitor_rx,
+        fs_command_tx,
     );
     let gui = gui::Model::new(
         &assets,

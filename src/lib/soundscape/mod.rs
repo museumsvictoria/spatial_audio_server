@@ -176,6 +176,8 @@ pub struct Model {
     audio_output_stream: audio::output::Stream,
     // A handle to the ticker thread.
     _tick_thread: thread::JoinHandle<()>,
+    /// A command channel to the fast wave
+    fs_command_tx: mpsc::Sender<audio::source::fast_wave::FastWavesCommand>,
 }
 
 // Data related to the suitability of a group or source for selection of use within the soundscape.
@@ -666,6 +668,7 @@ pub fn spawn(
     audio_input_stream: audio::input::Stream,
     audio_output_stream: audio::output::Stream,
     sound_id_gen: audio::sound::IdGenerator,
+    fs_command_tx: mpsc::Sender<audio::source::fast_wave::FastWavesCommand>,
 ) -> Soundscape {
     let is_playing = Arc::new(AtomicBool::new(true));
 
@@ -737,6 +740,7 @@ pub fn spawn(
         audio_output_stream,
         sound_id_gen,
         _tick_thread,
+        fs_command_tx,
     };
 
     // Spawn the soundscape thread.
@@ -1333,6 +1337,7 @@ fn tick(model: &mut Model, tick: Tick) {
         ref mut sound_id_gen,
         ref audio_input_stream,
         ref audio_output_stream,
+        ref fs_command_tx,
         ..
     } = *model;
 
@@ -1594,6 +1599,7 @@ fn tick(model: &mut Model, tick: Tick) {
                         audio_input_stream,
                         audio_output_stream,
                         realtime_source_latency,
+                        fs_command_tx.clone(),
                     );
 
                     // Track the time at which the group and source were last used.

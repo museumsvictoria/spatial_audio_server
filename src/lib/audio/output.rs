@@ -186,8 +186,6 @@ pub struct Model {
     fft: Fft,
     /// A buffer for retrieving the frequency amplitudes from the `fft`.
     fft_frequency_amplitudes_2: Box<[f32; FFT_WINDOW_LEN / 2]>,
-    /// A command channel to the fast wave
-    fs_command_tx: mpsc::Sender<source::fast_wave::FastWavesCommand>,
 }
 
 /// An iterator yielding all `Sound`s in the model.
@@ -208,7 +206,6 @@ impl Model {
         gui_audio_monitor_msg_tx: gui::monitor::Sender,
         osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
         soundscape_tx: mpsc::Sender<soundscape::Message>,
-        fs_command_tx: mpsc::Sender<source::fast_wave::FastWavesCommand>,
     ) -> Self {
         // The currently soloed sources (none by default).
         let soloed = Default::default();
@@ -275,7 +272,6 @@ impl Model {
             fft,
             fft_planner,
             fft_frequency_amplitudes_2,
-            fs_command_tx,
         }
     }
 

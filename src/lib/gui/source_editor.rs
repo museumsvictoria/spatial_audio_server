@@ -585,6 +585,7 @@ pub fn set(
         source: &project::Source,
         preview: &mut SourcePreview,
         realtime_source_latency: &Ms,
+        fs_command_tx: std::sync::mpsc::Sender<audio::source::fast_wave::FastWavesCommand>
     ) {
         loop {
             match preview.current {
@@ -645,6 +646,7 @@ pub fn set(
                         &channels.audio_input,
                         &channels.audio_output,
                         *realtime_source_latency,
+                        fs_command_tx,
                     );
                 }
             }
@@ -673,6 +675,8 @@ pub fn set(
             &sources[&id],
             &mut source_editor.preview,
             &master.realtime_source_latency,
+            channels.fs_command_tx.clone(),
+
         );
     }
 
@@ -697,6 +701,7 @@ pub fn set(
             &sources[&id],
             &mut source_editor.preview,
             &master.realtime_source_latency,
+            channels.fs_command_tx.clone(),
         );
     }
 

@@ -3,26 +3,33 @@ use hound::{self, SampleFormat, WavSpec};
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::fs::File;
+use fxhash::FxHashMap;
+
+enum BufferMsg {
+    Spec(WavSpec),
+}
 
 struct Buffer{
-    reader: hound::WavReader<BufReader<File>>,
+    pub reader: hound::WavReader<BufReader<File>>,
     reader_tx: mpsc::Sender<f32>,
+    pub info_tx: mpsc::Sender<BufferMsg>,
 }
 
 struct FastWaves{
-    fast_waves_rx: mpsc::Receiver<FastWavesCommand>,
-    buffers: Vec<Buffer>,
+    pub fast_waves_rx: mpsc::Receiver<FastWavesCommand>,
+    pub buffers: FxHashMap<usize, Buffer>,
 }
 
 pub enum FastWavesCommand{
-    NewBuffer(Buffer),
+    NewBuffer(usize, Buffer),
+    Spec(usize),
 }
 
 pub struct FastWave{
     fast_waves_tx: mpsc::Sender<FastWavesCommand>,
     reader_rx: mpsc::Receiver<f32>,
+    info_rx: mpsc::Receiver<BufferMsg>,
 }
-
 
 
 impl FastWave{
@@ -32,13 +39,15 @@ impl FastWave{
         {
             let reader = hound::WavReader::open(path)?;
             let (reader_tx, reader_rx) = mpsc::channel::<f32>();
-            fast_waves_tx.send(FastWavesCommand::NewBuffer(Buffer{reader, reader_tx}));
-            Ok(FastWave{ fast_waves_tx, reader_rx })
+            let (info_tx, info_rx) = mpsc::channel::<BufferMsg>();
+            fast_waves_tx.send(FastWavesCommand::NewBuffer(Buffer{reader, reader_tx, info_tx}));
+            Ok(FastWave{ fast_waves_tx, reader_rx, info_rx })
         }
 
     pub fn spec(&self) -> WavSpec {
         //self.reader.spec()
-        unimplemented!()
+        self.fast_waves_tx.send(FastWavesCommand::Spec);
+        self.info_rx.recv().unwrap()
     }
 
     pub fn duration(&self) -> u32 {
@@ -102,4 +111,19 @@ impl<'wr> Iterator for FastSamples<'wr>{
 }
 
 pub fn run(fast_waves_rx: mpsc::Receiver<FastWavesCommand>){
+    let mut fs = FastWaves{ fast_waves_rx, buffers: Vec::<Buffer>::new() };
+    loop {
+        match fs.fast_waves_rx.recv() {
+            Ok(FastWavesCommand::NewBuffer(id, b)) => {
+                fs.buffers.insert(id, b);
+            },
+            Ok(FastWavesCommand::Spec(id)) => {
+                fs.buffers.get(id).map(|b| {
+                    b.info_tx(b.reader.spec())
+                })
+            },
+            Err(e) => eprintln!("error receiving fast waves commands {}", e),
+
+        }
+    }
 }

@@ -106,13 +106,10 @@ impl SampleStream {
         P: AsRef<Path>,
     {
         //let reader = hound::WavReader::open(path)?;
-        unimplemented!();
-        /*
-        let reader = FastWave::from_path(path)?;
+        let reader = FastWave::from_path(path, fs_command_tx)?;
         let spec = reader.spec();
         let sample_index = 0;
         Ok(SampleStream { sample_index, reader, spec })
-        */
     }
 
     /// Seek to the given `frame` within the file.
