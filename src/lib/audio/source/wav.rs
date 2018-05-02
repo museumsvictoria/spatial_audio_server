@@ -215,12 +215,8 @@ impl Iterator for SampleStream {
         // A macro to simplify requesting and returning the next sample.
         macro_rules! next_sample {
             ($T:ty) => {{
-                match self.reader.samples::<$T>().next() {
-                    Some(Err(err)) => {
-                        eprintln!("failed to read sample: {}", err);
-                        return None;
-                    },
-                    Some(Ok(sample)) => {
+                match self.reader.sample() {
+                    Some(sample) => {
                         self.sample_index += 1;
                         //return Some(sample.to_sample::<f32>());
                         return Some(sample);

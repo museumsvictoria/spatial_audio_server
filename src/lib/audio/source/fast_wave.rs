@@ -4,28 +4,44 @@ use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::fs::File;
 use fxhash::FxHashMap;
+use nannou::audio::sample::Sample;
+
+#[derive(PartialEq, Eq, Hash, Copy, Clone)]
+struct BufferID(u64);
+
+const NUM_BUFFERS: usize = 3;
 
 enum BufferMsg {
+    ID(BufferID),
     Spec(WavSpec),
+    Len(u32),
+    Duration(u32),
+}
+
+pub enum FastWavesCommand{
+    NewBuffer(Buffer),
+    Destroy(BufferID),
+    Spec(BufferID),
+    Len(BufferID),
+    Duration(BufferID),
+    Fill(BufferID),
 }
 
 struct Buffer{
     pub reader: hound::WavReader<BufReader<File>>,
-    reader_tx: mpsc::Sender<f32>,
+    pub reader_tx: mpsc::SyncSender<f32>,
     pub info_tx: mpsc::Sender<BufferMsg>,
 }
 
 struct FastWaves{
+    pub buffer_count: u64,
     pub fast_waves_rx: mpsc::Receiver<FastWavesCommand>,
-    pub buffers: FxHashMap<usize, Buffer>,
+    pub buffers: FxHashMap<BufferID, Buffer>,
 }
 
-pub enum FastWavesCommand{
-    NewBuffer(usize, Buffer),
-    Spec(usize),
-}
 
 pub struct FastWave{
+    buffer_id: BufferID,
     fast_waves_tx: mpsc::Sender<FastWavesCommand>,
     reader_rx: mpsc::Receiver<f32>,
     info_rx: mpsc::Receiver<BufferMsg>,
@@ -38,90 +54,154 @@ impl FastWave{
         P: AsRef<Path>,
         {
             let reader = hound::WavReader::open(path)?;
-            let (reader_tx, reader_rx) = mpsc::channel::<f32>();
+            let spec = reader.spec();
+            let channels = spec.channels as usize;
+            let num_samples = super::super::FRAMES_PER_BUFFER * channels * NUM_BUFFERS;
+            let (reader_tx, reader_rx) = mpsc::sync_channel::<f32>(num_samples*2);
             let (info_tx, info_rx) = mpsc::channel::<BufferMsg>();
             fast_waves_tx.send(FastWavesCommand::NewBuffer(Buffer{reader, reader_tx, info_tx}));
-            Ok(FastWave{ fast_waves_tx, reader_rx, info_rx })
+            let buffer_id = match info_rx.recv().expect("didn't recv buffer id on new buffer"){
+                BufferMsg::ID(id) => id,
+                _ => panic!("received wrong buffer message"), 
+            };
+            Ok(FastWave{ buffer_id, fast_waves_tx, reader_rx, info_rx })
         }
 
     pub fn spec(&self) -> WavSpec {
         //self.reader.spec()
-        self.fast_waves_tx.send(FastWavesCommand::Spec);
-        self.info_rx.recv().unwrap()
+        self.fast_waves_tx.send(FastWavesCommand::Spec(self.buffer_id));
+        match self.info_rx.recv().expect("error receiving spec message"){
+            BufferMsg::Spec(s) => s,
+            _ => panic!("error receiving spec message, wrong type"),
+        }
     }
 
     pub fn duration(&self) -> u32 {
         //self.reader.duration()
-        unimplemented!()
+        self.fast_waves_tx.send(FastWavesCommand::Duration(self.buffer_id));
+        match self.info_rx.recv().expect("error receiving spec message"){
+            BufferMsg::Duration(d) => d,
+            _ => panic!("error receiving spec message, wrong type"),
+        }
     }
 
     pub fn seek(&mut self, time: u32) -> io::Result<()> {
         //self.reader.seek(time)
-        unimplemented!()
+        // Ignoring for now
+        Ok(())
     }
 
     pub fn len(&self) -> u32 {
         //self.reader.len()
-        unimplemented!()
+        self.fast_waves_tx.send(FastWavesCommand::Len(self.buffer_id));
+        match self.info_rx.recv().expect("error receiving spec message"){
+            BufferMsg::Len(l) => l,
+            _ => panic!("error receiving spec message, wrong type"),
+        }
     }
 
-    fn fill_ahead<S: hound::Sample>(&mut self, amount: usize){
-        unimplemented!();
-        /*
-        let test_it = self.reader.samples::<S>();
-        for i in 0..amount {
-            match test_it.next() {
-                Some(Err(err)) => {
-                    eprintln!("failed to read sample: {}", err);
-                },
-                Some(Ok(sample)) => {
-                    //self.sample_index += 1;
-                    self.sample_tx.send(sample.to_sample::<f32>());
-                },
-                None => (),
-            }
-        }
-        */
-    }
     /*
     pub fn samples<'wr, S: hound::Sample>(&'wr mut self) -> WavSamples<'wr, BufReader<File>, S>{
         self.reader.samples::<S>()
     }
     */
-    pub fn samples<'wr, S: hound::Sample>(&'wr mut self) -> FastSamples<'wr>{
+    pub fn sample(&mut self) -> Option<f32>{
         // TODO this might be too slow
-        unimplemented!();
-        //FastSamples{ fs: &mut self }
-    }
-}
-
-pub struct FastSamples<'wr>{
-    fs: &'wr mut FastWave,
-}
-
-impl<'wr> Iterator for FastSamples<'wr>{
-    type Item = Result<f32, mpsc::TryRecvError>;
-
-    fn next(&mut self) -> Option<Result<f32, mpsc::TryRecvError>> {
-        match self.fs.reader_rx.try_recv() {
-            Ok(s) => Some(Ok(s)),
-            Err(e) => Some(Err(e)),
+        self.fast_waves_tx.send(FastWavesCommand::Fill(self.buffer_id));
+        match self.reader_rx.try_recv() {
+            Ok(s) => Some(s),
+            Err(e) => {
+                eprintln!("Error receiving sample {:?}", e);
+                None
+            },
         }
     }
 }
 
+// Clean up in other thread
+impl Drop for FastWave {
+    fn drop(&mut self) {
+        self.fast_waves_tx.send(FastWavesCommand::Destroy(self.buffer_id));
+    }
+}
+
+impl FastWaves{
+    fn fill(&mut self, id: BufferID, num_buf: usize){
+        self.buffers.get_mut(&id).map(|b| {
+            let spec = b.reader.spec();
+            let channels = spec.channels as usize;
+            let num_samples = super::super::FRAMES_PER_BUFFER * channels;
+            macro_rules! next_sample {
+                ($T:ty) => {{
+                    match b.reader.samples::<$T>().next() {
+                        Some(Err(err)) => {
+                            eprintln!("failed to read sample: {}", err);
+                        },
+                        Some(Ok(sample)) => {
+                            //self.sample_index += 1;
+                            match b.reader_tx.try_send(sample.to_sample::<f32>()) {
+                                Ok(_) => (),
+                                Err(e) => {
+                                    eprintln!("Error receiving sample {:?}", e);
+                                    ()
+                                },
+                            }
+                        },
+                        None => (),
+                    }
+                }};
+            }
+            for i in 0..num_samples {
+                match (spec.sample_format, spec.bits_per_sample) {
+                    (SampleFormat::Float, 32) => next_sample!(f32),
+                    (SampleFormat::Int, 8) => next_sample!(i8),
+                    (SampleFormat::Int, 16) => next_sample!(i16),
+                    (SampleFormat::Int, 32) => next_sample!(i32),
+                    _ => {
+                        eprintln!(
+                            "Unsupported bit depth {} - currently only 8, 16 and 32 are supported",
+                            spec.bits_per_sample
+                            );
+                    },
+                }
+            }
+        });
+    }
+}
+
 pub fn run(fast_waves_rx: mpsc::Receiver<FastWavesCommand>){
-    let mut fs = FastWaves{ fast_waves_rx, buffers: Vec::<Buffer>::new() };
+    let mut fs = FastWaves{ buffer_count: 0 as u64, fast_waves_rx, buffers: FxHashMap::default() };
     loop {
         match fs.fast_waves_rx.recv() {
-            Ok(FastWavesCommand::NewBuffer(id, b)) => {
-                fs.buffers.insert(id, b);
+            Ok(FastWavesCommand::NewBuffer(b)) => {
+                let buffer_id = BufferID(fs.buffer_count);
+                b.info_tx.send(BufferMsg::ID(buffer_id));
+                fs.buffers.insert(buffer_id, b);
+                fs.buffer_count += 1;
+
+                fs.fill(buffer_id, NUM_BUFFERS);
+            },
+            Ok(FastWavesCommand::Destroy(id)) => {
+                fs.buffers.remove(&id);
             },
             Ok(FastWavesCommand::Spec(id)) => {
-                fs.buffers.get(id).map(|b| {
-                    b.info_tx(b.reader.spec())
-                })
+                fs.buffers.get(&id).map(|b| {
+                    b.info_tx.send(BufferMsg::Spec(b.reader.spec()))
+                });
             },
+            Ok(FastWavesCommand::Len(id)) => {
+                fs.buffers.get(&id).map(|b| {
+                    b.info_tx.send(BufferMsg::Len(b.reader.len()))
+                });
+            },
+            Ok(FastWavesCommand::Duration(id)) => {
+                fs.buffers.get(&id).map(|b| {
+                    b.info_tx.send(BufferMsg::Duration(b.reader.duration()))
+                });
+            },
+            Ok(FastWavesCommand::Fill(id)) => {
+                fs.fill(id, NUM_BUFFERS);
+            }
             Err(e) => eprintln!("error receiving fast waves commands {}", e),
 
         }
