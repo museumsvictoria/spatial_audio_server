@@ -115,8 +115,8 @@
       "name": "Group A",
       "soundscape": {
         "occurrence_rate": {
-          "min": 1.0,
-          "max": 30000.0
+          "min": 3.003003003003003,
+          "max": 360000.0
         },
         "simultaneous_sounds": {
           "min": 1,
@@ -379,8 +379,8 @@
                 "max": 3600000.0
               },
               "simultaneous_sounds": {
-                "min": 0,
-                "max": 1
+                "min": 3,
+                "max": 5
               },
               "playback_duration": {
                 "min": 5000.0,
