@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
 pub struct BufferID(u64);
 
-const NUM_BUFFERS: usize = 200;
+const NUM_BUFFERS: usize = 400;
 const STEPS_AHEAD: usize = 2;
 
 enum BufferMsg {
@@ -169,7 +169,7 @@ impl FastWaves{
         self.buffers.get_mut(&id).map(|b| {
             let spec = b.reader.spec();
             let buffer_size = b.buffer_size * steps_ahead;
-            let batch_length = buffer_size / 10;
+            let batch_length = buffer_size / 20;
             macro_rules! next_sample {
                 ($T:ty) => {{
                     let mut samples_batch = VecDeque::with_capacity(batch_length);
@@ -186,7 +186,6 @@ impl FastWaves{
                         
                     }
                     if b.kill_rx.try_recv().is_ok() { 
-                        println!("killed");
                         return (); 
                     }
                     match b.reader_tx.try_send(samples_batch){
