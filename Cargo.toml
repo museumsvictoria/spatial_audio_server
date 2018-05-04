@@ -29,5 +29,9 @@ slug = "0.1"
 time_calc = { version = "0.13", features = ["serde"] }
 walkdir = "2"
 
+# In case needed for audio::output::render speedup and have no wifi in annapurna.
+crossbeam = "0.3"
+rayon = "1"
+
 [features]
 test_with_stereo = [] # Compile with this feature to set the max i/o channels as `2`.

@@ -164,18 +164,26 @@ pub struct Model {
     /// Inter-thread communication channels.
     channels: Channels,
 
-    /// A buffer to re-use for collecting speakers ready for performing the DBAP calc.
-    ///
-    /// The index for each speaker is it's channel within the output audio stream buffer.
-    dbap_speakers: Vec<dbap::Speaker>,
     /// A map that tracks the last calculated buffer's DBAP gain per speaker per sound.
     ///
     /// This allows for linearly interpolating from the speaker gains of the previous buffer to the
     /// gains for the current buffer to avoid clipping.
     dbap_speaker_gains: DbapSpeakerGains,
+    /// A buffer to re-use for collecting speakers ready for performing the DBAP calc.
+    ///
+    /// Only those speakers that are within the `audio::PROXIMITY_LIMIT` will be collected.
+    dbap_speakers: Vec<dbap::Speaker>,
+    /// The output buffer channel associated with each speaker.
+    ///
+    /// The indices of this `Vec` should always be aligned with the indices of `dbap_speakers`.
+    dbap_speaker_channels: Vec<usize>,
     /// A buffer to re-use for storing the current gain for each speaker produced by DBAP.
+    ///
+    /// The indices of this `Vec` should always be aligned with the indices of `dbap_speakers`.
     current_dbap_speaker_gains: Vec<f32>,
     /// A buffer to re-use for collecting the previous dbap gain per speaker.
+    ///
+    /// The indices of this `Vec` should always be aligned with the indices of `dbap_speakers`.
     previous_dbap_speaker_gains: Vec<f32>,
 
     /// The FFT planner used to prepare the FFT calculations and share data between them.
@@ -236,11 +244,10 @@ impl Model {
         // A map from installations to their audio data and speaker analyses that can be re-used.
         let installations = Default::default();
 
-        // A buffer to re-use for DBAP speaker calculations.
-        let dbap_speakers = Vec::with_capacity(MAX_CHANNELS);
-
         // For tracking DBAP speaker gains.
         let dbap_speaker_gains = FxHashMap::default();
+        let dbap_speakers = Vec::with_capacity(MAX_CHANNELS);
+        let dbap_speaker_channels = Vec::with_capacity(MAX_CHANNELS);
         let current_dbap_speaker_gains = Vec::with_capacity(MAX_CHANNELS);
         let previous_dbap_speaker_gains = Vec::with_capacity(MAX_CHANNELS);
 
@@ -278,8 +285,9 @@ impl Model {
             exhausted_sounds,
             installations,
             channels,
-            dbap_speakers,
             dbap_speaker_gains,
+            dbap_speakers,
+            dbap_speaker_channels,
             current_dbap_speaker_gains,
             previous_dbap_speaker_gains,
             fft,
@@ -499,8 +507,9 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref mut exhausted_sounds,
             ref mut installations,
             ref mut speakers,
-            ref mut dbap_speakers,
             ref mut dbap_speaker_gains,
+            ref mut dbap_speakers,
+            ref mut dbap_speaker_channels,
             ref mut current_dbap_speaker_gains,
             ref mut previous_dbap_speaker_gains,
             ref channels,
@@ -623,7 +632,12 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
             for (sound_channel, channel_point) in sound.channel_points().enumerate() {
                 // Update the dbap_speakers buffer with their distances to this sound channel.
+                //
+                // The indices of each of the 4 `Vec`s below refer to the same speaker.
+                // E.g. `dbap_speakers[3]` writes to the output buffer channel specified by
+                // `dbap_speaker_channels[3]`.
                 dbap_speakers.clear();
+                dbap_speaker_channels.clear();
                 current_dbap_speaker_gains.clear();
                 previous_dbap_speaker_gains.clear();
 
@@ -639,24 +653,51 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                         None => continue,
                     };
                     let active = &speakers[speaker_id];
-
-                    // Get the previous gain for this channel.
-                    let previous_gain = dbap_speaker_gains.get(speaker_id).map(|&g| g).unwrap_or(0.0);
-                    previous_dbap_speaker_gains.push(previous_gain);
+                    let speaker_point = &active.speaker.point;
 
                     // Get the current gain by performing DBAP calc.
                     let channel_point_f = Point2 {
                         x: channel_point.x.0,
                         y: channel_point.y.0,
                     };
-                    let speaker = &active.speaker.point;
-                    let speaker_f = Point2 {
-                        x: speaker.x.0,
-                        y: speaker.y.0,
+                    let speaker_point_f = Point2 {
+                        x: speaker_point.x.0,
+                        y: speaker_point.y.0,
                     };
-                    let distance = dbap::blurred_distance_2(channel_point_f, speaker_f, DISTANCE_BLUR);
-                    let weight = speaker::dbap_weight(&sound.installations, &active.speaker.installations);
-                    dbap_speakers.push(dbap::Speaker { distance, weight });
+
+                    // Get the squared distance between the channel and speaker.
+                    let distance_2 = dbap::blurred_distance_2(
+                        channel_point_f,
+                        speaker_point_f,
+                        DISTANCE_BLUR,
+                    );
+
+                    // If this speaker is not within proximity, skip it.
+                    if PROXIMITY_LIMIT_2 < Metres(distance_2) {
+                        continue;
+                    }
+
+                    // Weight the speaker based on whether or not it is assigned.
+                    let weight = speaker::dbap_weight(
+                        &sound.installations,
+                        &active.speaker.installations,
+                    );
+
+                    // TODO: Possibly skip speakers with a weight of 0 (as below)?
+                    // Uncertain how this will affect DBAP, but may drastically improve CPU.
+                    // if weight == 0.0 {
+                    //     continue;
+                    // }
+
+                    // Get the previous gain for this channel.
+                    let previous_gain = dbap_speaker_gains
+                        .get(speaker_id)
+                        .map(|&g| g)
+                        .unwrap_or(0.0);
+                    previous_dbap_speaker_gains.push(previous_gain);
+                    let speaker = dbap::Speaker { distance: distance_2, weight };
+                    dbap_speakers.push(speaker);
+                    dbap_speaker_channels.push(channel);
                 }
 
                 // If no speakers were found, skip this channel.
@@ -677,11 +718,11 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 let mut sample_index = sound_channel;
                 for (frame_i, frame) in buffer.frames_mut().enumerate() {
                     let channel_sample = unmixed_samples[sample_index];
-                    let gains = current_dbap_speaker_gains.iter()
-                        .zip(&*previous_dbap_speaker_gains)
-                        .enumerate();
                     let lerp_amt = frame_i as f32 / frames_len;
-                    for (channel, (&current_gain, &previous_gain)) in gains {
+                    for speaker_i in 0..dbap_speakers.len() {
+                        let channel = dbap_speaker_channels[speaker_i];
+                        let current_gain = current_dbap_speaker_gains[speaker_i];
+                        let previous_gain = previous_dbap_speaker_gains[speaker_i];
                         // Only write to the channels that will be read by the audio device.
                         if let Some(sample) = frame.get_mut(channel) {
                             let speaker_gain = lerp(previous_gain, current_gain, lerp_amt);
