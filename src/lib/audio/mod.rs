@@ -17,7 +17,7 @@ pub mod speaker;
 
 /// Sounds should only be output to speakers that are nearest to avoid the need to render each
 /// sound to every speaker on the map.
-pub const PROXIMITY_LIMIT: Metres = Metres(10.0);
+pub const PROXIMITY_LIMIT: Metres = Metres(8.0);
 /// The proximity squared (for more efficient distance comparisons).
 pub const PROXIMITY_LIMIT_2: Metres = Metres(PROXIMITY_LIMIT.0 * PROXIMITY_LIMIT.0);
 
