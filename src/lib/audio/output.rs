@@ -164,6 +164,7 @@ pub struct Model {
     // channel_to_speaker: FxHashMap<usize, speaker::Id>,
     /// A buffer for collecting the speakers within proximity of the sound's position.
     unmixed_samples: Vec<f32>,
+    all_samples: Vec<Vec<f32>>,
     /// A buffer for collecting sounds that have been removed due to completing.
     exhausted_sounds: Vec<sound::Id>,
     /// Data related to a single installation necessary for the audio output thread.
@@ -246,6 +247,8 @@ impl Model {
         // A buffer for collecting frames from `Sound`s that have not yet been mixed and written.
         let unmixed_samples = vec![0.0; 1024];
 
+        let all_samples = vec![vec![0.0; 1024]];
+
         // A buffer for collecting exhausted `Sound`s.
         let exhausted_sounds = Vec::with_capacity(128);
 
@@ -290,6 +293,7 @@ impl Model {
             sounds,
             speakers,
             unmixed_samples,
+            all_samples,
             exhausted_sounds,
             installations,
             channels,
@@ -505,11 +509,8 @@ impl Channels {
 /// The function given to nannou to use for rendering.
 pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
     {
-        /*
         {
-            model.unmixed_samples.clear();
-            model.unmixed_samples = vec![0.0f32; 1024]; 
-
+                let mut sam_i = 0;
             for (&sound_id, sound) in model.sounds.iter_mut() {
                 let source_id = sound.source_id();
                 let position = sound.position;
@@ -536,28 +537,37 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 model.channels.gui_audio_monitor_msg_tx.send(msg).ok();
                 let num_c = buffer.channels();
                 let mut s_c = 0;
-                //model.unmixed_samples.clear();
+                model.all_samples[sam_i] = model.unmixed_samples;
                 for (i, sample) in sound.signal.samples().take(num_samples).enumerate() {
-                    model.unmixed_samples[i] += sample;
+                    model.all_samples[sam_i].push(sample);
                     s_c += 1;
                 }
                 if s_c < num_samples {
                     model.exhausted_sounds.push(sound_id);
+                    for _ in s_c..num_samples {
+                        model.all_samples[sam_i].push(0.0);
+                    }
                 }
+                sam_i += 1;
                 if model.speakers.is_empty() {
                     continue;
                 }
             }
             let num_c = buffer.channels();
             let mut s_index = 0;
+            let amount = 2048;
             for f in buffer.frames_mut() {
-                let ns = model.unmixed_samples[s_index];
-                for i in 0..num_c {
-                    if let Some(s) = f.get_mut(i){
-                        *s = ns;
+                for nas in model.all_samples {
+                    let ns = model.unmixed_samples[s_index];
+                    for i in 0..num_c {
+                        let mut count = 0;
+                        if let Some(s) = f.get_mut(i){
+                            *s = ns;
+                        }
+
                     }
+                
                 }
-                s_index += 2;
             }
             for sound_id in model.exhausted_sounds.drain(..) {
                 // Send this with the `End` message to avoid de-allocating on audio thread.
@@ -569,7 +579,6 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             model.frame_count.fetch_add(buffer.len_frames(), atomic::Ordering::Relaxed);
         }
         return (model, buffer);
-        */
         
         //TODO store in model and reuse this
         model.unmixed_samples = vec![0.0f32; 1024]; 
@@ -581,6 +590,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref mut sounds,
             ref mut unmixed_samples,
             ref mut exhausted_sounds,
+            ref mut all_samples,
             ref mut installations,
             ref mut speakers,
             ref mut dbap_speaker_gains,
