@@ -27,6 +27,12 @@ pub const MAX_CHANNELS: usize = 128;
 #[cfg(feature = "test_with_stereo")]
 pub const MAX_CHANNELS: usize = 2;
 
+/// The absolute maximum number of simultaneous sounds allowed per exhibition.
+///
+/// NOTE: This value is simply used for pre-allocation (to avoid allocating on the audio thread).
+/// The number is arbitrary - feel free to increase/decrease this as necessary.
+pub const MAX_SOUNDS: usize = 1024;
+
 /// The desired sample rate of the output stream.
 pub const SAMPLE_RATE: f64 = 48_000.0;
 

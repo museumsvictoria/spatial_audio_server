@@ -474,7 +474,7 @@ impl<'a> Iterator for ChannelPoints<'a> {
 pub struct Id(u64);
 
 impl Id {
-    const INITIAL: Self = Id(0);
+    pub const INITIAL: Self = Id(0);
 }
 
 /// A threadsafe unique `Id` generator for sharing between the `Composer` and `GUI` threads.
