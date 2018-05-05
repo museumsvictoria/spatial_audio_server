@@ -505,7 +505,11 @@ impl Channels {
 /// The function given to nannou to use for rendering.
 pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
     {
+        /*
         {
+            model.unmixed_samples.clear();
+            model.unmixed_samples = vec![0.0f32; 1024]; 
+
             for (&sound_id, sound) in model.sounds.iter_mut() {
                 let source_id = sound.source_id();
                 let position = sound.position;
@@ -532,30 +536,28 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 model.channels.gui_audio_monitor_msg_tx.send(msg).ok();
                 let num_c = buffer.channels();
                 let mut s_c = 0;
-                model.unmixed_samples.clear();
-                for sample in sound.signal.samples().take(num_samples) {
-                    model.unmixed_samples.push(sample);
+                //model.unmixed_samples.clear();
+                for (i, sample) in sound.signal.samples().take(num_samples).enumerate() {
+                    model.unmixed_samples[i] += sample;
                     s_c += 1;
                 }
                 if s_c < num_samples {
                     model.exhausted_sounds.push(sound_id);
-                    for _ in s_c..num_samples {
-                        model.unmixed_samples.push(0.0);
-                    }
                 }
                 if model.speakers.is_empty() {
                     continue;
                 }
-                let mut s_index = 0;
-                for f in buffer.frames_mut() {
-                    let ns = model.unmixed_samples[s_index];
-                    for i in 0..num_c {
-                        if let Some(s) = f.get_mut(i){
-                            *s = ns;
-                        }
+            }
+            let num_c = buffer.channels();
+            let mut s_index = 0;
+            for f in buffer.frames_mut() {
+                let ns = model.unmixed_samples[s_index];
+                for i in 0..num_c {
+                    if let Some(s) = f.get_mut(i){
+                        *s = ns;
                     }
-                    s_index += sound.channels;
                 }
+                s_index += 2;
             }
             for sound_id in model.exhausted_sounds.drain(..) {
                 // Send this with the `End` message to avoid de-allocating on audio thread.
@@ -567,6 +569,10 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             model.frame_count.fetch_add(buffer.len_frames(), atomic::Ordering::Relaxed);
         }
         return (model, buffer);
+        */
+        
+        //TODO store in model and reuse this
+        model.unmixed_samples = vec![0.0f32; 1024]; 
         let Model {
             master_volume,
             dbap_rolloff_db,
@@ -587,9 +593,9 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref mut fft_planner,
             ref mut fft_frequency_amplitudes_2,
         } = model;
-
+        
         // Always silence the buffer to begin.
-        //buffer.iter_mut().for_each(|s| *s = 0.0);
+        buffer.iter_mut().for_each(|s| *s = 0.0);
         // Clear the analyses.
         for installation in installations.values_mut() {
             installation.speaker_analyses.clear();
@@ -603,7 +609,6 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
         //
         // TODO: Should probably move this into model for re-use, but its not showing up in
         // profiling.
-/*
         let channels_to_speakers: FxHashMap<_, _> = speakers
             .iter()
             .filter_map(|(&id, s)| {
@@ -614,6 +619,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 }
             })
             .collect();
+/*
 */
 
         // For each sound, request `buffer.len()` number of frames and sum them onto the
@@ -675,40 +681,10 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
             //flame::start("595-622");
             // Clear the unmixed samples, ready to collect the new ones.
-            unmixed_samples.clear();
-            {
-
-                // This block is killing our CPU
-                let mut samples_written = 0;
-                for sample in sound.signal.samples().take(num_samples) {
-                    unmixed_samples.push(sample);
-/*
-                    channel_detectors[samples_written % sound.channels].next(sample);
-*/                    
-                    samples_written += 1;
-                }
-                // end block
-
-                // If we didn't write the expected number of samples, the sound has been exhausted.
-                if samples_written < num_samples {
-                    exhausted_sounds.push(sound_id);
-                    for _ in samples_written..num_samples {
-                        unmixed_samples.push(0.0);
-                    }
-                }
-
-/*
-                // Send the latest RMS and peak for each channel to the GUI for monitoring.
-                for (index, env_detector) in channel_detectors.iter().enumerate() {
-                    let (rms, peak) = env_detector.current();
-                    let sound_msg = gui::ActiveSoundMessage::UpdateChannel { index, rms, peak };
-                    let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
-                    channels.gui_audio_monitor_msg_tx.send(msg).ok();
-                }
-*/
-            }
             //flame::end("595-622");
-
+            
+            // Todo this continue was originally after the samples were loaded and
+            // may trigger them not to be loaded. Could put as an if instead
             // Mix the audio from the signal onto each of the output channels.
             if speakers.is_empty() {
                 continue;
@@ -744,7 +720,6 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 //flame::start("651-679");
                 for channel in 0..buffer.channels() {
                     // Find the speaker for this channel.
-/*
                     let speaker_id = match channels_to_speakers.get(&channel) {
                         Some(id) => id,
                         None => continue,
@@ -779,6 +754,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                         &active.speaker.installations,
                     );
 
+/*
 */
                     // TODO: Possibly skip speakers with a weight of 0 (as below)?
                     // Uncertain how this will affect DBAP, but may drastically improve CPU.
@@ -786,7 +762,6 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     //     continue;
                     // }
 
- /*
                     // Get the previous gain for this channel.
                     let previous_gain = dbap_speaker_gains
                         .get(speaker_id)
@@ -796,7 +771,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     let speaker = dbap::Speaker { distance: distance_2, weight };
                     dbap_speakers.push(speaker);
                     dbap_speaker_channels.push(channel);
-*/
+ /*
                     //MOCK!!!!!!!!
                     previous_dbap_speaker_gains.push(0.0);
                     let speaker = dbap::Speaker { distance: 0.0, weight: 1.0 };
@@ -804,6 +779,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     dbap_speaker_channels.push(channel);
                     // End MOCK
                     
+*/
                     }
 
 
@@ -813,50 +789,50 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     continue;
                 }
 
-/*
                 //flame::start("685-719");
 
                 // Update the speaker gains.
                 let gains = dbap::SpeakerGains::new(&dbap_speakers, dbap_rolloff_db);
                 current_dbap_speaker_gains.extend(gains.map(|f| f as f32));
 
-*/
-                fn lerp(a: f32, b: f32, lerp: f32) -> f32 {
-                    a + (b - a) * lerp
-                }
-
-                // For every frame in the buffer, mix the unmixed sample.
-                let frames_len = buffer.len_frames() as f32;
-                let mut sample_index = sound_channel;
-                for (frame_i, frame) in buffer.frames_mut().enumerate() {
-                    let channel_sample = unmixed_samples[sample_index];
-/*
-                    let lerp_amt = frame_i as f32 / frames_len;
-*/
-                    for speaker_i in 0..dbap_speakers.len() {
-                        let channel = dbap_speaker_channels[speaker_i];
-/*
-                        let current_gain = current_dbap_speaker_gains[speaker_i];
-                        let previous_gain = previous_dbap_speaker_gains[speaker_i];
-*/
-                        // Only write to the channels that will be read by the audio device.
-                        if let Some(sample) = frame.get_mut(channel) {
-/*
-                            let speaker_gain = lerp(previous_gain, current_gain, lerp_amt);
-                            *sample += channel_sample * speaker_gain * sound.volume;
-*/
-                           *sample += channel_sample * sound.volume;
-                        }
-                    }
-                    sample_index += sound.channels;
-                }
-/*
                 // Update the stored dbap_speaker_gains map for this sound channel.
                 for (channel, &current) in current_dbap_speaker_gains.iter().enumerate() {
                     let speaker_id = channels_to_speakers[&channel];
                     *dbap_speaker_gains.entry(speaker_id).or_insert(current) = current;
                 }
                 //flame::end("685-719");
+            }
+
+            {
+
+                let mut samples_written = 0;
+                for (s_i, sample) in sound.signal.samples().take(num_samples).enumerate() {
+                    unmixed_samples[s_i] += sample;
+/*
+                    channel_detectors[samples_written % sound.channels].next(sample);
+*/                    
+                    samples_written += 1;
+                }
+                // end block
+
+                // If we didn't write the expected number of samples, the sound has been exhausted.
+                if samples_written < num_samples {
+                    exhausted_sounds.push(sound_id);
+/*
+                    for _ in samples_written..num_samples {
+                        unmixed_samples.push(0.0);
+                    }
+*/
+                }
+
+/*
+                // Send the latest RMS and peak for each channel to the GUI for monitoring.
+                for (index, env_detector) in channel_detectors.iter().enumerate() {
+                    let (rms, peak) = env_detector.current();
+                    let sound_msg = gui::ActiveSoundMessage::UpdateChannel { index, rms, peak };
+                    let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
+                    channels.gui_audio_monitor_msg_tx.send(msg).ok();
+                }
 */
             }
             //flame::end("636-721");
@@ -1002,6 +978,39 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             channels.osc_output_msg_tx.send(msg).ok();
         }
 */
+        fn lerp(a: f32, b: f32, lerp: f32) -> f32 {
+            a + (b - a) * lerp
+        }
+        
+        let num_c = buffer.channels();
+        // For every frame in the buffer, mix the unmixed sample.
+        let frames_len = buffer.len_frames() as f32;
+        //let mut sample_index = sound_channel;
+        let mut sample_index = 0;
+        for (frame_i, frame) in buffer.frames_mut().enumerate() {
+            let channel_sample = unmixed_samples[sample_index];
+/*
+            let lerp_amt = frame_i as f32 / frames_len;
+*/
+            for speaker_i in 0..dbap_speakers.len() {
+                let channel = dbap_speaker_channels[speaker_i];
+/*
+                let current_gain = current_dbap_speaker_gains[speaker_i];
+                let previous_gain = previous_dbap_speaker_gains[speaker_i];
+*/
+                // Only write to the channels that will be read by the audio device.
+                if let Some(sample) = frame.get_mut(channel) {
+/*
+                    let speaker_gain = lerp(previous_gain, current_gain, lerp_amt);
+                    *sample += channel_sample * speaker_gain * sound.volume;
+*/
+                   //*sample += channel_sample * sound.volume;
+                   *sample += channel_sample;
+                }
+            }
+            //sample_index += sound.channels;
+            sample_index += 2;
+        }
         // Remove all sounds that have been exhausted.
         for sound_id in exhausted_sounds.drain(..) {
             // Remove the sound from DBAP gain tracking.
