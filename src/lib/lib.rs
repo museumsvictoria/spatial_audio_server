@@ -238,6 +238,22 @@ fn exit(app: &App, model: Model) {
         ..
     } = model;
 
+    /*
+    let mut profile_path = std::env::current_dir().unwrap();
+    profile_path.push("flame-graph.html");
+
+    let p_threads = flame::threads().into_iter();
+    let all_spans = p_threads.fold(Vec::<flame::Span>::new(), |mut acc, mut sp| {
+        {
+            acc.append(&mut sp.spans);
+        }
+        acc
+    });
+
+
+    html::dump_html_custom(&mut File::create(profile_path).unwrap(), &all_spans[..]).unwrap();
+    */
+
     // Update whether or not cpu saving mode should be enabled when re-opening.
     config.cpu_saving_mode = gui.cpu_saving_mode;
 

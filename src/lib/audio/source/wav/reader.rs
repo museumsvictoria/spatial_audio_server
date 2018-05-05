@@ -1,6 +1,9 @@
 //! A thread dedicated to reading sounds from WAV files and feeding their samples to sounds on the
 //! audio thread.
 
+extern crate crossbeam_channel;
+
+
 use audio::{self, sound};
 use fxhash::FxHashMap;
 use hound::{self, SampleFormat};
@@ -11,9 +14,10 @@ use std::fs::File;
 use std::mem;
 use std::ops;
 use std::path::Path;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use time_calc::Samples;
+use self::crossbeam_channel as cbc;
 
 /// The number of sample buffers that the `reader` thread prepares ahead of time for a single
 /// sound.
@@ -23,16 +27,21 @@ const NUM_BUFFERS: usize = 16;
 pub type WavReader = hound::WavReader<BufReader<File>>;
 
 /// Sends messages to the `wav::reader` thread.
-pub type Tx = mpsc::Sender<Message>;
+//pub type Tx = mpsc::Sender<Message>;
+pub type Tx = cbc::Sender<Message>;
 
 /// Receives `Message`s for the `wav::reader` thread.
-pub type Rx = mpsc::Receiver<Message>;
+//pub type Rx = mpsc::Receiver<Message>;
+pub type Rx = cbc::Receiver<Message>;
+
 
 /// For sending buffers to a sound's associated `ThreadedSamplesStream`.
-pub type BufferTx = mpsc::Sender<Buffer>;
+//pub type BufferTx = mpsc::Sender<Buffer>;
+pub type BufferTx = cbc::Sender<Buffer>;
 
 /// Receives buffers sent from the wav reader thread. Used by the `ThreadedSamplesStream` type.
-pub type BufferRx = mpsc::Receiver<Buffer>;
+//pub type BufferRx = mpsc::Receiver<Buffer>;
+pub type BufferRx = cbc::Receiver<Buffer>;
 
 /// A handle to the WAV reading thread.
 #[derive(Clone)]
@@ -148,24 +157,25 @@ impl Handle {
         wav_path: &Path,
         start_frame: u64,
         looped: bool,
-    ) -> Result<SamplesStream, mpsc::SendError<()>>
+    ) -> Result<SamplesStream, cbc::SendError<()>>
     {
         let reader = WavReader::open(wav_path)
             .expect("failed to read wav file");
         let wav_len_samples = reader.len() as _;
-        let (buffer_tx, buffer_rx) = mpsc::channel();
+        //let (buffer_tx, buffer_rx) = mpsc::channel();
+        let (buffer_tx, buffer_rx) = cbc::unbounded();
         let spec = reader.spec();
         let play = Play { reader, buffer_tx, start_frame, looped };
         let samples_stream = SamplesStream::new(buffer_rx, spec, wav_len_samples, looped);
         let msg = Message::Play(sound_id, play);
-        self.tx.send(msg).map_err(|_| mpsc::SendError(()))?;
+        self.tx.send(msg).map_err(|_| cbc::SendError(()))?;
         Ok(samples_stream)
     }
 
     /// Stop reading the wav for the sound with the given `Id`.
-    pub fn end(&self, sound_id: sound::Id) -> Result<(), mpsc::SendError<()>> {
+    pub fn end(&self, sound_id: sound::Id) -> Result<(), cbc::SendError<()>> {
         let msg = Message::End(sound_id);
-        self.tx.send(msg).map_err(|_| mpsc::SendError(()))?;
+        self.tx.send(msg).map_err(|_| cbc::SendError(()))?;
         Ok(())
     }
 
@@ -190,7 +200,10 @@ impl Drop for Buffer {
         // buffer.
         let read_buffer = mem::replace(&mut self.samples, Vec::new());
         let msg = Message::ProcessedBuffer(sound_id, read_buffer);
-        self.reader_tx.send(msg).ok();
+        match self.reader_tx.try_send(msg) {
+            Ok(_) =>(),
+            Err(e) => eprintln!("blocked on send {:?}", e),
+        }
     }
 }
 
@@ -265,7 +278,10 @@ impl SamplesStream {
             // Receive the next buffer.
             *buffer_mut = match buffer_rx.try_recv() {
                 // If there are no more buffers, there must be no more samples so we're done.
-                Err(_err) => return None,
+                Err(err) => {
+                    eprintln!("UNDER_RUN: buffer not recieved {:?}", err);
+                    return None
+                },
                 // Otherwise reset
                 Ok(buffer) => {
                     *buffer_index = 0;
@@ -371,7 +387,11 @@ impl Model {
             let info = BufferInfo { samples_range };
             let buffer = Buffer { samples, sound_id, reader_tx, info };
             // The output thread may have exited before us so ignore closed channel error.
-            buffer_tx.send(buffer).ok();
+            //buffer_tx.send(buffer).ok();
+            match buffer_tx.try_send(buffer) {
+                Ok(_) => (),
+                Err(e) => eprintln!("OVER_RUN: error sending buffer {:?}", e),
+            }
         }
 
         // Fill the given buffer using the reader and enqueue it.
@@ -467,7 +487,7 @@ fn read_next_sample(
 /// Runs the wav reader thread and returns a handle to it that may be used to play or seek sounds
 /// via their unique `Id`.
 pub fn spawn() -> Handle {
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = cbc::unbounded();
     let tx2 = tx.clone();
     let thread = thread::Builder::new()
         .name("wav_reader".into())
@@ -479,19 +499,23 @@ pub fn spawn() -> Handle {
 
 fn run(tx: Tx, rx: Rx) {
     let mut model = Model::new(tx);
-    for msg in rx {
-        match msg {
-            Message::Play(id, play) => {
-                model.play_sound(id, play);
-            },
-            Message::End(id) => {
-                model.sounds.remove(&id);
-            },
-            Message::ProcessedBuffer(id, buffer) => {
-                model.next_buffer(id, buffer)
-                    .expect("failed to process next buffer");
-            },
-            Message::Exit => break,
+    loop {
+        match rx.recv(){
+            Ok(msg) =>
+                match msg {
+                    Message::Play(id, play) => {
+                        model.play_sound(id, play);
+                    },
+                    Message::End(id) => {
+                        model.sounds.remove(&id);
+                    },
+                    Message::ProcessedBuffer(id, buffer) => {
+                        model.next_buffer(id, buffer)
+                            .expect("failed to process next buffer");
+                    },
+                    Message::Exit => break,
+                }
+            Err(e) => (),
         }
     }
 }
