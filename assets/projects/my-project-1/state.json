@@ -11,8 +11,8 @@
       "computers": {},
       "soundscape": {
         "simultaneous_sounds": {
-          "min": 1,
-          "max": 8
+          "min": 6,
+          "max": 29
         }
       }
     },
@@ -31,8 +31,8 @@
       "computers": {},
       "soundscape": {
         "simultaneous_sounds": {
-          "min": 1,
-          "max": 8
+          "min": 5,
+          "max": 15
         }
       }
     },
@@ -119,8 +119,8 @@
           "max": 30000.0
         },
         "simultaneous_sounds": {
-          "min": 1,
-          "max": 10
+          "min": 8,
+          "max": 26
         }
       }
     }
@@ -160,7 +160,7 @@
         "audio": {
           "kind": {
             "Wav": {
-              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Flame Cast_3.wav",
+              "path": "/Users/tomgowan/rust/spatial_audio_server/assets/audio/Elemental - Flame Cast_3.wav",
               "channels": 2,
               "duration": 148660,
               "sample_hz": 48000.0,
@@ -224,7 +224,7 @@
         "audio": {
           "kind": {
             "Wav": {
-              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Air Movement_20.wav",
+              "path": "/Users/tomgowan/rust/spatial_audio_server/assets/audio/Elemental - Air Movement_20.wav",
               "channels": 2,
               "duration": 167556,
               "sample_hz": 48000.0,
@@ -298,7 +298,7 @@
         "audio": {
           "kind": {
             "Wav": {
-              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Electricity Impact_5.wav",
+              "path": "/Users/tomgowan/rust/spatial_audio_server/assets/audio/Elemental - Electricity Impact_5.wav",
               "channels": 2,
               "duration": 199312,
               "sample_hz": 48000.0,
@@ -318,7 +318,7 @@
         "audio": {
           "kind": {
             "Wav": {
-              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Air Movement_13.wav",
+              "path": "/Users/tomgowan/rust/spatial_audio_server/assets/audio/Elemental - Air Movement_13.wav",
               "channels": 2,
               "duration": 143056,
               "sample_hz": 48000.0,
@@ -338,7 +338,7 @@
         "audio": {
           "kind": {
             "Wav": {
-              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Log Sine Sweep.wav",
+              "path": "/Users/tomgowan/rust/spatial_audio_server/assets/audio/Log Sine Sweep.wav",
               "channels": 2,
               "duration": 1106106,
               "sample_hz": 48000.0,
@@ -358,7 +358,7 @@
         "audio": {
           "kind": {
             "Wav": {
-              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Chimes Big_3.wav",
+              "path": "/Users/tomgowan/rust/spatial_audio_server/assets/audio/Elemental - Chimes Big_3.wav",
               "channels": 2,
               "duration": 240000,
               "sample_hz": 48000.0,
@@ -379,8 +379,8 @@
                 "max": 3600000.0
               },
               "simultaneous_sounds": {
-                "min": 0,
-                "max": 1
+                "min": 1,
+                "max": 2
               },
               "playback_duration": {
                 "min": 5000.0,
@@ -396,27 +396,20 @@
               },
               "movement": {
                 "Generative": {
-                  "Ngon": {
-                    "vertices": {
-                      "min": 6,
-                      "max": 6
-                    },
-                    "nth": {
-                      "min": 1,
-                      "max": 3
-                    },
-                    "normalised_dimensions": {
-                      "x": 1.0,
-                      "y": 1.0
-                    },
-                    "radians_offset": {
-                      "min": 1.5707963267948966,
-                      "max": 1.5707963267948966
-                    },
-                    "speed": {
+                  "Agent": {
+                    "max_speed": {
                       "min": 1.0,
                       "max": 5.0
-                    }
+                    },
+                    "max_force": {
+                      "min": 0.04,
+                      "max": 0.06
+                    },
+                    "max_rotation": {
+                      "min": 314.1592653589793,
+                      "max": 314.1592653589793
+                    },
+                    "directional": true
                   }
                 }
               }

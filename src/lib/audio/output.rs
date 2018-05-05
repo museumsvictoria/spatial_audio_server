@@ -3,6 +3,8 @@
 //! The render function is passed to `nannou::App`'s build output stream method and describes how
 //! audio should be rendered to the output.
 
+//extern crate flame;
+
 use audio::{DISTANCE_BLUR, PROXIMITY_LIMIT_2, Sound, Speaker, MAX_CHANNELS};
 use audio::detector::{EnvDetector, Fft, FftDetector, FFT_WINDOW_LEN};
 use audio::{dbap, source, sound, speaker};
@@ -548,6 +550,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
         // For each sound, request `buffer.len()` number of frames and sum them onto the
         // relevant output channels.
         for (&sound_id, sound) in sounds.iter_mut() {
+            //flame::start("544-565");
             // Update the GUI with the position of the sound.
             let source_id = sound.source_id();
             let position = sound.position;
@@ -568,14 +571,16 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 ..
             } = *sound;
 
+            //flame::end("544-565");
             // Don't play or request samples if paused.
             if !sound.shared.is_playing() {
                 continue;
             }
 
+            //flame::start("571-583");
+
             // The number of samples to request from the sound for this buffer.
             let num_samples = buffer.len_frames() * sound.channels;
-
             // Don't play the sound if:
             //
             // - There are no speakers.
@@ -584,15 +589,19 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             let play_condition = speakers.is_empty()
                 || sound.muted
                 || (!soloed.is_empty() && !soloed.contains(&sound.source_id()));
+            //flame::end("571-583");
             if play_condition {
                 // Pull samples from the signal but do not render them.
+                //flame::start("586-591");
                 let samples_yielded = sound.signal.samples().take(num_samples).count();
                 if samples_yielded < num_samples {
                     exhausted_sounds.push(sound_id);
                 }
+                //flame::end("586-591");
                 continue;
             }
 
+            //flame::start("595-622");
             // Clear the unmixed samples, ready to collect the new ones.
             unmixed_samples.clear();
             {
@@ -619,18 +628,24 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     channels.gui_audio_monitor_msg_tx.send(msg).ok();
                 }
             }
+            //flame::end("595-622");
 
             // Mix the audio from the signal onto each of the output channels.
             if speakers.is_empty() {
                 continue;
             }
+            //flame::start("628-635");
 
             // Get the currently stored DBAP speaker gains for this sound.
             let dbap_speaker_gains = dbap_speaker_gains
                 .entry(sound_id)
                 .or_insert_with(FxHashMap::default);
+            
+            //flame::end("628-635");
+            //flame::start("636-721");
 
             for (sound_channel, channel_point) in sound.channel_points().enumerate() {
+                //flame::start("639-649");
                 // Update the dbap_speakers buffer with their distances to this sound channel.
                 //
                 // The indices of each of the 4 `Vec`s below refer to the same speaker.
@@ -645,7 +660,9 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 let dbap_speaker_gains = dbap_speaker_gains
                     .entry(sound_channel)
                     .or_insert_with(FxHashMap::default);
-
+                //flame::end("639-649");
+                
+                //flame::start("651-679");
                 for channel in 0..buffer.channels() {
                     // Find the speaker for this channel.
                     let speaker_id = match channels_to_speakers.get(&channel) {
@@ -700,10 +717,13 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     dbap_speaker_channels.push(channel);
                 }
 
+                //flame::end("651-679");
+
                 // If no speakers were found, skip this channel.
                 if dbap_speakers.is_empty() {
                     continue;
                 }
+                //flame::start("685-719");
 
                 // Update the speaker gains.
                 let gains = dbap::SpeakerGains::new(&dbap_speakers, dbap_rolloff_db);
@@ -737,8 +757,12 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     let speaker_id = channels_to_speakers[&channel];
                     *dbap_speaker_gains.entry(speaker_id).or_insert(current) = current;
                 }
+                //flame::end("685-719");
             }
+            //flame::end("636-721");
         }
+
+
 
         // For each speaker, feed its amplitude into its detectors.
         let n_channels = buffer.channels();
@@ -788,6 +812,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 }
             }
         }
+
 
         // Send the collected analysis to the OSC output thread.
         for (&id, installation) in installations.iter_mut() {
@@ -899,6 +924,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
         // Step the frame count.
         frame_count.fetch_add(buffer.len_frames(), atomic::Ordering::Relaxed);
+        //flame::dump_stdout();
     }
 
     (model, buffer)
