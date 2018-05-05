@@ -3,7 +3,7 @@
 //! The render function is passed to `nannou::App`'s build output stream method and describes how
 //! audio should be rendered to the output.
 
-use audio::{DISTANCE_BLUR, FRAMES_PER_BUFFER, MAX_CHANNELS, MAX_SOUNDS, PROXIMITY_LIMIT_2};
+use audio::{DBAP_LERP_FRAMES, DISTANCE_BLUR, FRAMES_PER_BUFFER, MAX_CHANNELS, MAX_SOUNDS, PROXIMITY_LIMIT_2};
 use audio::{Sound, Speaker};
 use audio::detector::{EnvDetector, Fft, FftDetector, FFT_WINDOW_LEN};
 use audio::{dbap, source, sound, speaker};
@@ -835,8 +835,10 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
         //
         // Iterate over each frame and track its index for gain interpolation.
         let frames_len = buffer.len_frames() as f32;
-        for (frame_i, frame) in buffer.frames_mut().enumerate() {
-            let lerp_amt = frame_i as f32 / frames_len;
+        let buffer_channels = buffer.channels();
+        for (chunk_i, frames_chunk) in buffer.chunks_mut(buffer_channels * DBAP_LERP_FRAMES).enumerate() {
+            let lerp_amt = (chunk_i * DBAP_LERP_FRAMES) as f32 / frames_len;
+            let chunk_frame_i = chunk_i * DBAP_LERP_FRAMES;
 
             // Loop over each sound channel.
             for sound_channel in sound_channels.iter() {
@@ -851,8 +853,6 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
                 // Retrieve the unmixed sample for this channel at this frame.
                 let sound = &sounds_ordered[sound_index];
-                let channel_sample_index = frame_i * sound.channels + sound_channel_index;
-                let channel_sample = sound.unmixed_samples[channel_sample_index];
 
                 // Sum this sound channel onto each of the output channels for the nearby speakers.
                 for speaker_info in &dbap_speaker_infos[speaker_infos_range.clone()] {
@@ -863,7 +863,16 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     } = *speaker_info;
 
                     let speaker_gain = lerp(previous_gain, current_gain, lerp_amt);
-                    frame[output_channel] += channel_sample * speaker_gain * sound.volume;
+
+                    // Use this speaker gain for the whole chunk.
+                    let mut chunk_index = output_channel;
+                    let mut channel_sample_index = chunk_frame_i * sound.channels + sound_channel_index;
+                    for _ in 0..DBAP_LERP_FRAMES {
+                        let channel_sample = sound.unmixed_samples[channel_sample_index];
+                        frames_chunk[chunk_index] += channel_sample * speaker_gain * sound.volume;
+                        chunk_index += buffer_channels;
+                        channel_sample_index += sound.channels;
+                    }
                 }
             }
         }

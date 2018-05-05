@@ -51,3 +51,6 @@ pub const DEFAULT_DBAP_ROLLOFF_DB: f64 = 4.0;
 
 /// The "blurring" amount applied to the distance function used for calculating DBAP.
 pub const DISTANCE_BLUR: f64 = 0.01;
+
+/// The number of frames over which DBAP gains should be interpolated.
+pub const DBAP_LERP_FRAMES: usize = 8;
