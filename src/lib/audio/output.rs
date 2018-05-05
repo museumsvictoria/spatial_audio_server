@@ -521,15 +521,11 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 let play_condition = model.speakers.is_empty()
                     || sound.muted
                     || (!model.soloed.is_empty() && !model.soloed.contains(&sound.source_id()));
-                //flame::end("571-583");
                 if play_condition {
-                    // Pull samples from the signal but do not render them.
-                    //flame::start("586-591");
                     let samples_yielded = sound.signal.samples().take(num_samples).count();
                     if samples_yielded < num_samples {
                         model.exhausted_sounds.push(sound_id);
                     }
-                    //flame::end("586-591");
                     continue;
                 }
                 let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, update);
@@ -550,15 +546,15 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 if model.speakers.is_empty() {
                     continue;
                 }
-                let mut sam_it = model.unmixed_samples.iter();
+                let mut s_index = 0;
                 for f in buffer.frames_mut() {
+                    let ns = model.unmixed_samples[s_index];
                     for i in 0..num_c {
                         if let Some(s) = f.get_mut(i){
-                            if let Some(ns) = sam_it.next(){
-                                *s = *ns;
-                            }
+                            *s = ns;
                         }
                     }
+                    s_index += sound.channels;
                 }
             }
             for sound_id in model.exhausted_sounds.drain(..) {
