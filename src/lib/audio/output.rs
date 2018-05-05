@@ -247,7 +247,7 @@ impl Model {
         // A buffer for collecting frames from `Sound`s that have not yet been mixed and written.
         let unmixed_samples = vec![0.0; 1024];
 
-        let all_samples = vec![vec![0.0; 1024]];
+        let all_samples = vec![vec![0.0; 1024]; 100];
 
         // A buffer for collecting exhausted `Sound`s.
         let exhausted_sounds = Vec::with_capacity(128);
@@ -537,7 +537,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 model.channels.gui_audio_monitor_msg_tx.send(msg).ok();
                 let num_c = buffer.channels();
                 let mut s_c = 0;
-                model.all_samples[sam_i] = model.unmixed_samples;
+                model.all_samples[sam_i] = model.unmixed_samples.clone();
                 for (i, sample) in sound.signal.samples().take(num_samples).enumerate() {
                     model.all_samples[sam_i].push(sample);
                     s_c += 1;
@@ -554,16 +554,16 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 }
             }
             let num_c = buffer.channels();
-            let mut s_index = 0;
-            let amount = 2048;
             for f in buffer.frames_mut() {
-                for nas in model.all_samples {
-                    let ns = model.unmixed_samples[s_index];
+                for nas in model.all_samples.iter() {
+                    let mut s_index = 0;
+                    let ns = nas[s_index];
                     for i in 0..num_c {
                         let mut count = 0;
                         if let Some(s) = f.get_mut(i){
                             *s = ns;
                         }
+                        s_index +=2
 
                     }
                 
