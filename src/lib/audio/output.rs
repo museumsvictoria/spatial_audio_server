@@ -76,8 +76,6 @@ struct SoundOrdered {
     unmixed_samples: Vec<f32>,
     /// The number of channels in the sound.
     channels: usize,
-    /// The mixing volume for the sound.
-    volume: f32,
 }
 
 /// Information about a single channel within a single sound.
@@ -280,7 +278,6 @@ impl Model {
                 id: sound::Id::INITIAL,
                 unmixed_samples: vec![0.0; FRAMES_PER_BUFFER * 2],
                 channels: 0,
-                volume: 0.0,
             })
             .collect();
 
@@ -632,7 +629,6 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
             // Update the ordered sound.
             ordered_sound.channels = sound.channels;
-            ordered_sound.volume = sound.volume;
 
             // Update the GUI with the position of the sound.
             let source_id = sound.source_id();
@@ -683,6 +679,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             {
                 let mut samples_written = 0;
                 for sample in sound.signal.samples().take(num_samples) {
+                    let sample = sample * sound.volume;
                     ordered_sound.unmixed_samples.push(sample);
                     channel_detectors[samples_written % sound.channels].next(sample);
                     samples_written += 1;
@@ -863,7 +860,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     } = *speaker_info;
 
                     let speaker_gain = lerp(previous_gain, current_gain, lerp_amt);
-                    frame[output_channel] += channel_sample * speaker_gain * sound.volume;
+                    frame[output_channel] += channel_sample * speaker_gain;
                 }
             }
         }
