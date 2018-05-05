@@ -390,7 +390,8 @@ impl Model {
             //buffer_tx.send(buffer).ok();
             match buffer_tx.try_send(buffer) {
                 Ok(_) => (),
-                Err(e) => eprintln!("OVER_RUN: error sending buffer {:?}", e),
+                Err(cbc::TrySendError::Disconnected(_))=> (), 
+                Err(e)=> eprintln!("OVER_RUN: error sending buffer {:?}", e),
             }
         }
 

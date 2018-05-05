@@ -31,7 +31,7 @@ pub const MAX_CHANNELS: usize = 2;
 pub const SAMPLE_RATE: f64 = 48_000.0;
 
 /// The desired number of frames requested at a time.
-pub const FRAMES_PER_BUFFER: usize = 2048;
+pub const FRAMES_PER_BUFFER: usize = 512;
 
 /// The initial, default master volume.
 pub const DEFAULT_MASTER_VOLUME: f32 = 0.5;
