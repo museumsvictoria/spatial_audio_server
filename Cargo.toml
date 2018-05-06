@@ -3,6 +3,9 @@ name = "audio_server"
 version = "0.1.0"
 authors = ["mitchmindtree <mitchell.nordine@gmail.com>"]
 
+[profile.release]
+debug = true
+
 [[bin]]
 name = "audio_server"
 path = "src/bin/main.rs"

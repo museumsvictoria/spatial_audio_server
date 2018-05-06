@@ -692,11 +692,19 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             // Collect the samples from the `Sound`'s `Signal`.
             {
                 let mut samples_written = 0;
-                for sample in sound.signal.samples().take(num_samples) {
-                    let sample = sample * sound.volume;
-                    ordered_sound.unmixed_samples.push(sample);
-                    channel_detectors[samples_written % sound.channels].next(sample);
-                    samples_written += 1;
+                if !cpu_saving_enabled {
+                    for sample in sound.signal.samples().take(num_samples) {
+                        let sample = sample * sound.volume;
+                        ordered_sound.unmixed_samples.push(sample);
+                        channel_detectors[samples_written % sound.channels].next(sample);
+                        samples_written += 1;
+                    }
+                }else{
+                    for sample in sound.signal.samples().take(num_samples) {
+                        let sample = sample * sound.volume;
+                        ordered_sound.unmixed_samples.push(sample);
+                        samples_written += 1;
+                    }
                 }
 
                 // If we didn't write the expected number of samples, the sound has been exhausted.
@@ -706,12 +714,14 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     ordered_sound.unmixed_samples.extend(remaining_silence);
                 }
 
-                // Send the latest RMS and peak for each channel to the GUI for monitoring.
-                for (index, env_detector) in channel_detectors.iter().enumerate() {
-                    let (rms, peak) = env_detector.current();
-                    let sound_msg = gui::ActiveSoundMessage::UpdateChannel { index, rms, peak };
-                    let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
-                    channels.gui_audio_monitor_msg_tx.send(msg).ok();
+                if !cpu_saving_enabled {
+                    // Send the latest RMS and peak for each channel to the GUI for monitoring.
+                    for (index, env_detector) in channel_detectors.iter().enumerate() {
+                        let (rms, peak) = env_detector.current();
+                        let sound_msg = gui::ActiveSoundMessage::UpdateChannel { index, rms, peak };
+                        let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
+                        channels.gui_audio_monitor_msg_tx.send(msg).ok();
+                    }
                 }
             }
 
