@@ -279,6 +279,7 @@ impl Model {
         audio_input_channels: usize,
         audio_output_channels: usize,
     ) -> Self {
+
         // Load a Nannou UI.
         let mut ui = app.new_ui(window_id)
             .with_theme(theme::construct())
@@ -333,6 +334,12 @@ impl Model {
 
         // Whether or not CPU saving mode is enabled.
         let cpu_saving_mode = config.cpu_saving_mode;
+
+        // Notify audio output thread.
+        channels
+            .audio_output
+            .send(move |audio| audio.cpu_saving_enabled = cpu_saving_mode)
+            .expect("failed to update cpu saving mode on audio output thread");
 
         Model {
             ui,
@@ -554,6 +561,13 @@ impl Model {
                     ui::event::Button::Keyboard(ui::input::Key::Space) => {
                         if press.modifiers.contains(ui::input::keyboard::ModifierKey::CTRL) {
                             *cpu_saving_mode = !*cpu_saving_mode;
+
+                            // Notify audio output thread.
+                            let cpu_saving_mode = *cpu_saving_mode;
+                            channels
+                                .audio_output
+                                .send(move |audio| audio.cpu_saving_enabled = cpu_saving_mode)
+                                .expect("failed to update cpu saving mode on audio output thread");
                         }
                     }
 

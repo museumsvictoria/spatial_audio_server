@@ -179,6 +179,15 @@ pub struct Model {
     /// this is used for synchronising `continuous` wavs to the audio timeline with sample-perfect
     /// accuracy.
     pub frame_count: Arc<AtomicUsize>,
+    /// Indicates whether or not CPU saving mode is currently enabled.
+    ///
+    /// If so, envelope detection will be skipped as currently its only role is for GUI feedback
+    /// and it is showing up as the primary bottleneck on the audio output thread.
+    ///
+    /// NOTE: If using this server in the future and you actually want to use peak and RMS values
+    /// via OSC, remove this flag so that env detection is performed despite whether or not cpu
+    /// saving mode is enabled.
+    pub cpu_saving_enabled: bool,
     /// the master volume, controlled via the gui applied at the very end of processing.
     pub master_volume: f32,
     /// the dbap rolloff decibel amount, used to attenuate speaker gains over distances.
@@ -318,6 +327,9 @@ impl Model {
         // Initialise the rolloff to the default value.
         let dbap_rolloff_db = super::DEFAULT_DBAP_ROLLOFF_DB;
 
+        // By default, cpu saving mode is not enabled.
+        let cpu_saving_enabled = false;
+
         let channels = Channels {
             gui_audio_monitor_msg_tx,
             osc_output_msg_tx,
@@ -327,6 +339,7 @@ impl Model {
 
         Model {
             frame_count,
+            cpu_saving_enabled,
             master_volume,
             dbap_rolloff_db,
             soloed,
@@ -557,6 +570,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
     {
         let Model {
             master_volume,
+            cpu_saving_enabled,
             dbap_rolloff_db,
             ref soloed,
             ref mut frame_count,
@@ -877,19 +891,26 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 ..
             } = *active;
 
-            // Update the envelope detector.
-            for frame in buffer.frames() {
-                let sample = frame[channel_i];
-                env_detector.next(sample);
+            // Peak and RMS are currently only used for GUI. Only process them if the GUI is
+            // active, i.e. we're not in CPU saving mode.
+            let (mut rms, mut peak) = (0.0, 0.0);
+            if !cpu_saving_enabled {
+                // Update the envelope detector.
+                for frame in buffer.frames() {
+                    let sample = frame[channel_i];
+                    env_detector.next(sample);
+                }
+
+                // The current env detector states.
+                let (current_rms, current_peak) = env_detector.current();
+                rms = current_rms;
+                peak = current_peak;
+
+                // Send the detector state for the speaker to the GUI.
+                let speaker_msg = gui::SpeakerMessage::Update { rms, peak };
+                let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
+                channels.gui_audio_monitor_msg_tx.send(msg).ok();
             }
-
-            // The current env and fft detector states.
-            let (rms, peak) = env_detector.current();
-
-            // Send the detector state for the speaker to the GUI.
-            let speaker_msg = gui::SpeakerMessage::Update { rms, peak };
-            let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-            channels.gui_audio_monitor_msg_tx.send(msg).ok();
 
             // Sum raw audio data for FFTs.
             for id in &active.speaker.installations {
