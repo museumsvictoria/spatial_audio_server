@@ -875,8 +875,15 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
         }
 
         // SEND FFT HERE
-        let fft_msg = FFTMessage{ buffer: buffer.clone(), speakers: speakers.clone() };
-        channels.fft_tx.send(fft_msg);
+        match channels.fft_buff_rx.try_recv() {
+            Ok(fft_buff) => {
+                fft_buff.clear();
+                fft_buff.extend(buffer.frames().cloned());
+                let fft_msg = FFTMessage{ buffer: fft_buff, speakers: speakers.clone() };
+                channels.fft_tx.send(fft_msg);
+            }
+            Err() => (),
+        }
         
         // Remove all sounds that have been exhausted.
         for sound_id in exhausted_sounds.drain(..) {
