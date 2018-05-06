@@ -1,8 +1,10 @@
 //! Items related to the realtime audio input sound source kind.
 
 use crossbeam::sync::SegQueue;
+use std::mem;
 use std::ops;
-use std::sync::Arc;
+use std::sync::{atomic, Arc};
+use std::sync::atomic::AtomicBool;
 use time_calc::{Ms, Samples};
 
 pub type BufferTx = Arc<SegQueue<Vec<f32>>>;
@@ -27,9 +29,11 @@ pub struct Realtime {
 pub struct Signal {
     pub buffer_rx: BufferRx,
     pub buffer_tx: BufferTx,
-    pub current: Vec<f32>,
+    pub sample_index: usize,
+    pub current_buffer: Vec<f32>,
     pub channels: usize,
     pub remaining_samples: Option<usize>,
+    pub is_closed: Arc<AtomicBool>,
 }
 
 impl Signal {
@@ -49,11 +53,36 @@ impl Signal {
 impl Iterator for Signal {
     type Item = f32;
     fn next(&mut self) -> Option<Self::Item> {
-        self.sample_rx
-            .try_pop()
-            .map(|sample| {
-                self.remaining_samples = self.remaining_samples.map(|n| n.saturating_sub(1));
-                sample
-            })
+        let Signal {
+            ref buffer_rx,
+            ref buffer_tx,
+            ref mut sample_index,
+            ref mut current_buffer,
+            ref mut remaining_samples,
+            ..
+        } = *self;
+
+        loop {
+            if *sample_index < current_buffer.len() {
+                let sample = current_buffer[*sample_index];
+                *remaining_samples = remaining_samples.map(|n| n.saturating_sub(1));
+                *sample_index += 1;
+                return Some(sample);
+            }
+            match buffer_rx.try_pop() {
+                None => return None,
+                Some(buffer) => {
+                    let used_buffer = mem::replace(current_buffer, buffer);
+                    buffer_tx.push(used_buffer);
+                    *sample_index = 0;
+                },
+            }
+        }
+    }
+}
+
+impl Drop for Signal {
+    fn drop(&mut self) {
+        self.is_closed.store(true, atomic::Ordering::Relaxed);
     }
 }
