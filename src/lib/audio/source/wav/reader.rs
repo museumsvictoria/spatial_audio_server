@@ -2,8 +2,10 @@
 //! audio thread.
 
 use audio::{self, sound};
+use crossbeam::sync::MsQueue;
 use fxhash::FxHashMap;
 use hound::{self, SampleFormat};
+use num_cpus;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::BufReader;
@@ -14,6 +16,7 @@ use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use time_calc::Samples;
+use threadpool::ThreadPool;
 
 /// The number of sample buffers that the `reader` thread prepares ahead of time for a single
 /// sound.
@@ -33,6 +36,13 @@ pub type BufferTx = mpsc::Sender<Buffer>;
 
 /// Receives buffers sent from the wav reader thread. Used by the `ThreadedSamplesStream` type.
 pub type BufferRx = mpsc::Receiver<Buffer>;
+
+/// The mpmc queue used for distributing `Play` messages across the child threads.
+type ChildMessageQueue = MsQueue<ChildMessage>;
+
+/// A unique identifier associated with a child thread.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+struct ChildId(usize);
 
 /// A handle to the WAV reading thread.
 #[derive(Clone)]
@@ -54,10 +64,12 @@ struct Model {
 }
 
 /// The type used to store sounds within the model.
-type Sounds = FxHashMap<sound::Id, Sound>;
+type Sounds = FxHashMap<sound::Id, SoundState>;
 
 /// State related to a single wav sound.
-struct Sound {
+///
+/// This state is sent back and forth between the parent and child threads as necessary.
+pub struct Sound {
     /// A reader for reading samples from the WAV file.
     reader: WavReader,
     /// The channel used for sending buffers to the `ThreadedSampleStream` on the audio thread.
@@ -72,6 +84,14 @@ struct Sound {
     looped: bool,
 }
 
+/// The state of the sound as tracked by the `Model`.
+enum SoundState {
+    /// The sound is currently being processed by a child thread.
+    Processing,
+    /// The sound is currently stored within the parent, waiting for new `NextBuffer`  messages.
+    Waiting(Sound),
+}
+
 /// A buffer that has been read from a WAV file ready to be sent to the `SamplesStream` for reading
 /// on the audio thread.
 #[derive(Debug)]
@@ -81,16 +101,28 @@ struct PreparedBuffer {
     samples_range: ops::Range<usize>,
 }
 
+/// Messages that may be received by a child thread.
+enum ChildMessage {
+    /// Play the given sound and send the resulting wav reader and sound to the parent thread.
+    Play(sound::Id, Play),
+    /// Process the next buffer and send the result back to the parent thread.
+    NextBuffer(sound::Id, Sound, Vec<f32>),
+}
+
 /// Messages received by the wav reader thread.
 pub enum Message {
     /// When received, the reader thread will add an entry for this sound into the map and prepare
     /// the first `NUM_BUFFERS` buffers by reading samples from the given `WavReader`.
     Play(sound::Id, Play),
-    /// Indicates that the sound associated with the given Id has ended.
-    End(sound::Id),
+    /// Received when one of the child threads has finished processing a `Play` command.
+    PlayComplete(sound::Id, Sound),
     /// When received, the reader thread will re-use the given buffer to read in the next
     /// `FRAMES_PER_BUFFER` * `channels` worth of samples.
-    ProcessedBuffer(sound::Id, Vec<f32>),
+    NextBuffer(sound::Id, Vec<f32>),
+    /// Received when one of the child threads has finished processing a `NextBuffer` command.
+    NextBufferComplete(sound::Id, Sound),
+    /// Indicates that the sound associated with the given Id has ended.
+    End(sound::Id),
     /// Break from the loop as the application is closing.
     Exit,
 }
@@ -189,7 +221,7 @@ impl Drop for Buffer {
         // Remove the buffer from the `samples` field, replacing it with a non-allocated, empty
         // buffer.
         let read_buffer = mem::replace(&mut self.samples, Vec::new());
-        let msg = Message::ProcessedBuffer(sound_id, read_buffer);
+        let msg = Message::NextBuffer(sound_id, read_buffer);
         self.reader_tx.send(msg).ok();
     }
 }
@@ -292,98 +324,86 @@ impl Model {
             tx,
         }
     }
+}
 
-    /// Play the given sound.
-    fn play_sound(&mut self, sound_id: sound::Id, play: Play) {
-        let Play { mut reader, buffer_tx, start_frame, looped } = play;
+/// Process the given `Play` command and return the resulting `Sound`.
+fn play_sound(play: Play) -> Sound {
+    let Play { mut reader, buffer_tx, start_frame, looped } = play;
 
-        // Seek to the given `start_frame` within the file.
-        //
-        // The given `frame` is the time measured as the number of samples (independent of the number
-        // of channels) since the beginning of the audio data.
-        //
-        // If `frame` is larger than the number of samples in the file the remaining duration will be
-        // wrapped around to the beginning.
-        let duration_frames = reader.duration() as u64;
-        let frames = start_frame % duration_frames;
-        reader.seek(frames as u32)
-            .expect("failed to seek to start frame in wav source");
+    // Seek to the given `start_frame` within the file.
+    //
+    // The given `frame` is the time measured as the number of samples (independent of the number
+    // of channels) since the beginning of the audio data.
+    //
+    // If `frame` is larger than the number of samples in the file the remaining duration will be
+    // wrapped around to the beginning.
+    let duration_frames = reader.duration() as u64;
+    let frames = start_frame % duration_frames;
+    reader.seek(frames as u32)
+        .expect("failed to seek to start frame in wav source");
 
-        // Prepare the buffers for the sound.
-        let wav_len_samples = reader.len() as usize;
-        let prepared_buffers = (0..NUM_BUFFERS)
-            .map(|_| {
-                let mut samples = vec![];
-                let start_sample = wav_len_samples - super::samples::remaining(&mut reader);
-                fill_buffer(&mut reader, &mut samples, looped)
-                    .expect("failed to fill buffer");
-                let end_sample = wav_len_samples - super::samples::remaining(&mut reader);
-                let samples_range = start_sample..end_sample;
-                PreparedBuffer { samples, samples_range }
-            })
-            .collect();
+    // Prepare the buffers for the sound.
+    let wav_len_samples = reader.len() as usize;
+    let prepared_buffers = (0..NUM_BUFFERS)
+        .map(|_| {
+            let mut samples = vec![];
+            let start_sample = wav_len_samples - super::samples::remaining(&mut reader);
+            fill_buffer(&mut reader, &mut samples, looped)
+                .expect("failed to fill buffer");
+            let end_sample = wav_len_samples - super::samples::remaining(&mut reader);
+            let samples_range = start_sample..end_sample;
+            PreparedBuffer { samples, samples_range }
+        })
+        .collect();
 
-        let sound = Sound {
-            reader,
-            buffer_tx,
-            prepared_buffers,
-            looped,
-        };
-        self.sounds.insert(sound_id, sound);
+    Sound {
+        reader,
+        buffer_tx,
+        prepared_buffers,
+        looped,
+    }
+}
 
-        // Send off the initial buffers.
-        for _ in 0..NUM_BUFFERS {
-            self.next_buffer(sound_id, vec![]).expect("failed to send initial buffer");
-        }
+/// Sends the next queued buffer to the `ThreadedSamplesStream` associated with the given
+/// `sound_id`.
+///
+/// Re-uses and prepares the given processed buffer by reading samples from the WAV file
+/// associated with the given `sound::Id`, using these samples to fill the buffer and enqueue
+/// it.
+fn next_buffer(
+    sound_id: sound::Id,
+    sound: &mut Sound,
+    mut samples: Vec<f32>,
+    parent_tx: &Tx,
+) -> Result<(), hound::Error> {
+    let Sound {
+        ref mut reader,
+        ref mut prepared_buffers,
+        ref buffer_tx,
+        looped,
+    } = *sound;
+
+    // The total number of samples in the WAV, tracked for `BufferInfo`.
+    let wav_len_samples = reader.len() as usize;
+
+    // First, send the next queued buffer over the channel.
+    if let Some(PreparedBuffer { samples, samples_range }) = prepared_buffers.pop_front() {
+        let reader_tx = parent_tx.clone();
+        let info = BufferInfo { samples_range };
+        let buffer = Buffer { samples, sound_id, reader_tx, info };
+        // The output thread may have exited before us so ignore closed channel error.
+        buffer_tx.send(buffer).ok();
     }
 
-    /// Sends the next queued buffer to the `ThreadedSamplesStream` associated with the given
-    /// `sound_id`.
-    ///
-    /// Re-uses and prepares the given processed buffer by reading samples from the WAV file
-    /// associated with the given `sound::Id`, using these samples to fill the buffer and enqueue
-    /// it.
-    fn next_buffer(&mut self, sound_id: sound::Id, mut samples: Vec<f32>) -> Result<(), hound::Error> {
-        let Model {
-            ref mut sounds,
-            ref tx,
-        } = *self;
+    // Fill the given buffer using the reader and enqueue it.
+    let start = wav_len_samples - super::samples::remaining(reader);
+    fill_buffer(reader, &mut samples, looped)?;
+    let end = wav_len_samples - super::samples::remaining(reader);
+    let samples_range = start..end;
+    let prepared_buffer = PreparedBuffer { samples, samples_range };
+    prepared_buffers.push_back(prepared_buffer);
 
-        // Retrieve the sound from the map.
-        let sound = match sounds.get_mut(&sound_id) {
-            None => return Ok(()),
-            Some(sound) => sound,
-        };
-
-        let Sound {
-            ref mut reader,
-            ref mut prepared_buffers,
-            ref buffer_tx,
-            looped,
-        } = *sound;
-
-        // The total number of samples in the WAV, tracked for `BufferInfo`.
-        let wav_len_samples = reader.len() as usize;
-
-        // First, send the next queued buffer over the channel.
-        if let Some(PreparedBuffer { samples, samples_range }) = prepared_buffers.pop_front() {
-            let reader_tx = tx.clone();
-            let info = BufferInfo { samples_range };
-            let buffer = Buffer { samples, sound_id, reader_tx, info };
-            // The output thread may have exited before us so ignore closed channel error.
-            buffer_tx.send(buffer).ok();
-        }
-
-        // Fill the given buffer using the reader and enqueue it.
-        let start = wav_len_samples - super::samples::remaining(reader);
-        fill_buffer(reader, &mut samples, looped)?;
-        let end = wav_len_samples - super::samples::remaining(reader);
-        let samples_range = start..end;
-        let prepared_buffer = PreparedBuffer { samples, samples_range };
-        prepared_buffers.push_back(prepared_buffer);
-
-        Ok(())
-    }
+    Ok(())
 }
 
 /// Fill the given `samples` buffer with `FRAMES_PER_BUFFER * channels` samples read from the
@@ -477,21 +497,115 @@ pub fn spawn() -> Handle {
     Handle { tx, thread }
 }
 
+/// Run the parent wav reader loop.
+///
+/// The parent maintains all state while the children perform all significant processing.
 fn run(tx: Tx, rx: Rx) {
+    // Create a threadpool for processing `Play` messages.
+    let children = num_cpus::get();
+    let threadpool = ThreadPool::with_name("wav_reader_children".into(), children);
+
+    // The queue used for distributing sounds for processing across threads.
+    let child_message_queue = Arc::new(ChildMessageQueue::new());
+    for _ in 0..children {
+        let queue = child_message_queue.clone();
+        let parent_tx = tx.clone();
+        threadpool.execute(move || run_child(queue, parent_tx));
+    }
+
+    // Block on receiving messages.
     let mut model = Model::new(tx);
+
+    // A small macro to simplify the process of getting a sound from the model's sound map or
+    // continuing on to the message loop if the sound has since been removed.
+    macro_rules! get_mut_sound_or_continue {
+        ($sound_id:expr) => {
+            match model.sounds.get_mut(&$sound_id) {
+                None => continue,
+                Some(sound) => sound,
+            }
+        };
+    }
+
     for msg in rx {
         match msg {
-            Message::Play(id, play) => {
-                model.play_sound(id, play);
+            // Enqueue a play message for one of the child threads to process.
+            Message::Play(sound_id, play) => {
+                model.sounds.insert(sound_id, SoundState::Processing);
+                let child_msg = ChildMessage::Play(sound_id, play);
+                child_message_queue.push(child_msg);
             },
-            Message::End(id) => {
-                mem::drop(model.sounds.remove(&id));
+
+            // Insert the `Play`ed sound into the map so that we may track its state.
+            Message::PlayComplete(sound_id, sound) => {
+                let state = get_mut_sound_or_continue!(sound_id);
+                // Update the sound state.
+                *state = SoundState::Waiting(sound);
+                // Send off the initial buffers to be read.
+                for _ in 0..NUM_BUFFERS {
+                    let msg = Message::NextBuffer(sound_id, vec![]);
+                    model.tx.send(msg).expect("failed to queue buffer for processing");
+                }
             },
-            Message::ProcessedBuffer(id, buffer) => {
-                model.next_buffer(id, buffer)
+
+            // Queue the sound ready for one of the children to process the next buffer.
+            Message::NextBuffer(sound_id, buffer) => {
+                let state = get_mut_sound_or_continue!(sound_id);
+                match mem::replace(state, SoundState::Processing) {
+                    // If the sound is currently processing, re-queue this message and try again
+                    // next time.
+                    SoundState::Processing => {
+                        let msg = Message::NextBuffer(sound_id, buffer);
+                        model.tx.send(msg).expect("failed to re-queue buffer for processing");
+                    },
+                    // If the sound was waiting, send it to a child thread for processing.
+                    SoundState::Waiting(sound) => {
+                        let child_msg = ChildMessage::NextBuffer(sound_id, sound, buffer);
+                        child_message_queue.push(child_msg);
+                    },
+                }
+            },
+
+            // Insert the sound back into the map ready for processing.
+            Message::NextBufferComplete(sound_id, sound) => {
+                let state = get_mut_sound_or_continue!(sound_id);
+                *state = SoundState::Waiting(sound);
+            },
+
+            // End the given sound by removing it from the map, dropping the reader and in turn
+            // closing the underlying WAV file handle.
+            Message::End(sound_id) => {
+                mem::drop(model.sounds.remove(&sound_id));
+            },
+
+            // Break from waiting on messages as the program has exited.
+            Message::Exit => {
+                break;
+            },
+        }
+    }
+}
+
+/// Run the child thread, receiving child messages as quickly as possible and sending them back to
+/// the parent thread in their processed form.
+fn run_child(child_msg_queue: Arc<ChildMessageQueue>, parent_tx: Tx) {
+    loop {
+        let msg = child_msg_queue.pop();
+        match msg {
+            // Play the given sound and return the resulting `Sound` to the parent.
+            ChildMessage::Play(sound_id, play) => {
+                let sound = play_sound(play);
+                let msg = Message::PlayComplete(sound_id, sound);
+                parent_tx.send(msg).ok();
+            },
+
+            // Process the next buffer and return the resulting `Sound` to the parent thread.
+            ChildMessage::NextBuffer(sound_id, mut sound, buffer) => {
+                next_buffer(sound_id, &mut sound, buffer, &parent_tx)
                     .expect("failed to process next buffer");
+                let msg = Message::NextBufferComplete(sound_id, sound);
+                parent_tx.send(msg).ok();
             },
-            Message::Exit => break,
         }
     }
 }

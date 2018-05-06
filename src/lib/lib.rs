@@ -5,6 +5,7 @@
 extern crate conrod;
 #[macro_use]
 extern crate conrod_derive;
+extern crate crossbeam;
 #[macro_use]
 extern crate custom_derive;
 extern crate fxhash;
@@ -12,6 +13,7 @@ extern crate hound; // wav loading
 extern crate nannou;
 #[macro_use]
 extern crate newtype_derive;
+extern crate num_cpus;
 extern crate pitch_calc;
 extern crate rustfft;
 extern crate serde; // serialization
@@ -20,6 +22,7 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate slug;
 extern crate time_calc;
+extern crate threadpool;
 extern crate utils as mindtree_utils;
 extern crate walkdir;
 

@@ -170,14 +170,18 @@
           },
           "role": {
             "Soundscape": {
-              "installations": [],
-              "groups": [],
+              "installations": [
+                5
+              ],
+              "groups": [
+                1
+              ],
               "occurrence_rate": {
                 "min": 500.0,
                 "max": 3600000.0
               },
               "simultaneous_sounds": {
-                "min": 0,
+                "min": 1,
                 "max": 1
               },
               "playback_duration": {
@@ -379,8 +383,8 @@
                 "max": 3600000.0
               },
               "simultaneous_sounds": {
-                "min": 0,
-                "max": 1
+                "min": 1,
+                "max": 2
               },
               "playback_duration": {
                 "min": 5000.0,
