@@ -2,12 +2,12 @@
 //!
 //! The input stream has a number of `Source`s that read from one or more of the stream's channels.
 
-use audio::MAX_CHANNELS;
 use audio::source;
 use fxhash::FxHashMap;
 use nannou;
 use nannou::audio::Buffer;
-use std::sync::{mpsc, Arc};
+use std::cmp;
+use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 
 /// Simplified type alias for the nannou audio input stream used by the audio server.
@@ -17,8 +17,6 @@ pub type Stream = nannou::audio::Stream<Model>;
 pub struct Model {
     // All sources that currently exist.
     pub sources: FxHashMap<source::Id, source::Realtime>,
-    // A map from channels to the sources that request audio from them them.
-    channel_targets: FxHashMap<usize, Vec<source::Id>>,
     // The currently active sounds using the realtime source with the given source ID.
     pub active_sounds: FxHashMap<source::Id, Vec<ActiveSound>>,
 }
@@ -38,10 +36,15 @@ pub enum Duration {
 pub struct ActiveSound {
     /// The number of frames left to play of this source before it should end.
     pub duration: Duration,
-    /// Feeds samples from the input buffer to the associated `Sound`'s `Box<Iterator<Item=f32>>`.
-    pub sample_tx: mpsc::SyncSender<f32>,
     /// An indicator from the `Sound` on whether the sound is currently playing or not.
     pub is_capturing: Arc<AtomicBool>,
+    /// Whether or not the channel has been closed due to the Signal end dropping.
+    pub is_closed: Arc<AtomicBool>,
+    /// Feeds buffers of samples from the input buffer to the associated `Sound`'s
+    /// `Box<Iterator<Item=f32>>`.
+    pub buffer_tx: source::realtime::BufferTx,
+    /// Receives used buffers read for re-use.
+    pub buffer_rx: source::realtime::BufferRx,
 }
 
 impl Model {
@@ -51,13 +54,9 @@ impl Model {
     /// avoid unexpected dynamic allocation within on the audio thread.
     pub fn new() -> Self {
         let sources = Default::default();
-        let channel_targets = (0..MAX_CHANNELS)
-            .map(|i| (i, Vec::with_capacity(1024)))
-            .collect();
         let active_sounds = Default::default();
         Model {
             sources,
-            channel_targets,
             active_sounds,
         }
     }
@@ -76,57 +75,63 @@ pub fn capture(mut model: Model, buffer: &Buffer) -> Model {
     {
         let Model {
             ref sources,
-            ref mut channel_targets,
             ref mut active_sounds,
         } = model;
 
-        assert!(channel_targets.len() <= buffer.len());
-
-        // First, update the channel targets based on the current sources.
-        for sources in channel_targets.values_mut() {
-            sources.clear();
-        }
-        for (&id, source) in sources {
-            for ch in source.channels.clone() {
-                if let Some(targets) = channel_targets.get_mut(&ch) {
-                    targets.push(id);
-                }
-            }
+        // Remove any sounds that have been closed.
+        for sounds in active_sounds.values_mut() {
+            sounds.retain(|s| !s.is_closed.load(atomic::Ordering::Relaxed));
         }
 
-        // Convert the channel_targets and active_sounds maps to a single `Vec<Vec<[ActiveSound]>>`
-        // where the outer `Vec` is indexed by the channel number for all active sounds on that
-        // channel.
-        {
-            let n_channels = buffer.channels();
-            // TODO: Re-use a buffer for this somehow... The model can't own this buffer due to
-            // ownership issues. Maybe use `rental` crate to bypass issue?
-            let mut active_sounds_per_channel: Vec<_> = (0..n_channels).map(|_| vec![]).collect();
-            for (&ch, sources) in channel_targets.iter() {
-                for source in sources {
-                    if let Some(sounds) = active_sounds.get(source) {
-                        for sound in sounds.iter() {
-                            if sound.is_capturing.load(atomic::Ordering::Relaxed) {
-                                active_sounds_per_channel[ch].push(sound);
-                            }
-                        }
-                    }
-                }
-            }
+        // Send every sample buffered in chronological order to the active sounds.
+        for (source_id, sounds) in active_sounds.iter() {
+            // Retrieve the realtime data for this source.
+            let realtime = match sources.get(source_id) {
+                None => continue,
+                Some(rt) => rt,
+            };
 
-            // Send every sample in chronological order to the active sounds.
-            for (i, frame) in buffer.frames().enumerate() {
-                for (ch, &sample) in frame.iter().enumerate() {
-                    for sound in &active_sounds_per_channel[ch] {
-                        let send_sample = match sound.duration {
-                            Duration::Frames(frames) => i < frames,
-                            Duration::Infinite => true,
-                        };
-                        if send_sample {
-                            sound.sample_tx.try_send(sample).ok();
-                        }
-                    }
+            for sound in sounds {
+                if !sound.is_capturing.load(atomic::Ordering::Relaxed) {
+                    continue;
                 }
+
+                // Determine the number of frames to take.
+                let frames_to_take = match sound.duration {
+                    Duration::Frames(frames) => cmp::min(frames, buffer.len_frames()),
+                    Duration::Infinite => buffer.len_frames(),
+                };
+
+                // If there are no frames to take for this source, skip it.
+                if frames_to_take == 0 {
+                    continue;
+                }
+
+                // Retrieve the empty buffer to use for sending samples.
+                let mut samples = match sound.buffer_rx.try_pop() {
+                    // This branch should never be hit but is here just in case.
+                    None => {
+                        let samples_len = frames_to_take * realtime.channels.len();
+                        Vec::with_capacity(samples_len)
+                    },
+                    // There should always be a buffer waiting in this channel.
+                    Some(mut samples) => {
+                        samples.clear();
+                        samples
+                    },
+                };
+
+                // Get the channel range and ensure it is no greater than the buffer len.
+                let start = cmp::min(realtime.channels.start, buffer.channels());
+                let end = cmp::min(realtime.channels.end, buffer.channels());
+
+                // Read the necessary samples from the buffer.
+                for frame in buffer.frames().take(frames_to_take) {
+                    samples.extend(frame[start..end].iter().cloned());
+                }
+
+                // Send the buffer to the realtime signal.
+                sound.buffer_tx.push(samples);
             }
         }
 

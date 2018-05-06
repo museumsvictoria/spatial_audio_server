@@ -1,10 +1,11 @@
 use audio::{input, output, source, Source, SAMPLE_RATE};
+use crossbeam::sync::SegQueue;
 use fxhash::FxHashSet;
 use installation;
 use metres::Metres;
 use nannou::math::Point2;
 use std::ops;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{self, AtomicBool};
 use time_calc::{Ms, Samples};
 
@@ -308,26 +309,43 @@ pub fn spawn_from_realtime(
     let n_channels = realtime.channels.len();
     let delay_frames = latency.samples(SAMPLE_RATE as _);
     let delay_samples = delay_frames as usize * n_channels;
-    let sync_channel_len = delay_samples * 2;
 
-    // The buffer used to send samples from audio input stream to audio output stream.
-    let (sample_tx, sample_rx) = mpsc::sync_channel(sync_channel_len);
+    // The queue used to send sample buffers from audio input stream to audio output stream signal.
+    let signal_buffer_queue = Arc::new(SegQueue::new());
+    let signal_buffer_tx = signal_buffer_queue.clone();
+    let signal_buffer_rx = signal_buffer_queue;
+
+    // The queue used to send used buffers back to the input thread for re-use.
+    let input_buffer_queue = Arc::new(SegQueue::new());
+    let input_buffer_tx = input_buffer_queue.clone();
+    let input_buffer_rx = input_buffer_queue;
 
     // Insert the silence for the delay.
-    for _ in 0..delay_samples {
-        sample_tx.send(0.0).ok();
-    }
+    signal_buffer_tx.push(vec![0.0; delay_samples]);
+
+    // Insert a buffer into the input buffer tx ready for use.
+    input_buffer_tx.push(Vec::with_capacity(super::FRAMES_PER_BUFFER * n_channels));
 
     // The signal from which the sound will draw samples.
     let remaining_samples = match duration {
         input::Duration::Infinite => None,
         input::Duration::Frames(frames) => Some(frames * n_channels),
     };
+
+    // A flag for tracking whether or not a signal has been closed.
+    let is_closed = Arc::new(AtomicBool::new(false));
+
+    // The realtime source signal.
     let samples = source::realtime::Signal {
         channels: n_channels,
-        sample_rx,
+        sample_index: 0,
+        buffer_rx: signal_buffer_rx,
+        buffer_tx: input_buffer_tx,
+        current_buffer: Vec::with_capacity(super::FRAMES_PER_BUFFER * n_channels),
         remaining_samples,
+        is_closed: is_closed.clone(),
     };
+
     let kind = source::SignalKind::Realtime { samples };
     let mut signal = source::Signal::new(kind, attack_duration_frames, release_duration_frames);
     if let Some(duration) = max_duration_frames {
@@ -341,8 +359,10 @@ pub fn spawn_from_realtime(
     // Create the `ActiveSound` for the input stream.
     let input_active_sound = input::ActiveSound {
         duration,
-        sample_tx,
+        buffer_tx: signal_buffer_tx,
+        buffer_rx: input_buffer_rx,
         is_capturing: is_capturing.clone(),
+        is_closed,
     };
 
     // State shared between the handles to a realtime sound.
