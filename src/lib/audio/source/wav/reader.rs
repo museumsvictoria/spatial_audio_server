@@ -485,7 +485,7 @@ fn run(tx: Tx, rx: Rx) {
                 model.play_sound(id, play);
             },
             Message::End(id) => {
-                model.sounds.remove(&id);
+                mem::drop(model.sounds.remove(&id));
             },
             Message::ProcessedBuffer(id, buffer) => {
                 model.next_buffer(id, buffer)
