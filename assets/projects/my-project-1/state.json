@@ -160,7 +160,7 @@
         "audio": {
           "kind": {
             "Wav": {
-              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Flame Cast_3.wav",
+              "path": "/Users/tomgowan/rust/spatial_audio_server/assets/audio/Elemental - Flame Cast_3.wav",
               "channels": 2,
               "duration": 148660,
               "sample_hz": 48000.0,
@@ -224,7 +224,7 @@
         "audio": {
           "kind": {
             "Wav": {
-              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Air Movement_20.wav",
+              "path": "/Users/tomgowan/rust/spatial_audio_server/assets/audio/Elemental - Air Movement_20.wav",
               "channels": 2,
               "duration": 167556,
               "sample_hz": 48000.0,
@@ -298,7 +298,7 @@
         "audio": {
           "kind": {
             "Wav": {
-              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Electricity Impact_5.wav",
+              "path": "/Users/tomgowan/rust/spatial_audio_server/assets/audio/Elemental - Electricity Impact_5.wav",
               "channels": 2,
               "duration": 199312,
               "sample_hz": 48000.0,
@@ -318,7 +318,7 @@
         "audio": {
           "kind": {
             "Wav": {
-              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Air Movement_13.wav",
+              "path": "/Users/tomgowan/rust/spatial_audio_server/assets/audio/Elemental - Air Movement_13.wav",
               "channels": 2,
               "duration": 143056,
               "sample_hz": 48000.0,
@@ -338,7 +338,7 @@
         "audio": {
           "kind": {
             "Wav": {
-              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Log Sine Sweep.wav",
+              "path": "/Users/tomgowan/rust/spatial_audio_server/assets/audio/Log Sine Sweep.wav",
               "channels": 2,
               "duration": 1106106,
               "sample_hz": 48000.0,
@@ -358,7 +358,7 @@
         "audio": {
           "kind": {
             "Wav": {
-              "path": "/home/mindtree/programming/rust/beyond_perception/audio_server/assets/audio/Elemental - Chimes Big_3.wav",
+              "path": "/Users/tomgowan/rust/spatial_audio_server/assets/audio/Elemental - Chimes Big_3.wav",
               "channels": 2,
               "duration": 240000,
               "sample_hz": 48000.0,

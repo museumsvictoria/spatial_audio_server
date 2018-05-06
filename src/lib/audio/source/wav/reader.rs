@@ -17,7 +17,7 @@ use time_calc::Samples;
 
 /// The number of sample buffers that the `reader` thread prepares ahead of time for a single
 /// sound.
-const NUM_BUFFERS: usize = 16;
+const NUM_BUFFERS: usize = 4;
 
 /// The hound type responsible for reading samples from a WAV file.
 pub type WavReader = hound::WavReader<BufReader<File>>;

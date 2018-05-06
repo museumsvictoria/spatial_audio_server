@@ -107,6 +107,8 @@ fn model(app: &App) -> Model {
     // A channel for sending and receiving on the soundscape thread.
     let (soundscape_tx, soundscape_rx) = mpsc::channel();
 
+    let (_fft_handle, fft_tx) = audio::output::spawn_fft(audio_monitor_tx.clone(), osc_out_msg_tx.clone());
+
     // The playhead frame count shared between GUI, soundscape and audio output thread for
     // synchronising continuous WAV soures.
     let frame_count = Arc::new(AtomicUsize::new(0));
@@ -137,6 +139,7 @@ fn model(app: &App) -> Model {
         osc_out_msg_tx.clone(),
         soundscape_tx.clone(),
         wav_reader.clone(),
+        fft_tx,
     );
     let audio_output_stream = app.audio
         .new_output_stream(audio_output_model, audio::output::render)
