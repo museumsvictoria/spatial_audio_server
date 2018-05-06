@@ -1,7 +1,8 @@
 //! Items related to the realtime audio input sound source kind.
 
+use crossbeam::sync::SegQueue;
 use std::ops;
-use std::sync::mpsc;
+use std::sync::Arc;
 use time_calc::{Ms, Samples};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -21,7 +22,7 @@ pub struct Realtime {
 /// Returns `None` as soon as the inner receiver either runs out of samples due to falling behind
 /// or if the channel is disconneceted as the sound has played out its duration.
 pub struct Signal {
-    pub sample_rx: mpsc::Receiver<f32>,
+    pub sample_rx: Arc<SegQueue<f32>>,
     pub channels: usize,
     pub remaining_samples: Option<usize>,
 }
@@ -44,8 +45,7 @@ impl Iterator for Signal {
     type Item = f32;
     fn next(&mut self) -> Option<Self::Item> {
         self.sample_rx
-            .try_recv()
-            .ok()
+            .try_pop()
             .map(|sample| {
                 self.remaining_samples = self.remaining_samples.map(|n| n.saturating_sub(1));
                 sample

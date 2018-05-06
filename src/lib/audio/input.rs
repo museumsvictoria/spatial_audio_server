@@ -4,10 +4,11 @@
 
 use audio::MAX_CHANNELS;
 use audio::source;
+use crossbeam::sync::SegQueue;
 use fxhash::FxHashMap;
 use nannou;
 use nannou::audio::Buffer;
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 
 /// Simplified type alias for the nannou audio input stream used by the audio server.
@@ -39,7 +40,7 @@ pub struct ActiveSound {
     /// The number of frames left to play of this source before it should end.
     pub duration: Duration,
     /// Feeds samples from the input buffer to the associated `Sound`'s `Box<Iterator<Item=f32>>`.
-    pub sample_tx: mpsc::SyncSender<f32>,
+    pub sample_tx: Arc<SegQueue<f32>>,
     /// An indicator from the `Sound` on whether the sound is currently playing or not.
     pub is_capturing: Arc<AtomicBool>,
 }
@@ -123,7 +124,7 @@ pub fn capture(mut model: Model, buffer: &Buffer) -> Model {
                             Duration::Infinite => true,
                         };
                         if send_sample {
-                            sound.sample_tx.try_send(sample).ok();
+                            sound.sample_tx.push(sample);
                         }
                     }
                 }

@@ -1,10 +1,11 @@
 use audio::{input, output, source, Source, SAMPLE_RATE};
+use crossbeam::sync::SegQueue;
 use fxhash::FxHashSet;
 use installation;
 use metres::Metres;
 use nannou::math::Point2;
 use std::ops;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{self, AtomicBool};
 use time_calc::{Ms, Samples};
 
@@ -308,14 +309,15 @@ pub fn spawn_from_realtime(
     let n_channels = realtime.channels.len();
     let delay_frames = latency.samples(SAMPLE_RATE as _);
     let delay_samples = delay_frames as usize * n_channels;
-    let sync_channel_len = delay_samples * 2;
 
     // The buffer used to send samples from audio input stream to audio output stream.
-    let (sample_tx, sample_rx) = mpsc::sync_channel(sync_channel_len);
+    let sample_queue = Arc::new(SegQueue::new());
+    let sample_tx = sample_queue.clone();
+    let sample_rx = sample_queue;
 
     // Insert the silence for the delay.
     for _ in 0..delay_samples {
-        sample_tx.send(0.0).ok();
+        sample_tx.push(0.0);
     }
 
     // The signal from which the sound will draw samples.
