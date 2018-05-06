@@ -148,6 +148,8 @@ pub fn spawn_from_source(
     release_duration_frames: Samples,
     continuous_preview: bool,
     max_duration_frames: Option<Samples>,
+    frame_count: u64,
+    wav_reader: &source::wav::reader::Handle,
     input_stream: &input::Stream,
     output_stream: &output::Stream,
     latency: Ms,
@@ -170,6 +172,8 @@ pub fn spawn_from_source(
                 release_duration_frames,
                 continuous_preview,
                 max_duration_frames,
+                frame_count,
+                wav_reader,
                 output_stream,
             )
         },
@@ -212,14 +216,14 @@ pub fn spawn_from_wav(
     release_duration_frames: Samples,
     continuous_preview: bool,
     max_duration_frames: Option<Samples>,
+    frame_count: u64,
+    wav_reader: &source::wav::reader::Handle,
     audio_output: &output::Stream,
 ) -> Handle
 {
     // The wave samples iterator.
-    let samples = match wav.should_loop || continuous_preview {
-        false => source::wav::SampleStream::from_path(&wav.path).unwrap().into(),
-        true => source::wav::SampleStream::from_path(&wav.path).unwrap().cycle().into(),
-    };
+    let samples = wav_reader.play(id, &wav.path, frame_count, wav.should_loop || continuous_preview)
+        .expect("failed to send new wav to wav_reader thread");
 
     // The source signal.
     let playback = wav.playback.clone();
@@ -470,7 +474,7 @@ impl<'a> Iterator for ChannelPoints<'a> {
 pub struct Id(u64);
 
 impl Id {
-    const INITIAL: Self = Id(0);
+    pub const INITIAL: Self = Id(0);
 }
 
 /// A threadsafe unique `Id` generator for sharing between the `Composer` and `GUI` threads.

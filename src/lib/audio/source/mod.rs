@@ -73,7 +73,7 @@ pub struct Signal {
 /// Indicates whether the signal is sourced from a `Wav` or `Realtime` source.
 pub enum SignalKind {
     Wav {
-        samples: wav::Signal,
+        samples: wav::reader::SamplesStream,
         playback: wav::Playback,
     },
     Realtime {
@@ -408,7 +408,7 @@ impl SignalKind {
     /// Borrow the inner iterator yielding samples.
     pub fn samples(&mut self) -> &mut Iterator<Item = f32> {
         match *self {
-            SignalKind::Wav { ref mut samples, .. } => samples.samples(),
+            SignalKind::Wav { ref mut samples, .. } => samples as _,
             SignalKind::Realtime { ref mut samples } => samples as _,
         }
     }

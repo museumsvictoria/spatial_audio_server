@@ -17,7 +17,7 @@ pub mod speaker;
 
 /// Sounds should only be output to speakers that are nearest to avoid the need to render each
 /// sound to every speaker on the map.
-pub const PROXIMITY_LIMIT: Metres = Metres(10.0);
+pub const PROXIMITY_LIMIT: Metres = Metres(8.0);
 /// The proximity squared (for more efficient distance comparisons).
 pub const PROXIMITY_LIMIT_2: Metres = Metres(PROXIMITY_LIMIT.0 * PROXIMITY_LIMIT.0);
 
@@ -27,11 +27,17 @@ pub const MAX_CHANNELS: usize = 128;
 #[cfg(feature = "test_with_stereo")]
 pub const MAX_CHANNELS: usize = 2;
 
+/// The absolute maximum number of simultaneous sounds allowed per exhibition.
+///
+/// NOTE: This value is simply used for pre-allocation (to avoid allocating on the audio thread).
+/// The number is arbitrary - feel free to increase/decrease this as necessary.
+pub const MAX_SOUNDS: usize = 1024;
+
 /// The desired sample rate of the output stream.
 pub const SAMPLE_RATE: f64 = 48_000.0;
 
 /// The desired number of frames requested at a time.
-pub const FRAMES_PER_BUFFER: usize = 64;
+pub const FRAMES_PER_BUFFER: usize = 2048;
 
 /// The initial, default master volume.
 pub const DEFAULT_MASTER_VOLUME: f32 = 0.5;

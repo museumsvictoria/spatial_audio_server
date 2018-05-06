@@ -8,7 +8,7 @@ use nannou::prelude::*;
 use nannou::rand::{Rng, SeedableRng, XorShiftRng};
 use std::cmp;
 use std::ops;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::{atomic, mpsc, Arc, Mutex};
 use std::thread;
 use std::time;
@@ -122,6 +122,8 @@ struct ActiveSoundPosition {
 
 /// The model containing all state running on the soundscape thread.
 pub struct Model {
+    /// Tracks the current frame count updated via the audio output thread.
+    frame_count: Arc<AtomicUsize>,
     /// The latency applied to realtime sounds when spawned.
     pub realtime_source_latency: Ms,
     /// The soundscape's deterministic source of randomness.
@@ -170,6 +172,8 @@ pub struct Model {
 
     // Communication channels.
 
+    /// A handle to the wav reader thread.
+    wav_reader: audio::source::wav::reader::Handle,
     /// A handle for submitting new sounds to the input stream.
     audio_input_stream: audio::input::Stream,
     /// A handle for submitting new sounds to the output stream.
@@ -660,9 +664,11 @@ impl ops::DerefMut for ActiveSound {
 /// 4. Send the `Sound`s to the audio thread and accompanying monitoring stuff to the GUI thread
 ///    (for tracking positions, RMS, etc).
 pub fn spawn(
+    frame_count: Arc<AtomicUsize>,
     seed: Seed,
     tx: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
+    wav_reader: audio::source::wav::reader::Handle,
     audio_input_stream: audio::input::Stream,
     audio_output_stream: audio::output::Stream,
     sound_id_gen: audio::sound::IdGenerator,
@@ -716,6 +722,7 @@ pub fn spawn(
     let available_groups = Default::default();
     let available_sources = Default::default();
     let model = Model {
+        frame_count,
         realtime_source_latency,
         seed,
         playback_duration,
@@ -733,6 +740,7 @@ pub fn spawn(
         active_sound_positions,
         available_groups,
         available_sources,
+        wav_reader,
         audio_input_stream,
         audio_output_stream,
         sound_id_gen,
@@ -1313,6 +1321,7 @@ fn suitability(a: &Suitability, b: &Suitability) -> cmp::Ordering {
 // Called each time the soundscape thread receives a tick.
 fn tick(model: &mut Model, tick: Tick) {
     let Model {
+        ref frame_count,
         realtime_source_latency,
         seed,
         ref mut playback_duration,
@@ -1331,6 +1340,7 @@ fn tick(model: &mut Model, tick: Tick) {
         ref mut available_groups,
         ref mut available_sources,
         ref mut sound_id_gen,
+        ref wav_reader,
         ref audio_input_stream,
         ref audio_output_stream,
         ..
@@ -1591,6 +1601,8 @@ fn tick(model: &mut Model, tick: Tick) {
                         release_duration_frames,
                         continuous_preview,
                         Some(duration_frames),
+                        frame_count.load(atomic::Ordering::Relaxed) as _,
+                        wav_reader,
                         audio_input_stream,
                         audio_output_stream,
                         realtime_source_latency,
