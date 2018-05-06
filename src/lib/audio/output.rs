@@ -553,7 +553,7 @@ impl Channels {
         self.soundscape_tx.send(soundscape::UpdateFn::from(update).into()).ok();
 
         // WAV reader thread.
-        self.wav_reader.end(id).ok();
+        self.wav_reader.end(id);
     }
 }
 

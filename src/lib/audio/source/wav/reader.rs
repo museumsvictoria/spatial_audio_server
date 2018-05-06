@@ -2,7 +2,7 @@
 //! audio thread.
 
 use audio::{self, sound};
-use crossbeam::sync::MsQueue;
+use crossbeam::sync::{MsQueue, SegQueue};
 use fxhash::FxHashMap;
 use hound::{self, SampleFormat};
 use num_cpus;
@@ -13,7 +13,7 @@ use std::fs::File;
 use std::mem;
 use std::ops;
 use std::path::Path;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use time_calc::Samples;
 use threadpool::ThreadPool;
@@ -26,16 +26,16 @@ const NUM_BUFFERS: usize = 4;
 pub type WavReader = hound::WavReader<BufReader<File>>;
 
 /// Sends messages to the `wav::reader` thread.
-pub type Tx = mpsc::Sender<Message>;
+pub type Tx = Arc<MsQueue<Message>>;
 
 /// Receives `Message`s for the `wav::reader` thread.
-pub type Rx = mpsc::Receiver<Message>;
+pub type Rx = Arc<MsQueue<Message>>;
 
 /// For sending buffers to a sound's associated `ThreadedSamplesStream`.
-pub type BufferTx = mpsc::Sender<Buffer>;
+pub type BufferTx = Arc<SegQueue<Buffer>>;
 
 /// Receives buffers sent from the wav reader thread. Used by the `ThreadedSamplesStream` type.
-pub type BufferRx = mpsc::Receiver<Buffer>;
+pub type BufferRx = Arc<SegQueue<Buffer>>;
 
 /// The mpmc queue used for distributing `Play` messages across the child threads.
 type ChildMessageQueue = MsQueue<ChildMessage>;
@@ -131,7 +131,7 @@ pub enum Message {
 ///
 /// When this buffer is depleted, the allocated `Vec` gets sent back to the reader thread for
 /// re-use.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Buffer {
     samples: Vec<f32>,
     sound_id: sound::Id,
@@ -180,30 +180,30 @@ impl Handle {
         wav_path: &Path,
         start_frame: u64,
         looped: bool,
-    ) -> Result<SamplesStream, mpsc::SendError<()>>
+    ) -> Result<SamplesStream, hound::Error>
     {
-        let reader = WavReader::open(wav_path)
-            .expect("failed to read wav file");
+        let reader = WavReader::open(wav_path)?;
         let wav_len_samples = reader.len() as _;
-        let (buffer_tx, buffer_rx) = mpsc::channel();
+        let buffer_queue = Arc::new(SegQueue::new());
+        let buffer_tx = buffer_queue.clone();
+        let buffer_rx = buffer_queue;
         let spec = reader.spec();
         let play = Play { reader, buffer_tx, start_frame, looped };
         let samples_stream = SamplesStream::new(buffer_rx, spec, wav_len_samples, looped);
         let msg = Message::Play(sound_id, play);
-        self.tx.send(msg).map_err(|_| mpsc::SendError(()))?;
+        self.tx.push(msg);
         Ok(samples_stream)
     }
 
     /// Stop reading the wav for the sound with the given `Id`.
-    pub fn end(&self, sound_id: sound::Id) -> Result<(), mpsc::SendError<()>> {
+    pub fn end(&self, sound_id: sound::Id) {
         let msg = Message::End(sound_id);
-        self.tx.send(msg).map_err(|_| mpsc::SendError(()))?;
-        Ok(())
+        self.tx.push(msg);
     }
 
     /// Stops the wav reader thread and returns the raw handle to its thread.
     pub fn exit(self) -> Option<thread::JoinHandle<()>> {
-        self.tx.send(Message::Exit).ok();
+        self.tx.push(Message::Exit);
         self.thread.lock().unwrap().take()
     }
 }
@@ -222,7 +222,7 @@ impl Drop for Buffer {
         // buffer.
         let read_buffer = mem::replace(&mut self.samples, Vec::new());
         let msg = Message::NextBuffer(sound_id, read_buffer);
-        self.reader_tx.send(msg).ok();
+        self.reader_tx.push(msg);
     }
 }
 
@@ -262,9 +262,9 @@ impl SamplesStream {
             }
 
             let mut buffer_mut = self.buffer.borrow_mut();
-            *buffer_mut = match self.buffer_rx.try_recv() {
-                Err(_err) => return Some(Samples(self.wav_len_samples as _)),
-                Ok(buffer) => Some(buffer),
+            *buffer_mut = match self.buffer_rx.try_pop() {
+                None => return Some(Samples(self.wav_len_samples as _)),
+                Some(buffer) => Some(buffer),
             };
         }
     }
@@ -295,11 +295,11 @@ impl SamplesStream {
             mem::drop(buffer_mut.take());
 
             // Receive the next buffer.
-            *buffer_mut = match buffer_rx.try_recv() {
+            *buffer_mut = match buffer_rx.try_pop() {
                 // If there are no more buffers, there must be no more samples so we're done.
-                Err(_err) => return None,
+                None => return None,
                 // Otherwise reset
-                Ok(buffer) => {
+                Some(buffer) => {
                     *buffer_index = 0;
                     Some(buffer)
                 },
@@ -392,7 +392,7 @@ fn next_buffer(
         let info = BufferInfo { samples_range };
         let buffer = Buffer { samples, sound_id, reader_tx, info };
         // The output thread may have exited before us so ignore closed channel error.
-        buffer_tx.send(buffer).ok();
+        buffer_tx.push(buffer);
     }
 
     // Fill the given buffer using the reader and enqueue it.
@@ -487,7 +487,9 @@ fn read_next_sample(
 /// Runs the wav reader thread and returns a handle to it that may be used to play or seek sounds
 /// via their unique `Id`.
 pub fn spawn() -> Handle {
-    let (tx, rx) = mpsc::channel();
+    let queue = Arc::new(MsQueue::new());
+    let tx = queue.clone();
+    let rx = queue;
     let tx2 = tx.clone();
     let thread = thread::Builder::new()
         .name("wav_reader".into())
@@ -527,7 +529,8 @@ fn run(tx: Tx, rx: Rx) {
         };
     }
 
-    for msg in rx {
+    loop {
+        let msg = rx.pop();
         match msg {
             // Enqueue a play message for one of the child threads to process.
             Message::Play(sound_id, play) => {
@@ -544,7 +547,7 @@ fn run(tx: Tx, rx: Rx) {
                 // Send off the initial buffers to be read.
                 for _ in 0..NUM_BUFFERS {
                     let msg = Message::NextBuffer(sound_id, vec![]);
-                    model.tx.send(msg).expect("failed to queue buffer for processing");
+                    model.tx.push(msg);
                 }
             },
 
@@ -556,7 +559,7 @@ fn run(tx: Tx, rx: Rx) {
                     // next time.
                     SoundState::Processing => {
                         let msg = Message::NextBuffer(sound_id, buffer);
-                        model.tx.send(msg).expect("failed to re-queue buffer for processing");
+                        model.tx.push(msg);
                     },
                     // If the sound was waiting, send it to a child thread for processing.
                     SoundState::Waiting(sound) => {
@@ -596,7 +599,7 @@ fn run_child(child_msg_queue: Arc<ChildMessageQueue>, parent_tx: Tx) {
             ChildMessage::Play(sound_id, play) => {
                 let sound = play_sound(play);
                 let msg = Message::PlayComplete(sound_id, sound);
-                parent_tx.send(msg).ok();
+                parent_tx.push(msg);
             },
 
             // Process the next buffer and return the resulting `Sound` to the parent thread.
@@ -604,7 +607,7 @@ fn run_child(child_msg_queue: Arc<ChildMessageQueue>, parent_tx: Tx) {
                 next_buffer(sound_id, &mut sound, buffer, &parent_tx)
                     .expect("failed to process next buffer");
                 let msg = Message::NextBufferComplete(sound_id, sound);
-                parent_tx.send(msg).ok();
+                parent_tx.push(msg);
             },
         }
     }
