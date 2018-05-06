@@ -11,6 +11,9 @@ use nannou::audio::Buffer;
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 
+/// The number of buffers cycled between the input and output threads.
+const NUM_BUFFERS: usize = 4;
+
 /// Simplified type alias for the nannou audio input stream used by the audio server.
 pub type Stream = nannou::audio::Stream<Model>;
 
@@ -39,10 +42,13 @@ pub enum Duration {
 pub struct ActiveSound {
     /// The number of frames left to play of this source before it should end.
     pub duration: Duration,
-    /// Feeds samples from the input buffer to the associated `Sound`'s `Box<Iterator<Item=f32>>`.
-    pub sample_tx: Arc<SegQueue<f32>>,
     /// An indicator from the `Sound` on whether the sound is currently playing or not.
     pub is_capturing: Arc<AtomicBool>,
+    /// Feeds buffers of samples from the input buffer to the associated `Sound`'s
+    /// `Box<Iterator<Item=f32>>`.
+    pub buffer_tx: source::realtime::BufferTx,
+    /// Receives used buffers read for re-use.
+    pub buffer_rx: source::realtime::BufferRx,
 }
 
 impl Model {

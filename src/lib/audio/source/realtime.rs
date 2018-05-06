@@ -5,6 +5,9 @@ use std::ops;
 use std::sync::Arc;
 use time_calc::{Ms, Samples};
 
+pub type BufferTx = Arc<SegQueue<Vec<f32>>>;
+pub type BufferRx = Arc<SegQueue<Vec<f32>>>;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Realtime {
     // Duration for which the realtime input is played.
@@ -22,7 +25,9 @@ pub struct Realtime {
 /// Returns `None` as soon as the inner receiver either runs out of samples due to falling behind
 /// or if the channel is disconneceted as the sound has played out its duration.
 pub struct Signal {
-    pub sample_rx: Arc<SegQueue<f32>>,
+    pub buffer_rx: BufferRx,
+    pub buffer_tx: BufferTx,
+    pub current: Vec<f32>,
     pub channels: usize,
     pub remaining_samples: Option<usize>,
 }
