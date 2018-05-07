@@ -222,7 +222,7 @@ impl Model {
     pub fn new(
         frame_count: Arc<AtomicUsize>,
         gui_audio_monitor_msg_tx: gui::monitor::Sender,
-        osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
+        osc_output_msg_tx: osc::output::Tx,
         soundscape_tx: mpsc::Sender<soundscape::Message>,
         wav_reader: source::wav::reader::Handle,
     ) -> Self {

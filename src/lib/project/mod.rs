@@ -255,8 +255,7 @@ impl Project {
             .expect("failed to send `clear_project_specific_data` message to audio output thread");
         channels
             .osc_out_msg_tx
-            .send(osc::output::Message::ClearProjectSpecificData)
-            .expect("failed to send `ClearProjectSpecificData` message to OSC output thread");
+            .push(osc::output::Message::ClearProjectSpecificData);
 
         // TODO: Consider updating config stuff here?
 
@@ -298,10 +297,7 @@ impl Project {
                 let osc_addr = addr.osc_addr.clone();
                 let add = osc::output::OscTarget::Add(id, computer, osc_tx, osc_addr);
                 let msg = osc::output::Message::Osc(add);
-                channels
-                    .osc_out_msg_tx
-                    .send(msg)
-                    .expect("failed to send loaded OSC target");
+                channels.osc_out_msg_tx.push(msg)
             }
 
             // Audio output thread.

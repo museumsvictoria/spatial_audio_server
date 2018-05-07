@@ -297,10 +297,7 @@ pub fn set(
         // Remove this installation from the OSC output thread.
         let rem = osc::output::OscTarget::RemoveInstallation(id);
         let msg = osc::output::Message::Osc(rem);
-        channels
-            .osc_out_msg_tx
-            .send(msg)
-            .expect("failed to send message for removing installation from OSC output thread");
+        channels.osc_out_msg_tx.push(msg);
     }
 
     let area_rect = ui.rect_of(area.id).unwrap();
@@ -367,10 +364,7 @@ pub fn set(
                     // Update osc copy.
                     let update = osc::output::OscTarget::UpdateAddr(id, c_id, osc_addr);
                     let msg = osc::output::Message::Osc(update);
-                    channels
-                        .osc_out_msg_tx
-                        .send(msg)
-                        .expect("could not update OSC target computer address");
+                    channels.osc_out_msg_tx.push(msg);
                 }
             },
         }
@@ -499,10 +493,7 @@ pub fn set(
                 };
                 let add = osc::output::OscTarget::Add(id, computer, osc_tx, osc_addr.clone());
                 let msg = osc::output::Message::Osc(add);
-                channels
-                    .osc_out_msg_tx
-                    .send(msg)
-                    .expect("failed to send new installation computer to OSC output thread");
+                channels.osc_out_msg_tx.push(msg);
                 let addr = installation::computer::Address { socket, osc_addr };
                 installation.computers.insert(computer, addr);
             }
@@ -511,10 +502,7 @@ pub fn set(
                 let computer = installation::computer::Id(i);
                 let rem = osc::output::OscTarget::Remove(id, computer);
                 let msg = osc::output::Message::Osc(rem);
-                channels
-                    .osc_out_msg_tx
-                    .send(msg)
-                    .expect("failed to remove installation computer from OSC output thread");
+                channels.osc_out_msg_tx.push(msg);
                 installation.computers.remove(&computer);
             }
             if selected_computer
@@ -642,10 +630,7 @@ pub fn set(
         let add =
             osc::output::OscTarget::Add(id, selected.computer, osc_tx, osc_addr.clone());
         let msg = osc::output::Message::Osc(add);
-        channels
-            .osc_out_msg_tx
-            .send(msg)
-            .expect("failed to send updated OSC address to OSC output thread");
+        channels.osc_out_msg_tx.push(msg);
         let addr = installation::computer::Address { socket, osc_addr };
         computers.insert(selected.computer, addr);
     }

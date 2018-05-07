@@ -622,7 +622,7 @@ fn run(
 
                     // Send to the OSC thread.
                     let msg = osc::output::Message::Audio(id, data);
-                    osc_output_msg_tx.send(msg).ok();
+                    osc_output_msg_tx.push(msg);
                 }
 
                 // Send buffer and output info back to audio thread for re-use.

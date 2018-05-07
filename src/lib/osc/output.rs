@@ -1,12 +1,15 @@
+use crossbeam::sync::MsQueue;
 use fxhash::FxHashMap;
 use installation;
 use nannou::osc;
 use nannou::osc::Type::{Float, Int};
 use std;
 use std::iter::once;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 
-pub type Tx = mpsc::Sender<Message>;
+pub type MessageQueue = Arc<MsQueue<Message>>;
+pub type Tx = MessageQueue;
+type Rx = MessageQueue;
 
 /// Messages that can be received by the `osc::output` thread.
 pub enum Message {
@@ -64,12 +67,10 @@ pub struct Log {
 }
 
 /// Spawn the osc sender thread.
-pub fn spawn() -> (
-    std::thread::JoinHandle<()>,
-    mpsc::Sender<Message>,
-    mpsc::Receiver<Log>,
-) {
-    let (msg_tx, msg_rx) = mpsc::channel();
+pub fn spawn() -> (std::thread::JoinHandle<()>, Tx, mpsc::Receiver<Log>) {
+    let msg_queue = Arc::new(MsQueue::new());
+    let msg_tx = msg_queue.clone();
+    let msg_rx = msg_queue;
     let (log_tx, log_rx) = mpsc::channel();
     let handle = std::thread::Builder::new()
         .name("osc_out".into())
@@ -80,7 +81,7 @@ pub fn spawn() -> (
     (handle, msg_tx, log_rx)
 }
 
-fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
+fn run(msg_rx: Rx, log_tx: mpsc::Sender<Log>) {
     struct Target {
         osc_tx: osc::Sender<osc::Connected>,
         osc_addr: String,
@@ -114,7 +115,8 @@ fn run(msg_rx: mpsc::Receiver<Message>, log_tx: mpsc::Sender<Log>) {
     std::thread::Builder::new()
         .name("osc_output_msg_to_update".into())
         .spawn(move || {
-            for msg in msg_rx {
+            loop {
+                let msg = msg_rx.pop();
                 if update_tx.send(Update::Msg(msg)).is_err() {
                     break;
                 }
