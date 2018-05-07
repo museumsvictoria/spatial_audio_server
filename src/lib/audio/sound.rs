@@ -224,7 +224,10 @@ pub fn spawn_from_wav(
 {
     // The wave samples iterator.
     let samples = wav_reader.play(id, &wav.path, frame_count, wav.should_loop || continuous_preview)
-        .expect("failed to send new wav to wav_reader thread");
+        .unwrap_or_else(|err| {
+            panic!("failed to send new wav \"{}\"to wav_reader thread: {:?}: {}",
+                   wav.path.display(), err, err);
+        });
 
     // The source signal.
     let playback = wav.playback.clone();

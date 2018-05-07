@@ -7,6 +7,7 @@ use nannou::ui::prelude::*;
 use osc;
 use project::{self, Project};
 use std::{io, net};
+use std::sync::Arc;
 
 /// Runtime state relevant to the installation editor GUI.
 #[derive(Default)]
@@ -297,10 +298,7 @@ pub fn set(
         // Remove this installation from the OSC output thread.
         let rem = osc::output::OscTarget::RemoveInstallation(id);
         let msg = osc::output::Message::Osc(rem);
-        channels
-            .osc_out_msg_tx
-            .send(msg)
-            .expect("failed to send message for removing installation from OSC output thread");
+        channels.osc_out_msg_tx.push(msg);
     }
 
     let area_rect = ui.rect_of(area.id).unwrap();
@@ -367,10 +365,7 @@ pub fn set(
                     // Update osc copy.
                     let update = osc::output::OscTarget::UpdateAddr(id, c_id, osc_addr);
                     let msg = osc::output::Message::Osc(update);
-                    channels
-                        .osc_out_msg_tx
-                        .send(msg)
-                        .expect("could not update OSC target computer address");
+                    channels.osc_out_msg_tx.push(msg);
                 }
             },
         }
@@ -491,18 +486,16 @@ pub fn set(
                 let socket = "127.0.0.1:9002".parse().unwrap();
                 let osc_addr = installation::osc_addr_string(&installation.name);
                 let osc_tx = match osc_sender(&socket) {
+                    Ok(tx) => Arc::new(tx),
                     Err(err) => {
                         eprintln!("failed to connect localhost OSC sender: {}", err);
                         break;
                     },
-                    Ok(tx) => tx,
                 };
-                let add = osc::output::OscTarget::Add(id, computer, osc_tx, osc_addr.clone());
+                let target = osc::output::TargetSource::New(osc_tx);
+                let add = osc::output::OscTarget::Add(id, computer, target, osc_addr.clone());
                 let msg = osc::output::Message::Osc(add);
-                channels
-                    .osc_out_msg_tx
-                    .send(msg)
-                    .expect("failed to send new installation computer to OSC output thread");
+                channels.osc_out_msg_tx.push(msg);
                 let addr = installation::computer::Address { socket, osc_addr };
                 installation.computers.insert(computer, addr);
             }
@@ -511,10 +504,7 @@ pub fn set(
                 let computer = installation::computer::Id(i);
                 let rem = osc::output::OscTarget::Remove(id, computer);
                 let msg = osc::output::Message::Osc(rem);
-                channels
-                    .osc_out_msg_tx
-                    .send(msg)
-                    .expect("failed to remove installation computer from OSC output thread");
+                channels.osc_out_msg_tx.push(msg);
                 installation.computers.remove(&computer);
             }
             if selected_computer
@@ -622,8 +612,9 @@ pub fn set(
         id: installation::Id,
         selected: &SelectedComputer,
         channels: &Channels,
-        computers: &mut installation::Computers,
+        installations: &mut project::Installations,
     ) {
+        // Parse the socket addr from the string.
         let socket = match selected.socket_string.parse() {
             Ok(s) => s,
             Err(_) => {
@@ -631,23 +622,45 @@ pub fn set(
                 return
             },
         };
-        let osc_tx = match osc_sender(&socket) {
-            Ok(tx) => tx,
-            Err(err) => {
-                eprintln!("coulc not connect osc_sender: {}", err);
-                return;
-            }
+
+        // Check for an existing sender using this socket.
+        let existing_socket = installations
+            .iter()
+            .filter_map(|(&inst_id, inst)| {
+                inst.computers
+                    .iter()
+                    .find(|&(_, ref addr)| addr.socket == socket)
+                    .map(|(&id, _)| (inst_id, id))
+            })
+            .next();
+
+        // Create the OSC sender.
+        let target = match existing_socket {
+            // First see if the sender already exists.
+            Some((inst_id, comp_id)) => osc::output::TargetSource::Existing(inst_id, comp_id),
+            // If not, create it from scratch.
+            None => match osc_sender(&socket) {
+                Ok(osc_tx) => {
+                    let osc_tx = Arc::new(osc_tx);
+                    osc::output::TargetSource::New(osc_tx)
+                },
+                Err(err) => {
+                    eprintln!("could not connect osc_sender: {}", err);
+                    return;
+                }
+            },
         };
+
         let osc_addr = selected.osc_addr.clone();
-        let add =
-            osc::output::OscTarget::Add(id, selected.computer, osc_tx, osc_addr.clone());
+        let add = osc::output::OscTarget::Add(id, selected.computer, target, osc_addr.clone());
         let msg = osc::output::Message::Osc(add);
-        channels
-            .osc_out_msg_tx
-            .send(msg)
-            .expect("failed to send updated OSC address to OSC output thread");
+        channels.osc_out_msg_tx.push(msg);
         let addr = installation::computer::Address { socket, osc_addr };
-        computers.insert(selected.computer, addr);
+        installations
+            .get_mut(&id)
+            .expect("no installation for id")
+            .computers
+            .insert(selected.computer, addr);
     }
 
     // The textbox for editing the OSC output IP address.
@@ -673,8 +686,7 @@ pub fn set(
         use nannou::ui::conrod::widget::text_box::Event;
         match event {
             Event::Enter => {
-                let computers = &mut installations.get_mut(&id).unwrap().computers;
-                update_addr(id, &selected_computer, channels, computers);
+                update_addr(id, &selected_computer, channels, installations);
             }
             Event::Update(new_string) => {
                 selected_computer.socket_string = new_string;
@@ -695,8 +707,7 @@ pub fn set(
         use nannou::ui::conrod::widget::text_box::Event;
         match event {
             Event::Enter => {
-                let computers = &mut installations.get_mut(&id).unwrap().computers;
-                update_addr(id, &selected_computer, channels, computers);
+                update_addr(id, &selected_computer, channels, installations);
             }
             Event::Update(new_string) => {
                 selected_computer.osc_addr = new_string;

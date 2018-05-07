@@ -26,6 +26,7 @@ use std::ffi::OsStr;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use utils;
 use walkdir::WalkDir;
 
@@ -255,8 +256,7 @@ impl Project {
             .expect("failed to send `clear_project_specific_data` message to audio output thread");
         channels
             .osc_out_msg_tx
-            .send(osc::output::Message::ClearProjectSpecificData)
-            .expect("failed to send `ClearProjectSpecificData` message to OSC output thread");
+            .push(osc::output::Message::ClearProjectSpecificData);
 
         // TODO: Consider updating config stuff here?
 
@@ -296,12 +296,10 @@ impl Project {
                     .connect(&addr.socket)
                     .expect("failed to connect OSC sender");
                 let osc_addr = addr.osc_addr.clone();
-                let add = osc::output::OscTarget::Add(id, computer, osc_tx, osc_addr);
+                let target = osc::output::TargetSource::New(Arc::new(osc_tx));
+                let add = osc::output::OscTarget::Add(id, computer, target, osc_addr);
                 let msg = osc::output::Message::Osc(add);
-                channels
-                    .osc_out_msg_tx
-                    .send(msg)
-                    .expect("failed to send loaded OSC target");
+                channels.osc_out_msg_tx.push(msg);
             }
 
             // Audio output thread.

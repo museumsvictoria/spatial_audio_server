@@ -328,8 +328,7 @@ pub fn set(
                 .expect("failed to send `clear_project_specific_data` message to audio output thread");
             channels
                 .osc_out_msg_tx
-                .send(osc::output::Message::ClearProjectSpecificData)
-                .expect("failed to send `ClearProjectSpecificData` message to OSC output thread");
+                .push(osc::output::Message::ClearProjectSpecificData);
         }
     }
 

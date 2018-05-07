@@ -7,6 +7,7 @@ pub use self::source::Source;
 pub use self::speaker::Speaker;
 
 pub mod dbap;
+pub mod detection;
 pub mod detector;
 pub mod fft;
 pub mod input;
@@ -37,7 +38,7 @@ pub const MAX_SOUNDS: usize = 1024;
 pub const SAMPLE_RATE: f64 = 48_000.0;
 
 /// The desired number of frames requested at a time.
-pub const FRAMES_PER_BUFFER: usize = 2048;
+pub const FRAMES_PER_BUFFER: usize = 1024;
 
 /// The initial, default master volume.
 pub const DEFAULT_MASTER_VOLUME: f32 = 0.5;

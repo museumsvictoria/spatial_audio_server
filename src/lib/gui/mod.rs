@@ -136,13 +136,13 @@ pub struct Channels {
     pub frame_count: Arc<AtomicUsize>,
     pub osc_in_log_rx: mpsc::Receiver<OscInputLog>,
     pub osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
-    pub osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
+    pub osc_out_msg_tx: osc::output::Tx,
     pub control_rx: mpsc::Receiver<osc::input::Control>,
     pub soundscape: Soundscape,
     pub wav_reader: audio::source::wav::reader::Handle,
     pub audio_input: audio::input::Stream,
     pub audio_output: audio::output::Stream,
-    pub audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
+    pub audio_monitor_msg_rx: monitor::Receiver,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -338,7 +338,7 @@ impl Model {
         // Notify audio output thread.
         channels
             .audio_output
-            .send(move |audio| audio.cpu_saving_enabled = cpu_saving_mode)
+            .send(move |audio| audio.cpu_saving_enabled(cpu_saving_mode))
             .expect("failed to update cpu saving mode on audio output thread");
 
         Model {
@@ -461,7 +461,12 @@ impl Model {
         }
 
         // Update the map of active sounds.
-        for msg in channels.audio_monitor_msg_rx.try_iter() {
+        loop {
+            let msg = match channels.audio_monitor_msg_rx.try_pop() {
+                None => break,
+                Some(msg) => msg,
+            };
+
             match msg {
                 AudioMonitorMessage::Master { peak } => {
                     audio_monitor.master_peak = peak;
@@ -566,7 +571,7 @@ impl Model {
                             let cpu_saving_mode = *cpu_saving_mode;
                             channels
                                 .audio_output
-                                .send(move |audio| audio.cpu_saving_enabled = cpu_saving_mode)
+                                .send(move |audio| audio.cpu_saving_enabled(cpu_saving_mode))
                                 .expect("failed to update cpu saving mode on audio output thread");
                         }
                     }
@@ -637,13 +642,13 @@ impl Channels {
         frame_count: Arc<AtomicUsize>,
         osc_in_log_rx: mpsc::Receiver<OscInputLog>,
         osc_out_log_rx: mpsc::Receiver<OscOutputLog>,
-        osc_out_msg_tx: mpsc::Sender<osc::output::Message>,
+        osc_out_msg_tx: osc::output::Tx,
         control_rx: mpsc::Receiver<osc::input::Control>,
         soundscape: Soundscape,
         wav_reader: audio::source::wav::reader::Handle,
         audio_input: audio::input::Stream,
         audio_output: audio::output::Stream,
-        audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
+        audio_monitor_msg_rx: monitor::Receiver,
     ) -> Self {
         Channels {
             frame_count,

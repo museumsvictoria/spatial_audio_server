@@ -5,9 +5,7 @@
 
 use audio::{DISTANCE_BLUR, FRAMES_PER_BUFFER, MAX_CHANNELS, MAX_SOUNDS, PROXIMITY_LIMIT_2};
 use audio::{Sound, Speaker};
-use audio::detector::{EnvDetector, Fft, FftDetector, FFT_WINDOW_LEN};
-use audio::{dbap, source, sound, speaker};
-use audio::fft;
+use audio::{dbap, detection, source, sound, speaker};
 use fxhash::{FxHashMap, FxHashSet};
 use gui;
 use installation;
@@ -16,8 +14,6 @@ use nannou;
 use nannou::audio::Buffer;
 use nannou::math::{MetricSpace, Point2};
 use osc;
-use rustfft::num_complex::Complex;
-use rustfft::num_traits::Zero;
 use soundscape;
 use std;
 use std::ops::{self, Deref, DerefMut};
@@ -40,32 +36,12 @@ type DbapSpeakerGains = FxHashMap<sound::Id, FxHashMap<Channel, FxHashMap<speake
 /// A sound that is currently active on the audio thread.
 pub struct ActiveSound {
     sound: Sound,
-    channel_detectors: Box<[EnvDetector]>,
     total_duration_frames: Option<Samples>,
 }
 
+/// A speaker that is currently active on the audio thread.
 pub struct ActiveSpeaker {
     speaker: Speaker,
-    env_detector: EnvDetector,
-}
-
-pub struct Installation {
-    /// A buffer that is resized to match the size of the `buffer` fed to the `render` function.
-    ///
-    /// This is re-used between calls to `render` to sum all audio from each speaker channel that
-    /// is assigned to the installation. The audio data is then used to perform the necessary FFT
-    /// calculations for the installation, ready to be sent over OSC for visualisation.
-    ///
-    /// This is silenced at the beginning of each call to `render`.
-    buffer: Vec<f32>,
-    /// The peak and RMS for each speaker in the installation.
-    speaker_analyses: Vec<SpeakerAnalysis>,
-    /// The detector used for incrementally calculating the FFT.
-    fft_detector: FftDetector,
-    /// The number of computers assigned to the installation to which audio data will be sent.
-    ///
-    /// If this value is `0`, the FFT calculation is not performed in order to save CPU.
-    computers: usize,
 }
 
 /// Information relevant to a single `Sound` for the duration of a `render` pass.
@@ -107,14 +83,9 @@ struct DbapSpeakerInfo {
 impl ActiveSound {
     /// Create a new `ActiveSound`.
     pub fn new(sound: Sound) -> Self {
-        let channel_detectors = (0..sound.channels)
-            .map(|_| EnvDetector::new())
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
         let total_duration_frames = sound.signal.remaining_frames();
         ActiveSound {
             sound,
-            channel_detectors,
             total_duration_frames,
         }
     }
@@ -166,12 +137,6 @@ impl DerefMut for ActiveSpeaker {
     }
 }
 
-struct SpeakerAnalysis {
-    rms: f32,
-    peak: f32,
-    index: usize,
-}
-
 /// State that lives on the audio thread.
 pub struct Model {
     /// the total number of frames written since the model was created or the project was switched.
@@ -187,7 +152,7 @@ pub struct Model {
     /// NOTE: If using this server in the future and you actually want to use peak and RMS values
     /// via OSC, remove this flag so that env detection is performed despite whether or not cpu
     /// saving mode is enabled.
-    pub cpu_saving_enabled: bool,
+    cpu_saving_enabled: bool,
     /// the master volume, controlled via the gui applied at the very end of processing.
     pub master_volume: f32,
     /// the dbap rolloff decibel amount, used to attenuate speaker gains over distances.
@@ -213,8 +178,6 @@ pub struct Model {
     // channel_to_speaker: FxHashMap<usize, speaker::Id>,
     /// A buffer for collecting sounds that have been removed due to completing.
     exhausted_sounds: Vec<sound::Id>,
-    /// Data related to a single installation necessary for the audio output thread.
-    installations: FxHashMap<installation::Id, Installation>,
 
     /// Inter-thread communication channels.
     channels: Channels,
@@ -229,19 +192,13 @@ pub struct Model {
     /// Only those speakers that are within the `audio::PROXIMITY_LIMIT` will be collected.
     dbap_speakers: Vec<dbap::Speaker>,
 
-    /// The FFT planner used to prepare the FFT calculations and share data between them.
-    fft_planner: fft::Planner,
-    /// The FFT to re-use by each of the `Detector`s.
-    fft: Fft,
-    /// A buffer for retrieving the frequency amplitudes from the `fft`.
-    fft_frequency_amplitudes_2: Box<[f32; FFT_WINDOW_LEN / 2]>,
 }
 
 struct Channels {
+    /// Channel for communicating with the audio detection thread.
+    detection: detection::Handle,
     /// Channel for communicating active sound info to the GUI.
     gui_audio_monitor_msg_tx: gui::monitor::Sender,
-    /// Channel for sending sound analysis data to the OSC output thread.
-    osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
     /// A handle to the soundscape thread - for notifying when a sound is complete.
     soundscape_tx: mpsc::Sender<soundscape::Message>,
     /// A handle to the wav_reader thread - for notifying when a sound has ended.
@@ -265,10 +222,13 @@ impl Model {
     pub fn new(
         frame_count: Arc<AtomicUsize>,
         gui_audio_monitor_msg_tx: gui::monitor::Sender,
-        osc_output_msg_tx: mpsc::Sender<osc::output::Message>,
+        osc_output_msg_tx: osc::output::Tx,
         soundscape_tx: mpsc::Sender<soundscape::Message>,
         wav_reader: source::wav::reader::Handle,
     ) -> Self {
+        // Spawn the audio detection thread.
+        let detection = detection::spawn(gui_audio_monitor_msg_tx.clone(), osc_output_msg_tx);
+
         // The currently soloed sources (none by default).
         let soloed = Default::default();
 
@@ -304,23 +264,9 @@ impl Model {
         // A buffer for collecting exhausted `Sound`s.
         let exhausted_sounds = Vec::with_capacity(128);
 
-        // A map from installations to their audio data and speaker analyses that can be re-used.
-        let installations = Default::default();
-
         // For tracking DBAP speaker gains.
         let dbap_speaker_gains = FxHashMap::default();
         let dbap_speakers = Vec::with_capacity(MAX_CHANNELS);
-
-        // The FFT to re-use by each of the `Detector`s.
-        let in_window = [Complex::<f32>::zero(); FFT_WINDOW_LEN];
-        let out_window = [Complex::<f32>::zero(); FFT_WINDOW_LEN];
-        let fft = Fft::new(in_window, out_window);
-        let inverse = false;
-        let fft_planner = fft::Planner::new(inverse);
-
-        // A buffer for retrieving the frequency amplitudes from the `fft`.
-        let fft_frequency_amplitudes_2 = Box::new([0.0; FFT_WINDOW_LEN / 2]);
-
         // Initialise the master volume to the default value.
         let master_volume = super::DEFAULT_MASTER_VOLUME;
 
@@ -331,8 +277,8 @@ impl Model {
         let cpu_saving_enabled = false;
 
         let channels = Channels {
+            detection,
             gui_audio_monitor_msg_tx,
-            osc_output_msg_tx,
             soundscape_tx,
             wav_reader,
         };
@@ -349,30 +295,23 @@ impl Model {
             dbap_speaker_infos,
             speakers,
             exhausted_sounds,
-            installations,
             channels,
             dbap_speaker_gains,
             dbap_speakers,
-            fft,
-            fft_planner,
-            fft_frequency_amplitudes_2,
         }
+    }
+
+    /// Specify to the audio thread whether or not CPU saving mode is enabled.
+    pub fn cpu_saving_enabled(&mut self, enabled: bool) {
+        self.cpu_saving_enabled = enabled;
+        self.channels.detection.cpu_saving_enabled(enabled);
     }
 
     /// Insert an installation for the given `Id`.
     ///
     /// Returns `true` if the installation did not yet exist or false otherwise.
-    pub fn insert_installation(&mut self, id: installation::Id, computers: usize) -> bool {
-        let speaker_analyses = Vec::with_capacity(MAX_CHANNELS);
-        let buffer = Vec::with_capacity(1024);
-        let fft_detector = FftDetector::new();
-        let installation = Installation {
-            speaker_analyses,
-            buffer,
-            fft_detector,
-            computers,
-        };
-        self.installations.insert(id, installation).is_none()
+    pub fn insert_installation(&mut self, id: installation::Id, computers: usize) {
+        self.channels.detection.add_installation(id, computers);
     }
 
     /// Remove the installation at the given `Id`.
@@ -382,43 +321,46 @@ impl Model {
     /// Returns `true` if the installation was successfully removed.
     ///
     /// Returns `false` if there was no installation for the given `Id`.
-    pub fn remove_installation(&mut self, id: &installation::Id) -> bool {
+    pub fn remove_installation(&mut self, id: &installation::Id) {
+        self.channels.detection.remove_installation(*id);
+
+        // Remove the installation from any speakers.
         for speaker in self.speakers.values_mut() {
             speaker.installations.remove(id);
         }
+
+        // Remove the installation from any sounds.
         for sound in self.sounds.values_mut() {
             if let sound::Installations::Set(ref mut set) = sound.installations {
                 set.remove(id);
             }
         }
-        self.installations.remove(id).is_some()
     }
 
     /// Inserts the speaker and sends an `Add` message to the GUI.
     pub fn insert_speaker(&mut self, id: speaker::Id, speaker: Speaker) -> Option<Speaker> {
-        // Re-use the old detectors if there are any.
-        let (env_detector, old_speaker) = match self.speakers.remove(&id) {
-            None => (EnvDetector::new(), None),
-            Some(ActiveSpeaker { speaker, env_detector, }) => (env_detector, Some(speaker)),
-        };
-
-        let speaker = ActiveSpeaker { speaker, env_detector };
+        let old_speaker = self.speakers
+            .remove(&id)
+            .map(|ActiveSpeaker { speaker }| speaker);
+        let speaker = ActiveSpeaker { speaker };
         let speaker_msg = gui::SpeakerMessage::Add;
         let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-        self.channels.gui_audio_monitor_msg_tx.send(msg).ok();
+        self.channels.gui_audio_monitor_msg_tx.push(msg);
         self.speakers.insert(id, speaker);
         old_speaker
     }
 
-    /// Removes the speaker and sens a `Removed` message to the GUI.
+    /// Removes the speaker and sends a `Removed` message to the GUI.
     pub fn remove_speaker(&mut self, id: speaker::Id) -> Option<Speaker> {
-        let removed = self.speakers.remove(&id);
+        let removed = self.speakers
+            .remove(&id)
+            .map(|ActiveSpeaker { speaker }| speaker);
         if removed.is_some() {
             let speaker_msg = gui::SpeakerMessage::Remove;
             let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-            self.channels.gui_audio_monitor_msg_tx.send(msg).ok();
+            self.channels.gui_audio_monitor_msg_tx.push(msg);
         }
-        removed.map(|ActiveSpeaker { speaker, .. }| speaker)
+        removed
     }
 
     /// Inserts the installation into the speaker with the given `speaker::Id`.
@@ -443,6 +385,8 @@ impl Model {
         let channels = sound.channels;
         let source_id = sound.source_id();
         let normalised_progress = sound.normalised_progress();
+
+        // Notify the GUI monitor that a sound has started.
         let sound_msg = gui::ActiveSoundMessage::Start {
             source_id,
             position,
@@ -450,7 +394,11 @@ impl Model {
             normalised_progress,
         };
         let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
-        self.channels.gui_audio_monitor_msg_tx.send(msg).ok();
+        self.channels.gui_audio_monitor_msg_tx.push(msg);
+
+        // Notify the detection thread that a new sound has been added.
+        self.channels.detection.add_sound(id, channels);
+
         self.sounds.insert(id, sound)
     }
 
@@ -526,10 +474,10 @@ impl Model {
     ///
     /// This is called when we switch between projects within the GUI.
     pub fn clear_project_specific_data(&mut self) {
+        self.channels.detection.clear_project_specific_data();
         self.frame_count.store(0, atomic::Ordering::Relaxed);
         self.soloed.clear();
         self.speakers.clear();
-        self.installations.clear();
 
         let Model { ref mut sounds, ref channels, .. } = *self;
         for (sound_id, sound) in sounds.drain() {
@@ -544,13 +492,16 @@ impl Channels {
         // GUI thread.
         let sound_msg = gui::ActiveSoundMessage::End { sound };
         let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
-        self.gui_audio_monitor_msg_tx.send(msg).ok();
+        self.gui_audio_monitor_msg_tx.push(msg);
 
         // Soundscape thread.
         let update = move |soundscape: &mut soundscape::Model| {
             soundscape.remove_active_sound(&id);
         };
         self.soundscape_tx.send(soundscape::UpdateFn::from(update).into()).ok();
+
+        // Detection thread.
+        self.detection.remove_sound(id);
 
         // WAV reader thread.
         self.wav_reader.end(id);
@@ -579,25 +530,14 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref mut sound_channels,
             ref mut dbap_speaker_infos,
             ref mut exhausted_sounds,
-            ref mut installations,
             ref mut speakers,
             ref mut dbap_speaker_gains,
             ref mut dbap_speakers,
             ref channels,
-            ref mut fft,
-            ref mut fft_planner,
-            ref mut fft_frequency_amplitudes_2,
         } = model;
 
         // Always silence the buffer to begin.
         buffer.iter_mut().for_each(|s| *s = 0.0);
-
-        // Clear the analyses.
-        for installation in installations.values_mut() {
-            installation.speaker_analyses.clear();
-            installation.buffer.resize(buffer.len_frames(), 0.0);
-            installation.buffer.iter_mut().for_each(|s| *s = 0.0);
-        }
 
         // Update the map from buffer channels to their speakers.
         //
@@ -656,11 +596,10 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 normalised_progress,
             };
             let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, update);
-            channels.gui_audio_monitor_msg_tx.send(msg).ok();
+            channels.gui_audio_monitor_msg_tx.push(msg);
 
             let ActiveSound {
                 ref mut sound,
-                ref mut channel_detectors,
                 ..
             } = *sound;
 
@@ -692,19 +631,17 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             // Collect the samples from the `Sound`'s `Signal`.
             {
                 let mut samples_written = 0;
+                for sample in sound.signal.samples().take(num_samples) {
+                    let sample = sample * sound.volume;
+                    ordered_sound.unmixed_samples.push(sample);
+                    samples_written += 1;
+                }
+
+                // If CPU saving is not enabled, send the samples to the detector for analysis.
                 if !cpu_saving_enabled {
-                    for sample in sound.signal.samples().take(num_samples) {
-                        let sample = sample * sound.volume;
-                        ordered_sound.unmixed_samples.push(sample);
-                        channel_detectors[samples_written % sound.channels].next(sample);
-                        samples_written += 1;
-                    }
-                }else{
-                    for sample in sound.signal.samples().take(num_samples) {
-                        let sample = sample * sound.volume;
-                        ordered_sound.unmixed_samples.push(sample);
-                        samples_written += 1;
-                    }
+                    let mut detection_buffer = channels.detection.pop_sound_buffer();
+                    detection_buffer.extend(ordered_sound.unmixed_samples.iter().cloned());
+                    channels.detection.update_sound(sound_id, detection_buffer, n_channels);
                 }
 
                 // If we didn't write the expected number of samples, the sound has been exhausted.
@@ -712,16 +649,6 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     exhausted_sounds.push(sound_id);
                     let remaining_silence = (samples_written..num_samples).map(|_| 0.0);
                     ordered_sound.unmixed_samples.extend(remaining_silence);
-                }
-
-                if !cpu_saving_enabled {
-                    // Send the latest RMS and peak for each channel to the GUI for monitoring.
-                    for (index, env_detector) in channel_detectors.iter().enumerate() {
-                        let (rms, peak) = env_detector.current();
-                        let sound_msg = gui::ActiveSoundMessage::UpdateChannel { index, rms, peak };
-                        let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
-                        channels.gui_audio_monitor_msg_tx.send(msg).ok();
-                    }
                 }
             }
 
@@ -889,157 +816,28 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             }
         }
 
-        // For each speaker, feed its amplitude into its detectors.
-        let n_channels = buffer.channels();
-        for (&id, active) in speakers.iter_mut() {
-            let channel_i = active.speaker.channel;
-            if channel_i >= n_channels {
-                continue;
-            }
-            let ActiveSpeaker {
-                ref mut env_detector,
-                ..
-            } = *active;
-
-            // Peak and RMS are currently only used for GUI. Only process them if the GUI is
-            // active, i.e. we're not in CPU saving mode.
-            let (mut rms, mut peak) = (0.0, 0.0);
-            if !cpu_saving_enabled {
-                // Update the envelope detector.
-                for frame in buffer.frames() {
-                    let sample = frame[channel_i];
-                    env_detector.next(sample);
-                }
-
-                // The current env detector states.
-                let (current_rms, current_peak) = env_detector.current();
-                rms = current_rms;
-                peak = current_peak;
-
-                // Send the detector state for the speaker to the GUI.
-                let speaker_msg = gui::SpeakerMessage::Update { rms, peak };
-                let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-                channels.gui_audio_monitor_msg_tx.send(msg).ok();
-            }
-
-            // Sum raw audio data for FFTs.
-            for id in &active.speaker.installations {
-                let installation = match installations.get_mut(&id) {
-                    None => continue,
-                    Some(installation) => installation,
-                };
-
-                // If the installation has no computers, skip it.
-                if installation.computers == 0 {
-                    continue;
-                }
-
-                let index = channel_i;
-                let analysis = SpeakerAnalysis { peak, rms, index };
-                installation.speaker_analyses.push(analysis);
-
-                // Sum the audio data for the speaker onto its associated installation buffers.
-                for (i, frame) in buffer.frames().enumerate() {
-                    installation.buffer[i] += frame[channel_i];
-                }
-            }
-        }
-
-        // Send the collected analysis to the OSC output thread.
-        for (&id, installation) in installations.iter_mut() {
-            // If there are no speakers, skip the installation.
-            if speakers.is_empty() {
-                continue;
-            }
-
-            // If the installation has no computers, there's no point analysing audio.
-            if installation.computers == 0 {
-                continue;
-            }
-
-            // Retrieve the audio buffer so we can perform FFT.
-            let avg_fft: osc::output::FftData = {
-                let Installation {
-                    ref buffer,
-                    ref speaker_analyses,
-                    ref mut fft_detector,
-                    ..
-                } = *installation;
-
-                let n_speakers = speaker_analyses.len();
-
-                // Feed the buffer into the FFT detector, normalised for the number of speakers in
-                // the installation.
-                for &sample in buffer {
-                    // TODO: This division might be more efficient on lmh and bins but not certain
-                    // that it is correct/transitive.
-                    fft_detector.push(sample / n_speakers as f32);
-                }
-
-                // Perform the FFT.
-                fft_detector.calc_fft(fft_planner, fft, &mut fft_frequency_amplitudes_2[..]);
-
-                // Retrieve the LMH representation.
-                let (l_2, m_2, h_2) = fft::lmh(&fft_frequency_amplitudes_2[..]);
-                let mut lmh = [0.0; 3];
-                for (amp, amp_2) in lmh.iter_mut().zip(&[l_2, m_2, h_2]) {
-                    *amp = amp_2.sqrt() / (FFT_WINDOW_LEN / 2) as f32;
-                }
-
-                // Retrieve the 8-bin representation.
-                let mut bins_2 = [0.0; 8];
-                fft::mel_bins(&fft_frequency_amplitudes_2[..], &mut bins_2);
-                let mut bins = [0.0; 8];
-                for (amp, amp_2) in bins.iter_mut().zip(&bins_2) {
-                    *amp = amp_2.sqrt() / (FFT_WINDOW_LEN / 2) as f32;
-                }
-
-                // Prepare the osc output message.
-                let fft_data = osc::output::FftData { lmh, bins };
-                fft_data
-            };
-
-            // Find the average peak and RMS across all speakers in the installation.
-            let (avg_peak, avg_rms) = {
-                let n_speakers_f = installation.speaker_analyses.len() as f32;
-                let mut iter = installation.speaker_analyses.iter();
-                iter.next()
-                    .map(|s| {
-                        let init = (s.peak, s.rms);
-                        iter.fold(init, |(acc_p, acc_r), s| (acc_p + s.peak, acc_r + s.rms))
-                    })
-                    .map(|(sum_p, sum_r)| (sum_p / n_speakers_f, sum_r / n_speakers_f))
-                    .unwrap_or((0.0, 0.0))
-            };
-
-            // Sort the speakers by channel index as the OSC output thread assumes that speakers
-            // are in order of index.
-            installation.speaker_analyses.sort_by(|a, b| a.index.cmp(&b.index));
-            let speakers = installation.speaker_analyses
-                .drain(..)
-                .map(|s| osc::output::Speaker {
-                    rms: s.rms,
-                    peak: s.peak,
+        // Send output buffer to detection thread for analysis.
+        let (mut detection_buffer, mut output_info) = channels.detection.pop_output_buffer();
+        detection_buffer.extend(buffer.iter().cloned());
+        output_info.speakers.extend({
+            speakers
+                .iter()
+                .map(|(&id, speaker)| {
+                    let info = detection::SpeakerInfo {
+                        channel: speaker.channel,
+                        installations: speaker.installations.clone(),
+                    };
+                    (id, info)
                 })
-                .collect();
-            let data = osc::output::AudioFrameData {
-                avg_peak,
-                avg_rms,
-                avg_fft,
-                speakers,
-            };
-            let msg = osc::output::Message::Audio(id, data);
-            channels.osc_output_msg_tx.send(msg).ok();
-        }
+        });
+        channels.detection.update_output(detection_buffer, buffer.channels(), output_info);
 
         // Remove all sounds that have been exhausted.
         for sound_id in exhausted_sounds.drain(..) {
             // Remove the sound from DBAP gain tracking.
             dbap_speaker_gains.remove(&sound_id);
-
             // Send this with the `End` message to avoid de-allocating on audio thread.
             let sound = sounds.remove(&sound_id).unwrap();
-
             // Notify the other threads.
             channels.notify_sound_end(sound_id, sound);
         }
@@ -1051,7 +849,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
         // Find the peak amplitude and send it via the monitor channel.
         let peak = buffer.iter().fold(0.0, |peak, &s| s.max(peak));
-        channels.gui_audio_monitor_msg_tx.send(gui::AudioMonitorMessage::Master { peak }).ok();
+        channels.gui_audio_monitor_msg_tx.push(gui::AudioMonitorMessage::Master { peak });
 
         // Step the frame count.
         frame_count.fetch_add(buffer.len_frames(), atomic::Ordering::Relaxed);
