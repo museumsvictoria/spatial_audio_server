@@ -338,7 +338,7 @@ impl Model {
         // Notify audio output thread.
         channels
             .audio_output
-            .send(move |audio| audio.cpu_saving_enabled = cpu_saving_mode)
+            .send(move |audio| audio.cpu_saving_enabled(cpu_saving_mode))
             .expect("failed to update cpu saving mode on audio output thread");
 
         Model {
@@ -571,7 +571,7 @@ impl Model {
                             let cpu_saving_mode = *cpu_saving_mode;
                             channels
                                 .audio_output
-                                .send(move |audio| audio.cpu_saving_enabled = cpu_saving_mode)
+                                .send(move |audio| audio.cpu_saving_enabled(cpu_saving_mode))
                                 .expect("failed to update cpu saving mode on audio output thread");
                         }
                     }

@@ -107,6 +107,7 @@ enum Message {
 
     Output(Buffer, OutputInfo),
 
+    CpuSavingEnabled(bool),
     ClearProjectSpecificData,
 
     Exit,
@@ -125,6 +126,9 @@ pub struct Model {
     sounds: Sounds,
     speakers: Speakers,
     installations: Installations,
+
+    /// If CPU saving is enabled, don't run the envelope detectors.
+    cpu_saving_enabled: bool,
 
     gui_audio_monitor_msg_tx: gui::monitor::Sender,
     osc_output_msg_tx: osc::output::Tx,
@@ -197,6 +201,12 @@ impl Handle {
         self.tx.push(msg);
     }
 
+    /// Tell the detection thread whether or not cpu mode is enabled or disabled.
+    pub fn cpu_saving_enabled(&self, enabled: bool) {
+        let msg = Message::CpuSavingEnabled(enabled);
+        self.tx.push(msg);
+    }
+
     /// Pop the next available sound buffer for use off the queue.
     pub fn pop_sound_buffer(&self) -> Vec<f32> {
         let mut buffer = self.sound_buffer_rx.try_pop().unwrap_or_else(Vec::new);
@@ -257,10 +267,14 @@ impl Model {
         // A buffer for retrieving the frequency amplitudes from the `fft`.
         let fft_frequency_amplitudes_2 = Box::new([0.0; FFT_WINDOW_LEN / 2]);
 
+        // CPU saving mode is disabled by default.
+        let cpu_saving_enabled = false;
+
         Model {
             sounds,
             speakers,
             installations,
+            cpu_saving_enabled,
             gui_audio_monitor_msg_tx,
             osc_output_msg_tx,
             sound_buffer_tx,
@@ -456,6 +470,7 @@ fn run(
                     ref gui_audio_monitor_msg_tx,
                     ref osc_output_msg_tx,
                     ref output_buffer_tx,
+                    cpu_saving_enabled,
                     ..
                 } = model;
 
@@ -485,19 +500,26 @@ fn run(
                         .entry(id)
                         .or_insert_with(|| Speaker { env_detector: EnvDetector::new() });
 
-                    // Update the envelope detector.
-                    for frame in samples.chunks(channels) {
-                        let sample = frame[speaker.channel];
-                        state.env_detector.next(sample);
+                    // Only update the envelope detector if CPU saving is not enabled.
+                    let mut rms = 0.0;
+                    let mut peak = 0.0;
+                    if !cpu_saving_enabled {
+                        // Update the envelope detector.
+                        for frame in samples.chunks(channels) {
+                            let sample = frame[speaker.channel];
+                            state.env_detector.next(sample);
+                        }
+
+                        // The current env detector states.
+                        let (current_rms, current_peak) = state.env_detector.current();
+                        rms = current_rms;
+                        peak = current_peak;
+
+                        // Send the detector state for this speaker to the GUI.
+                        let speaker_msg = gui::SpeakerMessage::Update { rms, peak };
+                        let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
+                        gui_audio_monitor_msg_tx.push(msg);
                     }
-
-                    // The current env detector states.
-                    let (rms, peak) = state.env_detector.current();
-
-                    // Send the detector state for this speaker to the GUI.
-                    let speaker_msg = gui::SpeakerMessage::Update { rms, peak };
-                    let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-                    gui_audio_monitor_msg_tx.push(msg);
 
                     // Sum the data from this speaker onto the buffers all of its assigned installations.
                     for installation_id in &speaker.installations {
@@ -636,6 +658,10 @@ fn run(
                 model.speakers.clear();
                 model.installations.clear();
             },
+
+            Message::CpuSavingEnabled(enabled) => {
+                model.cpu_saving_enabled = enabled;
+            }
 
             // Exit the loop as the app has exited.
             Message::Exit => {

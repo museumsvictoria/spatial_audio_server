@@ -152,7 +152,7 @@ pub struct Model {
     /// NOTE: If using this server in the future and you actually want to use peak and RMS values
     /// via OSC, remove this flag so that env detection is performed despite whether or not cpu
     /// saving mode is enabled.
-    pub cpu_saving_enabled: bool,
+    cpu_saving_enabled: bool,
     /// the master volume, controlled via the gui applied at the very end of processing.
     pub master_volume: f32,
     /// the dbap rolloff decibel amount, used to attenuate speaker gains over distances.
@@ -299,6 +299,12 @@ impl Model {
             dbap_speaker_gains,
             dbap_speakers,
         }
+    }
+
+    /// Specify to the audio thread whether or not CPU saving mode is enabled.
+    pub fn cpu_saving_enabled(&mut self, enabled: bool) {
+        self.cpu_saving_enabled = enabled;
+        self.channels.detection.cpu_saving_enabled(enabled);
     }
 
     /// Insert an installation for the given `Id`.
