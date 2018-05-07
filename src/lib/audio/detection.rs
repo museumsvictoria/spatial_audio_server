@@ -407,7 +407,7 @@ fn run(
                     let (rms, peak) = env_detector.current();
                     let sound_msg = gui::ActiveSoundMessage::UpdateChannel { index, rms, peak };
                     let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
-                    gui_audio_monitor_msg_tx.send(msg).ok();
+                    gui_audio_monitor_msg_tx.push(msg);
                 }
             },
 
@@ -497,7 +497,7 @@ fn run(
                     // Send the detector state for this speaker to the GUI.
                     let speaker_msg = gui::SpeakerMessage::Update { rms, peak };
                     let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-                    gui_audio_monitor_msg_tx.send(msg).ok();
+                    gui_audio_monitor_msg_tx.push(msg);
 
                     // Sum the data from this speaker onto the buffers all of its assigned installations.
                     for installation_id in &speaker.installations {

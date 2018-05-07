@@ -142,7 +142,7 @@ pub struct Channels {
     pub wav_reader: audio::source::wav::reader::Handle,
     pub audio_input: audio::input::Stream,
     pub audio_output: audio::output::Stream,
-    pub audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
+    pub audio_monitor_msg_rx: monitor::Receiver,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -461,7 +461,12 @@ impl Model {
         }
 
         // Update the map of active sounds.
-        for msg in channels.audio_monitor_msg_rx.try_iter() {
+        loop {
+            let msg = match channels.audio_monitor_msg_rx.try_pop() {
+                None => break,
+                Some(msg) => msg,
+            };
+
             match msg {
                 AudioMonitorMessage::Master { peak } => {
                     audio_monitor.master_peak = peak;
@@ -643,7 +648,7 @@ impl Channels {
         wav_reader: audio::source::wav::reader::Handle,
         audio_input: audio::input::Stream,
         audio_output: audio::output::Stream,
-        audio_monitor_msg_rx: mpsc::Receiver<AudioMonitorMessage>,
+        audio_monitor_msg_rx: monitor::Receiver,
     ) -> Self {
         Channels {
             frame_count,

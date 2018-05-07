@@ -339,7 +339,7 @@ impl Model {
         let speaker = ActiveSpeaker { speaker };
         let speaker_msg = gui::SpeakerMessage::Add;
         let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-        self.channels.gui_audio_monitor_msg_tx.send(msg).ok();
+        self.channels.gui_audio_monitor_msg_tx.push(msg);
         self.speakers.insert(id, speaker);
         old_speaker
     }
@@ -352,7 +352,7 @@ impl Model {
         if removed.is_some() {
             let speaker_msg = gui::SpeakerMessage::Remove;
             let msg = gui::AudioMonitorMessage::Speaker(id, speaker_msg);
-            self.channels.gui_audio_monitor_msg_tx.send(msg).ok();
+            self.channels.gui_audio_monitor_msg_tx.push(msg);
         }
         removed
     }
@@ -388,7 +388,7 @@ impl Model {
             normalised_progress,
         };
         let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
-        self.channels.gui_audio_monitor_msg_tx.send(msg).ok();
+        self.channels.gui_audio_monitor_msg_tx.push(msg);
 
         // Notify the detection thread that a new sound has been added.
         self.channels.detection.add_sound(id, channels);
@@ -486,7 +486,7 @@ impl Channels {
         // GUI thread.
         let sound_msg = gui::ActiveSoundMessage::End { sound };
         let msg = gui::AudioMonitorMessage::ActiveSound(id, sound_msg);
-        self.gui_audio_monitor_msg_tx.send(msg).ok();
+        self.gui_audio_monitor_msg_tx.push(msg);
 
         // Soundscape thread.
         let update = move |soundscape: &mut soundscape::Model| {
@@ -590,7 +590,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                 normalised_progress,
             };
             let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, update);
-            channels.gui_audio_monitor_msg_tx.send(msg).ok();
+            channels.gui_audio_monitor_msg_tx.push(msg);
 
             let ActiveSound {
                 ref mut sound,
@@ -843,7 +843,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
 
         // Find the peak amplitude and send it via the monitor channel.
         let peak = buffer.iter().fold(0.0, |peak, &s| s.max(peak));
-        channels.gui_audio_monitor_msg_tx.send(gui::AudioMonitorMessage::Master { peak }).ok();
+        channels.gui_audio_monitor_msg_tx.push(gui::AudioMonitorMessage::Master { peak });
 
         // Step the frame count.
         frame_count.fetch_add(buffer.len_frames(), atomic::Ordering::Relaxed);

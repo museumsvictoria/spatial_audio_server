@@ -6,15 +6,16 @@
 //! not require performing some kind of I/O depending on the platform, in turn taking an
 //! unpredictable amount of time.
 
+use crossbeam::sync::{MsQueue, SegQueue};
 use gui;
 use nannou;
 use std::io;
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::thread;
 
-pub type Sender = mpsc::Sender<gui::AudioMonitorMessage>;
-pub type Receiver = mpsc::Receiver<gui::AudioMonitorMessage>;
+pub type Sender = Arc<MsQueue<gui::AudioMonitorMessage>>;
+pub type Receiver = Arc<SegQueue<gui::AudioMonitorMessage>>;
 pub type Spawned = (Monitor, Sender, Receiver);
 
 /// A handle to the GUI monitoring thread.
@@ -39,8 +40,14 @@ impl Monitor {
 
 /// Spawn the intermediary monitoring thread and return the communication channels.
 pub fn spawn(app_proxy: nannou::app::Proxy) -> io::Result<Spawned> {
-    let (audio_tx, audio_rx) = mpsc::channel();
-    let (gui_tx, gui_rx) = mpsc::channel();
+    let audio_queue = Arc::new(MsQueue::new());
+    let audio_tx = audio_queue.clone();
+    let audio_rx = audio_queue;
+
+    let gui_queue = Arc::new(SegQueue::new());
+    let gui_tx = gui_queue.clone();
+    let gui_rx = gui_queue;
+
     let is_closed = Arc::new(AtomicBool::new(false));
     let is_closed_2 = is_closed.clone();
 
@@ -51,29 +58,14 @@ pub fn spawn(app_proxy: nannou::app::Proxy) -> io::Result<Spawned> {
             // Perhaps use some atomic bool flag which indicates whether or not the GUI needs
             // waking up.
             // Attempt to forward every message and wakeup the GUI when successful.
-            let mut msgs = vec![];
             'run: while !is_closed_2.load(atomic::Ordering::Relaxed) {
-                // Receive all pending msgs.
-                msgs.extend(audio_rx.try_iter());
-
-                // If there are no pending messages, wait for the next one.
-                if msgs.is_empty() {
-                    msgs.extend(audio_rx.recv().ok());
-                }
-
-                // Process the messages.
-                for msg in msgs.drain(..) {
-                    match gui_tx.send(msg) {
-                        Ok(()) => {
-                            // Proxy is currently buggy on linux so we only enable this for macos.
-                            if cfg!(target_os = "macos") {
-                                if app_proxy.wakeup().is_err() {
-                                    eprintln!("audio_monitor proxy could not wakeup app");
-                                    break 'run;
-                                }
-                            }
-                        },
-                        Err(_) => break 'run,
+                let msg = audio_rx.pop();
+                gui_tx.push(msg);
+                // Proxy is currently buggy on linux so we only enable this for macos.
+                if cfg!(target_os = "macos") {
+                    if app_proxy.wakeup().is_err() {
+                        eprintln!("audio_monitor proxy could not wakeup app");
+                        break 'run;
                     }
                 }
             }
