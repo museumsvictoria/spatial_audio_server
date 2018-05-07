@@ -6,6 +6,8 @@ use std;
 use std::iter::once;
 use std::sync::mpsc;
 
+pub type Tx = mpsc::Sender<Message>;
+
 /// Messages that can be received by the `osc::output` thread.
 pub enum Message {
     Audio(installation::Id, AudioFrameData),

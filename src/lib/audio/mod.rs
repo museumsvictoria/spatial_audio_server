@@ -7,6 +7,7 @@ pub use self::source::Source;
 pub use self::speaker::Speaker;
 
 pub mod dbap;
+pub mod detection;
 pub mod detector;
 pub mod fft;
 pub mod input;
