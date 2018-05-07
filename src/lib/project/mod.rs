@@ -26,6 +26,7 @@ use std::ffi::OsStr;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use utils;
 use walkdir::WalkDir;
 
@@ -295,9 +296,10 @@ impl Project {
                     .connect(&addr.socket)
                     .expect("failed to connect OSC sender");
                 let osc_addr = addr.osc_addr.clone();
-                let add = osc::output::OscTarget::Add(id, computer, osc_tx, osc_addr);
+                let target = osc::output::TargetSource::New(Arc::new(osc_tx));
+                let add = osc::output::OscTarget::Add(id, computer, target, osc_addr);
                 let msg = osc::output::Message::Osc(add);
-                channels.osc_out_msg_tx.push(msg)
+                channels.osc_out_msg_tx.push(msg);
             }
 
             // Audio output thread.

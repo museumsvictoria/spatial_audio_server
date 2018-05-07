@@ -11,6 +11,9 @@ pub type MessageQueue = Arc<MsQueue<Message>>;
 pub type Tx = MessageQueue;
 type Rx = MessageQueue;
 
+/// The OSC sender type used by the osc output thread.
+pub type Sender = osc::Sender<osc::Connected>;
+
 /// Messages that can be received by the `osc::output` thread.
 pub enum Message {
     Audio(installation::Id, AudioFrameData),
@@ -23,12 +26,20 @@ pub enum OscTarget {
     Add(
         installation::Id,
         installation::computer::Id,
-        osc::Sender<osc::Connected>,
+        TargetSource,
         String,
     ),
     Remove(installation::Id, installation::computer::Id),
     RemoveInstallation(installation::Id),
     UpdateAddr(installation::Id, installation::computer::Id, String),
+}
+
+/// Specifies where the target OSC sender should come from.
+pub enum TargetSource {
+    /// A brand new OSC sender.
+    New(Arc<Sender>),
+    /// Use the sender currently used by the given installation computer.
+    Existing(installation::Id, installation::computer::Id),
 }
 
 /// Data related to a single frame of audio.
@@ -83,7 +94,7 @@ pub fn spawn() -> (std::thread::JoinHandle<()>, Tx, mpsc::Receiver<Log>) {
 
 fn run(msg_rx: Rx, log_tx: mpsc::Sender<Log>) {
     struct Target {
-        osc_tx: osc::Sender<osc::Connected>,
+        osc_tx: Arc<Sender>,
         osc_addr: String,
     }
 
@@ -142,9 +153,23 @@ fn run(msg_rx: Rx, log_tx: mpsc::Sender<Log>) {
                 }
                 // Some OSC target should be added or removed.
                 Message::Osc(osc) => match osc {
-                    OscTarget::Add(installation, computer, osc_tx, osc_addr) => {
+                    OscTarget::Add(installation_id, computer, target, osc_addr) => {
+                        let osc_tx = match target {
+                            TargetSource::New(tx) => tx,
+                            TargetSource::Existing(inst_id, comp_id) => {
+                                let existing_tx = osc_txs
+                                    .get(&inst_id)
+                                    .and_then(|comps| comps.get(&comp_id))
+                                    .map(|target| target.osc_tx.clone());
+                                match existing_tx {
+                                    Some(tx) => tx,
+                                    // If we couldn't find the exising socket, we skip it.
+                                    None => continue,
+                                }
+                            },
+                        };
                         osc_txs
-                            .entry(installation)
+                            .entry(installation_id)
                             .or_insert_with(FxHashMap::default)
                             .insert(computer, Target { osc_tx, osc_addr });
                     }
