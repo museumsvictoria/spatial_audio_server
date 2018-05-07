@@ -353,6 +353,14 @@ fn run(
         model.sound_buffer_tx.push(buffer);
     }
 
+    // Pre-prepare some output buffers.
+    const OUTPUT_BUFFERS_TO_PREPARE: usize = 3;
+    for _ in 0..OUTPUT_BUFFERS_TO_PREPARE {
+        let buffer = Vec::with_capacity(FRAMES_PER_BUFFER * MAX_CHANNELS);
+        let info = Default::default();
+        model.output_buffer_tx.push((buffer, info));
+    }
+
     // Begin the loop.
     loop {
         let msg = match rx.try_pop() {
@@ -367,6 +375,7 @@ fn run(
         match msg {
             // Insert the new sound into the map.
             Message::AddSound(sound_id, channels) => {
+
                 let sound = new_sound(channels);
                 model.sounds.insert(sound_id, sound);
 
@@ -489,7 +498,6 @@ fn run(
 
                 // For each speaker, feed its amplitude into its detectors.
                 for (&id, speaker) in &speaker_infos {
-
                     // Skip speakers that are out of range of the buffer.
                     if channels <= speaker.channel {
                         continue;
