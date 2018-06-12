@@ -2,8 +2,7 @@
 
 A cross-platform, n-channel spatial audio server developed by
 [MindBuffer](https://www.mindbuffer.net/) using the [Nannou Creative Coding
-Framework](http://nannou.cc/). Audio Server was commissioned by Scienceworks of
-Melbourne Museum Victoria for the Beyond Perception exhibition.
+Framework](http://nannou.cc/). This software was commissioned by Museums Victoria to create the soundscape of *Beyond Perception: Seeing the Unseen*, a permanent exhibition at Scienceworks in Melbourne, Australia which opened in May 2018.
 
 ![Audio Server Screenshot](https://imgur.com/2qXJtjc.png)
 
