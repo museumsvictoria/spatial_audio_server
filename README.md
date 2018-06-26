@@ -65,8 +65,19 @@ To build and run the audio server from scratch
 
 ### Platforms
 
-The audio server should build and run on MacOS, Windows and Linux. It uses
-CoreAudio on MacOS, ASIO on Windows and ALSA on Linux.
+Cross-platform support is in the pipeline, however currently some platforms are
+better supported than others:
+
+- **macOS** - The best supported and most well tested platform. Currently
+  running the Beyond Perception exhibition.
+- **Linux** - Works well with ALSA and X11. Make sure that pulseaudio is not
+  running as the audio server currently requires exclusive access to the audio
+  device via ALSA.
+- **Windows** - Support is currently blocked on adding ASIO support to
+  [CPAL](https://github.com/tomaka/cpal). See [this
+  issue](https://github.com/museumsvictoria/spatial_audio_server/issues/52) for
+  more details and see [this PR](https://github.com/tomaka/cpal/pull/221) to see
+  the WIP support.
 
 ### Rust
 
