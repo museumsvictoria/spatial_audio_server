@@ -534,3 +534,9 @@ enabled or not when opening the audio server. This value is updated each time
 the audio server is closed. E.g. if CPU saving mode is enabled when closed, then
 this will be saved within the `config.json` so that next time the audio server
 starts it will start with CPU saving mode enabled.
+
+
+
+### License
+
+[Mozilla Public License, version 2.0](http://www.mozilla.org/MPL/2.0)
