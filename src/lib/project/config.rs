@@ -24,6 +24,10 @@ pub struct Config {
     pub max_speaker_radius_metres: Metres,
     #[serde(default = "default::seed")]
     pub seed: Seed,
+    /// The current value of proximity limit. The limit in meters
+    /// for a speaker to be considered in the dbap calculations
+    #[serde(default = "default::proximity_limit")]
+    pub proximity_limit: Metres,
 }
 
 impl Default for Config {
@@ -38,6 +42,7 @@ impl Default for Config {
         let min_speaker_radius_metres = default::min_speaker_radius_metres();
         let max_speaker_radius_metres = default::max_speaker_radius_metres();
         let seed = default::seed();
+        let proximity_limit = default::proximity_limit();
         Config {
             window_width,
             window_height,
@@ -49,6 +54,7 @@ impl Default for Config {
             min_speaker_radius_metres,
             max_speaker_radius_metres,
             seed,
+            proximity_limit,
         }
     }
 }
@@ -88,5 +94,9 @@ pub mod default {
 
     pub fn seed() -> Seed {
         [0, 0, 0, 0]
+    }
+
+    pub fn proximity_limit() -> Metres {
+        Metres(7.0)
     }
 }

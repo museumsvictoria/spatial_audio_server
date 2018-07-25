@@ -1,5 +1,6 @@
 use audio;
 use time_calc::Ms;
+use metres::Metres;
 
 /// Master state of the project.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -13,6 +14,10 @@ pub struct Master {
     /// The rolloff decibel amount, used to attenuate speaker gains over distances.
     #[serde(default = "default_dbap_rolloff_db")]
     pub dbap_rolloff_db: f64,
+    /// The current value of proximity limit. The limit in meters
+    /// for a speaker to be considered in the dbap calculations
+    #[serde(default = "default_proximity_limit")]
+    pub proximity_limit: Metres,
 }
 
 impl Default for Master {
@@ -20,7 +25,9 @@ impl Default for Master {
         let volume = default_master_volume();
         let realtime_source_latency = default_realtime_source_latency();
         let dbap_rolloff_db = default_dbap_rolloff_db();
-        Master { volume, realtime_source_latency, dbap_rolloff_db }
+        let proximity_limit = default_proximity_limit();
+        Master { volume, realtime_source_latency, 
+            dbap_rolloff_db, proximity_limit }
     }
 }
 
@@ -34,4 +41,8 @@ fn default_realtime_source_latency() -> Ms {
 
 fn default_dbap_rolloff_db() -> f64 {
     audio::DEFAULT_DBAP_ROLLOFF_DB
+}
+
+fn default_proximity_limit() -> Metres {
+    Metres(7.0)
 }
