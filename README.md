@@ -2,8 +2,7 @@
 
 A cross-platform, n-channel spatial audio server developed by
 [MindBuffer](https://www.mindbuffer.net/) using the [Nannou Creative Coding
-Framework](http://nannou.cc/). Audio Server was commissioned by Scienceworks of
-Melbourne Museum Victoria for the Beyond Perception exhibition.
+Framework](http://nannou.cc/). This software was commissioned by Museums Victoria to create the soundscape of *Beyond Perception: Seeing the Unseen*, a permanent exhibition at Scienceworks in Melbourne, Australia which opened in May 2018.
 
 ![Audio Server Screenshot](https://imgur.com/2qXJtjc.png)
 
@@ -66,8 +65,19 @@ To build and run the audio server from scratch
 
 ### Platforms
 
-The audio server should build and run on MacOS, Windows and Linux. It uses
-CoreAudio on MacOS, ASIO on Windows and ALSA on Linux.
+Cross-platform support is in the pipeline, however currently some platforms are
+better supported than others:
+
+- **macOS** - The best supported and most well tested platform. Currently
+  running the Beyond Perception exhibition.
+- **Linux** - Works well with ALSA and X11. Make sure that pulseaudio is not
+  running as the audio server currently requires exclusive access to the audio
+  device via ALSA.
+- **Windows** - Support is currently blocked on adding ASIO support to
+  [CPAL](https://github.com/tomaka/cpal). See [this
+  issue](https://github.com/museumsvictoria/spatial_audio_server/issues/52) for
+  more details and see [this PR](https://github.com/tomaka/cpal/pull/221) to see
+  the WIP support.
 
 ### Rust
 
@@ -524,3 +534,9 @@ enabled or not when opening the audio server. This value is updated each time
 the audio server is closed. E.g. if CPU saving mode is enabled when closed, then
 this will be saved within the `config.json` so that next time the audio server
 starts it will start with CPU saving mode enabled.
+
+
+
+### License
+
+[Mozilla Public License, version 2.0](http://www.mozilla.org/MPL/2.0)
