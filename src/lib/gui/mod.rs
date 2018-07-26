@@ -1773,7 +1773,7 @@ fn set_widgets(
                     speakers,
                     project.master.dbap_rolloff_db,
                     &mut speakers_in_proximity,
-                    project.master.proximity_limit,
+                    project.master.proximity_limit_2,
                 );
                 let output_channels = state.audio_channels.output;
                 for &(amp_scaler, speaker_id) in speakers_in_proximity.iter() {

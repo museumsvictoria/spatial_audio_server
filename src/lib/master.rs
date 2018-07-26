@@ -16,8 +16,9 @@ pub struct Master {
     pub dbap_rolloff_db: f64,
     /// The current value of proximity limit. The limit in meters
     /// for a speaker to be considered in the dbap calculations
+    /// It is stored as a square for faster calculations
     #[serde(default = "default_proximity_limit")]
-    pub proximity_limit: Metres,
+    pub proximity_limit_2: Metres,
 }
 
 impl Default for Master {
@@ -25,9 +26,9 @@ impl Default for Master {
         let volume = default_master_volume();
         let realtime_source_latency = default_realtime_source_latency();
         let dbap_rolloff_db = default_dbap_rolloff_db();
-        let proximity_limit = default_proximity_limit();
+        let proximity_limit_2 = default_proximity_limit();
         Master { volume, realtime_source_latency, 
-            dbap_rolloff_db, proximity_limit }
+            dbap_rolloff_db, proximity_limit_2 }
     }
 }
 
@@ -44,5 +45,5 @@ fn default_dbap_rolloff_db() -> f64 {
 }
 
 fn default_proximity_limit() -> Metres {
-    Metres(7.0)
+    audio::DEFAULT_PROXIMITY_LIMIT_2
 }

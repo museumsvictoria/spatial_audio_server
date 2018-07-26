@@ -193,7 +193,7 @@ pub struct Model {
     dbap_speakers: Vec<dbap::Speaker>,
     /// The current value of proximity limit. The limit in meters
     /// for a speaker to be considered in the dbap calculations
-    pub proximity_limit: Metres,
+    pub proximity_limit_2: Metres,
 
 }
 
@@ -280,7 +280,7 @@ impl Model {
         let cpu_saving_enabled = false;
         
         // Initialise the proximity limit to the default value.
-        let proximity_limit = super::DEFAULT_PROXIMITY_LIMIT;
+        let proximity_limit_2 = super::DEFAULT_PROXIMITY_LIMIT_2;
 
         let channels = Channels {
             detection,
@@ -304,7 +304,7 @@ impl Model {
             channels,
             dbap_speaker_gains,
             dbap_speakers,
-            proximity_limit,
+            proximity_limit_2,
         }
     }
 
@@ -541,7 +541,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
             ref mut dbap_speaker_gains,
             ref mut dbap_speakers,
             ref channels,
-            proximity_limit,
+            proximity_limit_2,
         } = model;
 
         // Always silence the buffer to begin.
@@ -710,7 +710,7 @@ pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
                     );
 
                     // If this speaker is not within proximity, skip it.
-                    if proximity_limit < Metres(distance_2) {
+                    if proximity_limit_2 < Metres(distance_2) {
                         continue;
                     }
 
@@ -890,7 +890,7 @@ pub fn channel_point(
 /// Tests whether or not the given speaker position is within the `PROXIMITY_LIMIT` distance of the
 /// given `point` (normally a `Sound`'s channel position).
 pub fn speaker_is_in_proximity(point: &Point2<Metres>, speaker: &Point2<Metres>, 
-                               proximity_limit: Metres) -> bool {
+                               proximity_limit_2: Metres) -> bool {
     let point_f = Point2 {
         x: point.x.0,
         y: point.y.0,
@@ -900,5 +900,5 @@ pub fn speaker_is_in_proximity(point: &Point2<Metres>, speaker: &Point2<Metres>,
         y: speaker.y.0,
     };
     let distance_2 = Metres(point_f.distance2(speaker_f));
-    distance_2 < proximity_limit
+    distance_2 < proximity_limit_2
 }

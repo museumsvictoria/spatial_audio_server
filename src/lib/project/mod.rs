@@ -29,7 +29,6 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use utils;
 use walkdir::WalkDir;
-use metres::Metres;
 
 pub mod config;
 
@@ -265,14 +264,14 @@ impl Project {
         let master_volume = self.master.volume;
         let dbap_rolloff_db = self.master.dbap_rolloff_db;
         let realtime_source_latency = self.master.realtime_source_latency;
-        let proximity_limit = self.master.proximity_limit;
+        let proximity_limit_2 = self.master.proximity_limit_2;
         channels
             .audio_output
             .send(move |audio| {
                 audio.master_volume = master_volume;
                 audio.dbap_rolloff_db = dbap_rolloff_db;
                 // Square for efficiency
-                audio.proximity_limit = Metres(proximity_limit.0 * proximity_limit.0);
+                audio.proximity_limit_2 = proximity_limit_2;
             })
             .expect("failed to send loaded master volume and dbap rolloff");
         channels

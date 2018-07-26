@@ -157,8 +157,9 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> wi
     }
     
     // The proximity slider.
-    let label = format!("Proximity Limit: {:.2}", master.proximity_limit.0);
-    for new_proximity in widget::Slider::new(master.proximity_limit.0, 0.0, 10.0)
+    // Proximity limit is stored as a squared value so sqrt() is called here
+    let label = format!("Proximity Limit: {:.2} metres", master.proximity_limit_2.0.sqrt());
+    for new_proximity in widget::Slider::new(master.proximity_limit_2.0.sqrt(), 0.0, 10.0)
         .label(&label)
         .label_font_size(SMALL_FONT_SIZE)
         .h(PROXIMITY_H)
@@ -168,14 +169,14 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> wi
         .set(ids.master_proximity_limit, ui)
         {
             // Update the local rolloff.
-            master.proximity_limit = Metres(new_proximity);
+            master.proximity_limit_2 = Metres(new_proximity * new_proximity);
 
             // Update the audio output thread's rolloff.
             channels
                 .audio_output
                 .send(move |audio| {
                     // The proximity squared (for more efficient distance comparisons).
-                    audio.proximity_limit = Metres(new_proximity * new_proximity);
+                    audio.proximity_limit_2 = Metres(new_proximity * new_proximity);
                 })
             .expect("failed to send updated proximity limit to audio output thread");
         }
