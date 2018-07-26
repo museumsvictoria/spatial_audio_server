@@ -20,7 +20,7 @@ impl Default for Config {
         let project_default = Default::default();
         let selected_project_slug = default::project_slug();
         let cpu_saving_mode = Default::default();
-        Config { project_default, selected_project_slug, cpu_saving_mode }
+        Config { project_default, selected_project_slug, cpu_saving_mode}
     }
 }
 

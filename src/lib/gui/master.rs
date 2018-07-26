@@ -6,6 +6,7 @@ use project::{self, Project};
 use nannou::ui;
 use nannou::ui::prelude::*;
 use time_calc::Ms;
+use metres::Metres;
 
 pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> widget::Id {
     let Gui {
@@ -29,7 +30,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> wi
     const MASTER_VOLUME_H: Scalar = ITEM_HEIGHT;
     const LATENCY_H: Scalar = ITEM_HEIGHT;
     const DECIBEL_H: Scalar = ITEM_HEIGHT;
-    const MASTER_H: Scalar = PAD + MASTER_VOLUME_H + PAD + LATENCY_H + PAD + DECIBEL_H + PAD;
+    const PROXIMITY_H: Scalar = ITEM_HEIGHT;
+    const MASTER_H: Scalar = PAD + MASTER_VOLUME_H + PAD + LATENCY_H + PAD + DECIBEL_H + PAD + PROXIMITY_H + PAD;
 
     // The collapsible area widget.
     let is_open = state.is_open.master;
@@ -130,7 +132,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> wi
             .expect("failed to send updated realtime source latency volume to soundscape thread");
     }
 
-    // The master volume slider.
+    // The dbap slider.
     let label = format!("DBAP Rolloff: {:.2} db", master.dbap_rolloff_db);
     let max_rolloff = 6.0;
     for new_rolloff in widget::Slider::new(master.dbap_rolloff_db, 1.0, max_rolloff)
@@ -153,6 +155,32 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> wi
             })
             .expect("failed to send updated DBAP rolloff to audio output thread");
     }
+    
+    // The proximity slider.
+    // Proximity limit is stored as a squared value so sqrt() is called here
+    let label = format!("Proximity Limit: {:.2} metres", master.proximity_limit_2.0.sqrt());
+    for new_proximity in widget::Slider::new(master.proximity_limit_2.0.sqrt(), 0.0, 10.0)
+        .label(&label)
+        .label_font_size(SMALL_FONT_SIZE)
+        .h(PROXIMITY_H)
+        .kid_area_w_of(area.id)
+        .align_middle_x_of(area.id)
+        .down(PAD)
+        .set(ids.master_proximity_limit, ui)
+        {
+            // Update the local rolloff.
+            master.proximity_limit_2 = Metres(new_proximity * new_proximity);
+
+            // Update the audio output thread's rolloff.
+            channels
+                .audio_output
+                .send(move |audio| {
+                    // The proximity squared (for more efficient distance comparisons).
+                    audio.proximity_limit_2 = Metres(new_proximity * new_proximity);
+                })
+            .expect("failed to send updated proximity limit to audio output thread");
+        }
+
 
     area.id
 }

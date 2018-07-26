@@ -16,12 +16,6 @@ pub mod sound;
 pub mod source;
 pub mod speaker;
 
-/// Sounds should only be output to speakers that are nearest to avoid the need to render each
-/// sound to every speaker on the map.
-pub const PROXIMITY_LIMIT: Metres = Metres(8.0);
-/// The proximity squared (for more efficient distance comparisons).
-pub const PROXIMITY_LIMIT_2: Metres = Metres(PROXIMITY_LIMIT.0 * PROXIMITY_LIMIT.0);
-
 /// The maximum number of audio channels.
 #[cfg(not(feature = "test_with_stereo"))]
 pub const MAX_CHANNELS: usize = 128;
@@ -52,3 +46,8 @@ pub const DEFAULT_DBAP_ROLLOFF_DB: f64 = 4.0;
 
 /// The "blurring" amount applied to the distance function used for calculating DBAP.
 pub const DISTANCE_BLUR: f64 = 0.01;
+
+/// The initial, default proximity limit.
+pub const DEFAULT_PROXIMITY_LIMIT: Metres = Metres(7.0);
+/// Proximity limit squared for efficientcy efficiency.
+pub const DEFAULT_PROXIMITY_LIMIT_2: Metres = Metres(DEFAULT_PROXIMITY_LIMIT.0 * DEFAULT_PROXIMITY_LIMIT.0);

@@ -877,6 +877,7 @@ widget_ids! {
         master_volume,
         master_realtime_source_latency,
         master_dbap_rolloff,
+        master_proximity_limit,
         // OSC input log.
         osc_in_log,
         osc_in_log_text,
@@ -1711,6 +1712,8 @@ fn set_widgets(
                     rolloff_db: f64,
                     // Amp along with the index within the given `Vec`.
                     in_proximity: &mut Vec<(f32, audio::speaker::Id)>,
+                    // Proximity limit
+                    proximity_limit_2: Metres,
                 ) {
                     if speakers.is_empty() {
                         return;
@@ -1757,7 +1760,8 @@ fn set_widgets(
                     in_proximity.clear();
                     for (i, gain) in gains.enumerate() {
                         let id = ids[i];
-                        if audio::output::speaker_is_in_proximity(point, &speakers[&id].audio.point) {
+                        if audio::output::speaker_is_in_proximity(point, &speakers[&id].audio.point,
+                                                                  proximity_limit_2) {
                             in_proximity.push((gain as f32, id));
                         }
                     }
@@ -1769,6 +1773,7 @@ fn set_widgets(
                     speakers,
                     project.master.dbap_rolloff_db,
                     &mut speakers_in_proximity,
+                    project.master.proximity_limit_2,
                 );
                 let output_channels = state.audio_channels.output;
                 for &(amp_scaler, speaker_id) in speakers_in_proximity.iter() {

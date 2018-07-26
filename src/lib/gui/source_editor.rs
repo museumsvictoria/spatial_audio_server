@@ -120,7 +120,6 @@ pub fn set(
     const REALTIME_CANVAS_H: Scalar = 94.0;
     const CHANNEL_LAYOUT_H: Scalar = 200.0;
     const COMMON_CANVAS_H: Scalar = TEXT_PAD + PAD + SLIDER_H + PAD + CHANNEL_LAYOUT_H;
-        PAD + ITEM_HEIGHT * 2.0 + PAD + INSTALLATION_LIST_H + PAD;
     let kind_specific_h = WAV_CANVAS_H.max(REALTIME_CANVAS_H);
     let selected_canvas_h = ITEM_HEIGHT * 2.0 + PAD * 7.0 + PREVIEW_CANVAS_H + kind_specific_h
         + COMMON_CANVAS_H + INSTALLATIONS_CANVAS_H + PAD + SOUNDSCAPE_CANVAS_H;
