@@ -1713,7 +1713,7 @@ fn set_widgets(
                     // Amp along with the index within the given `Vec`.
                     in_proximity: &mut Vec<(f32, audio::speaker::Id)>,
                     // Proximity limit
-                    proximity_limit: Metres,
+                    proximity_limit_2: Metres,
                 ) {
                     if speakers.is_empty() {
                         return;
@@ -1761,7 +1761,7 @@ fn set_widgets(
                     for (i, gain) in gains.enumerate() {
                         let id = ids[i];
                         if audio::output::speaker_is_in_proximity(point, &speakers[&id].audio.point,
-                                                                  proximity_limit) {
+                                                                  proximity_limit_2) {
                             in_proximity.push((gain as f32, id));
                         }
                     }
