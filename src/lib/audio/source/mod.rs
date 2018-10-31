@@ -154,7 +154,7 @@ pub struct Soundscape {
 
 /// Items related to the movement of a source's associated sounds within a soundscape.
 pub mod movement {
-    use nannou::math::{Point2, Vector2};
+    use nannou::geom::{Point2, Vector2};
     use nannou::prelude::PI_F64;
     use utils::Range;
 
@@ -607,7 +607,7 @@ pub mod skew {
 
 pub mod default {
     use metres::Metres;
-    use nannou::math::{Point2, Vector2};
+    use nannou::geom::{Point2, Vector2};
     use super::{movement, Movement};
     use time_calc::Ms;
     use utils::{HR_MS, Range};

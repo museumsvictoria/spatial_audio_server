@@ -3,7 +3,7 @@ use crossbeam::sync::SegQueue;
 use fxhash::FxHashSet;
 use installation;
 use metres::Metres;
-use nannou::math::Point2;
+use nannou::geom::Point2;
 use std::ops;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{self, AtomicBool};

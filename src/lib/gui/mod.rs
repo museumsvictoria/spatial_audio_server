@@ -281,7 +281,8 @@ impl Model {
     ) -> Self {
 
         // Load a Nannou UI.
-        let mut ui = app.new_ui(window_id)
+        let mut ui = app.new_ui()
+            .window(window_id)
             .with_theme(theme::construct())
             .build()
             .expect("failed to build `Ui`");

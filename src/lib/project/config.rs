@@ -94,7 +94,7 @@ pub mod default {
     }
 
     pub fn seed() -> Seed {
-        [0, 0, 0, 0]
+        [0; 16]
     }
 
     pub fn proximity_limit() -> Metres {

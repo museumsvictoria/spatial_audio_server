@@ -21,7 +21,7 @@ pub const HR_IN_HZ: f64 = MIN_IN_HZ / 60.0;
 pub const DAY_IN_HZ: f64 = HR_IN_HZ / 24.0;
 
 /// The type used to seed `XorShiftRng`s.
-pub type Seed = [u32; 4];
+pub type Seed = [u8; 16];
 
 /// Min and max values along a range.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -93,11 +93,11 @@ impl HumanReadableTime {
 
 /// Sums seed `b` onto seed `a` in a wrapping manner.
 pub fn add_seeds(a: &Seed, b: &Seed) -> Seed {
-    let s0 = a[0].wrapping_add(b[0]);
-    let s1 = a[1].wrapping_add(b[1]);
-    let s2 = a[2].wrapping_add(b[2]);
-    let s3 = a[3].wrapping_add(b[3]);
-    [s0, s1, s2, s3]
+    let mut result = [0; 16];
+    for (r, (&a, &b)) in result.iter_mut().zip(a.iter().zip(b)) {
+        *r = a.wrapping_add(b);
+    }
+    result
 }
 
 /// Count the number of elements that are equal to one another at the front.
@@ -314,7 +314,7 @@ where
 
 pub mod pt2 {
     use metres::Metres;
-    use nannou::math::Point2;
+    use nannou::geom::Point2;
 
     /// Maps the given point to some new type over the dimensions.
     pub fn convert<T, U>(p: Point2<T>) -> Point2<U>
@@ -344,7 +344,7 @@ pub mod pt2 {
 
 pub mod vt2 {
     use metres::Metres;
-    use nannou::math::Vector2;
+    use nannou::geom::Vector2;
 
     /// Maps the given vector to some new type over the dimensions.
     pub fn convert<T, U>(p: Vector2<T>) -> Vector2<U>

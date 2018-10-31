@@ -15,7 +15,7 @@ name = "audio_server"
 path = "src/lib/lib.rs"
 
 [dependencies]
-conrod = { version = "0.59", features = ["winit", "glium"] }
+conrod = { version = "0.61", features = ["winit", "glium"] }
 conrod_derive = "0.1"
 crossbeam = "0.3"
 custom_derive = "0.1"
@@ -23,7 +23,7 @@ fxhash = "0.2"
 hound = "3.3"
 mindtree_utils = "0.4"
 newtype_derive = "0.1"
-nannou = "0.5"
+nannou = "0.8"
 num_cpus = "1.8"
 pitch_calc = "0.11"
 rustfft = "2.0"

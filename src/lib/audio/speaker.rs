@@ -2,7 +2,7 @@ use audio;
 use fxhash::FxHashSet;
 use installation;
 use metres::Metres;
-use nannou::math::Point2;
+use nannou::geom::Point2;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct Id(pub u64);
