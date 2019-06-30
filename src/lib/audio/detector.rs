@@ -3,7 +3,7 @@
 //! Detects RMS and Peak envelopes.
 
 use audio;
-use nannou::audio::sample::{self, ring_buffer};
+use nannou_audio::sample::{self, ring_buffer};
 use rustfft::num_complex::Complex;
 
 // The frame type used within the detectors.

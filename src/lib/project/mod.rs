@@ -17,7 +17,6 @@ use fxhash::{FxHashMap, FxHashSet};
 use gui;
 use installation::{self, Installation};
 use master::Master;
-use nannou;
 use osc;
 use slug::slugify;
 use soundscape;
@@ -294,7 +293,7 @@ impl Project {
 
             // OSC output thread.
             for (&computer, addr) in installation.computers.iter() {
-                let osc_tx = nannou::osc::sender()
+                let osc_tx = nannou_osc::sender()
                     .expect("failed to create OSC sender")
                     .connect(&addr.socket)
                     .expect("failed to connect OSC sender");

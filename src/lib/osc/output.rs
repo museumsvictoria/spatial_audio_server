@@ -1,8 +1,8 @@
 use crossbeam::sync::MsQueue;
 use fxhash::FxHashMap;
 use installation;
-use nannou::osc;
-use nannou::osc::Type::{Float, Int};
+use nannou_osc as osc;
+use nannou_osc::Type::{Float, Int};
 use std;
 use std::iter::once;
 use std::sync::{mpsc, Arc};

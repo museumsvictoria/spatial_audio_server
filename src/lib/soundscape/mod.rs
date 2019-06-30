@@ -68,7 +68,7 @@ pub struct Tick {
 ///
 /// This is a workaround for the current inability to call a `Box<FnOnce>`
 pub struct UpdateFn {
-    function: Box<FnMut(&mut Model) + Send>,
+    function: Box<dyn FnMut(&mut Model) + Send>,
 }
 
 /// The handle to the soundscape that can be used and shared amonth the main thread.

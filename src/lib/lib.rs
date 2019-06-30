@@ -2,7 +2,7 @@
 #![recursion_limit = "256"]
 
 #[macro_use]
-extern crate conrod;
+extern crate conrod_core;
 #[macro_use]
 extern crate conrod_derive;
 extern crate crossbeam;
@@ -11,6 +11,8 @@ extern crate custom_derive;
 extern crate fxhash;
 extern crate hound; // wav loading
 extern crate nannou;
+extern crate nannou_audio;
+extern crate nannou_osc;
 #[macro_use]
 extern crate newtype_derive;
 extern crate num_cpus;
@@ -46,7 +48,11 @@ mod soundscape;
 mod utils;
 
 pub fn run() {
-    nannou::app(model, event, view).exit(exit).run();
+    nannou::app(model)
+        .update(update)
+        .view(view)
+        .exit(exit)
+        .run();
 }
 
 /// The model of the application state.
@@ -90,7 +96,7 @@ fn model(app: &App) -> Model {
     let config: Config = utils::load_from_json_or_default(&config_path);
 
     // Spawn the OSC input thread.
-    let osc_receiver = nannou::osc::receiver(config.osc_input_port)
+    let osc_receiver = nannou_osc::receiver(config.osc_input_port)
         .unwrap_or_else(|err| {
             panic!("failed to create OSC receiver bound to port {}: {}", config.osc_input_port, err)
         });
@@ -114,14 +120,18 @@ fn model(app: &App) -> Model {
     // synchronising continuous WAV soures.
     let frame_count = Arc::new(AtomicUsize::new(0));
 
+    // Retrieve the audio host.
+    let audio_host = audio::host();
+
     // Initialise the audio input model and create the input stream.
-    let input_device = app.audio.default_input_device()
+    let input_device = audio_host.default_input_device()
         .expect("no default input device available on the system");
     let max_supported_input_channels = input_device.max_supported_input_channels();
     let audio_input_channels = std::cmp::min(max_supported_input_channels, audio::MAX_CHANNELS);
     let audio_input_model = audio::input::Model::new();
-    let audio_input_stream = app.audio
-        .new_input_stream(audio_input_model, audio::input::capture)
+    let audio_input_stream = audio_host
+        .new_input_stream(audio_input_model)
+        .capture(audio::input::capture)
         .sample_rate(audio::SAMPLE_RATE as u32)
         .frames_per_buffer(audio::FRAMES_PER_BUFFER)
         .channels(audio_input_channels)
@@ -130,7 +140,7 @@ fn model(app: &App) -> Model {
         .expect("failed to build audio input stream");
 
     // Initialise the audio output model and create the output stream.
-    let output_device = app.audio.default_output_device()
+    let output_device = audio_host.default_output_device()
         .expect("no default output device available on the system");
     let max_supported_output_channels = output_device.max_supported_output_channels();
     let audio_output_channels = std::cmp::min(max_supported_output_channels, audio::MAX_CHANNELS);
@@ -141,8 +151,9 @@ fn model(app: &App) -> Model {
         soundscape_tx.clone(),
         wav_reader.clone(),
     );
-    let audio_output_stream = app.audio
-        .new_output_stream(audio_output_model, audio::output::render)
+    let audio_output_stream = audio_host
+        .new_output_stream(audio_output_model)
+        .render(audio::output::render)
         .sample_rate(audio::SAMPLE_RATE as u32)
         .frames_per_buffer(audio::FRAMES_PER_BUFFER)
         .channels(audio_output_channels)
@@ -170,8 +181,6 @@ fn model(app: &App) -> Model {
     let window = app.new_window()
         .with_title("Audio Server")
         .with_dimensions(config.window_width, config.window_height)
-        .with_vsync(true)
-        .with_multisampling(4)
         .build()
         .expect("failed to create window");
 
@@ -209,19 +218,9 @@ fn model(app: &App) -> Model {
 }
 
 // Update the application in accordance with the given event.
-fn event(_app: &App, mut model: Model, event: Event) -> Model {
-    match event {
-        Event::WindowEvent {
-            simple: Some(_event),
-            ..
-        } => {}
-        Event::Update(_update) => {
-            let Model { ref mut gui, ref config, .. } = model;
-            gui.update(&config.project_default);
-        }
-        _ => (),
-    }
-    model
+fn update(_app: &App, model: &mut Model, _update: Update) {
+    let Model { ref mut gui, ref config, .. } = *model;
+    gui.update(&config.project_default);
 }
 
 // Draw the state of the application to the screen.

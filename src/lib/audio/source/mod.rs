@@ -111,7 +111,7 @@ pub struct SignalSamples<'a> {
     attack: &'a mut Attack,
     release: &'a mut Release,
     duration: &'a mut Option<Duration>,
-    samples: &'a mut Iterator<Item = f32>,
+    samples: &'a mut dyn Iterator<Item = f32>,
 }
 
 /// An iterator yielding the same gain for each channel in a frame.
@@ -406,7 +406,7 @@ impl SignalKind {
     }
 
     /// Borrow the inner iterator yielding samples.
-    pub fn samples(&mut self) -> &mut Iterator<Item = f32> {
+    pub fn samples(&mut self) -> &mut dyn Iterator<Item = f32> {
         match *self {
             SignalKind::Wav { ref mut samples, .. } => samples as _,
             SignalKind::Realtime { ref mut samples } => samples as _,

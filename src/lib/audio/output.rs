@@ -10,8 +10,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use gui;
 use installation;
 use metres::Metres;
-use nannou;
-use nannou::audio::Buffer;
+use nannou_audio::Buffer;
 use nannou::geom::Point2;
 use nannou::math::MetricSpace;
 use osc;
@@ -24,7 +23,7 @@ use time_calc::Samples;
 use utils;
 
 /// Simplified type alias for the nannou audio output stream used by the audio server.
-pub type Stream = nannou::audio::Stream<Model>;
+pub type Stream = nannou_audio::Stream<Model>;
 
 type Channel = usize;
 
@@ -279,7 +278,7 @@ impl Model {
 
         // By default, cpu saving mode is not enabled.
         let cpu_saving_enabled = false;
-        
+
         // Initialise the proximity limit to the default value.
         let proximity_limit_2 = super::DEFAULT_PROXIMITY_LIMIT_2;
 
@@ -525,346 +524,342 @@ fn lerp(a: f32, b: f32, lerp: f32) -> f32 {
 }
 
 /// The function given to nannou to use for rendering.
-pub fn render(mut model: Model, mut buffer: Buffer) -> (Model, Buffer) {
-    {
-        let Model {
-            master_volume,
-            cpu_saving_enabled,
-            dbap_rolloff_db,
-            ref soloed,
-            ref mut frame_count,
-            ref mut sounds,
-            ref mut sounds_ordered,
-            ref mut sound_channels,
-            ref mut dbap_speaker_infos,
-            ref mut exhausted_sounds,
-            ref mut speakers,
-            ref mut dbap_speaker_gains,
-            ref mut dbap_speakers,
-            ref channels,
-            proximity_limit_2,
-        } = model;
+pub fn render(model: &mut Model, buffer: &mut Buffer) {
+    let Model {
+        master_volume,
+        cpu_saving_enabled,
+        dbap_rolloff_db,
+        ref soloed,
+        ref mut frame_count,
+        ref mut sounds,
+        ref mut sounds_ordered,
+        ref mut sound_channels,
+        ref mut dbap_speaker_infos,
+        ref mut exhausted_sounds,
+        ref mut speakers,
+        ref mut dbap_speaker_gains,
+        ref mut dbap_speakers,
+        ref channels,
+        proximity_limit_2,
+    } = *model;
 
-        // Always silence the buffer to begin.
-        buffer.iter_mut().for_each(|s| *s = 0.0);
+    // Always silence the buffer to begin.
+    buffer.iter_mut().for_each(|s| *s = 0.0);
 
-        // Update the map from buffer channels to their speakers.
-        //
-        // Only track speakers whose channels are valid for the current buffer.
-        //
-        // TODO: Should probably move this into model for re-use, but its not showing up in
-        // profiling.
-        let channels_to_speakers: FxHashMap<_, _> = speakers
-            .iter()
-            .filter_map(|(&id, s)| {
-                if s.channel < buffer.channels() {
-                    Some((s.channel, id))
-                } else {
-                    None
-                }
-            })
-            .collect();
+    // Update the map from buffer channels to their speakers.
+    //
+    // Only track speakers whose channels are valid for the current buffer.
+    //
+    // TODO: Should probably move this into model for re-use, but its not showing up in
+    // profiling.
+    let channels_to_speakers: FxHashMap<_, _> = speakers
+        .iter()
+        .filter_map(|(&id, s)| {
+            if s.channel < buffer.channels() {
+                Some((s.channel, id))
+            } else {
+                None
+            }
+        })
+        .collect();
 
-        // Retrieve the total number of sounds so we know how long we should slice
-        // `sounds_ordered`.
-        let num_sounds = sounds.len();
+    // Retrieve the total number of sounds so we know how long we should slice
+    // `sounds_ordered`.
+    let num_sounds = sounds.len();
 
-        // Slice only the range that we need from `sounds_ordered`.
-        let sounds_ordered = &mut sounds_ordered[..num_sounds];
+    // Slice only the range that we need from `sounds_ordered`.
+    let sounds_ordered = &mut sounds_ordered[..num_sounds];
 
-        // Write the `sound::Id`s from the `sounds` map to the `sounds_ordered` `Vec`.
-        //
-        // We just need consistency for the rest of the function, the actual order does not matter.
-        for (ordered_sound, &sound_id) in sounds_ordered.iter_mut().zip(sounds.keys()) {
-            ordered_sound.id = sound_id;
-            ordered_sound.unmixed_samples.clear();
+    // Write the `sound::Id`s from the `sounds` map to the `sounds_ordered` `Vec`.
+    //
+    // We just need consistency for the rest of the function, the actual order does not matter.
+    for (ordered_sound, &sound_id) in sounds_ordered.iter_mut().zip(sounds.keys()) {
+        ordered_sound.id = sound_id;
+        ordered_sound.unmixed_samples.clear();
+    }
+
+    // Clear the channel sounds buffer.
+    sound_channels.clear();
+    dbap_speaker_infos.clear();
+
+    // For each sound, request `buffer.len()` number of frames and push them to the sound's
+    // `unmixed_sounds` buffer.
+    for (sound_i, ordered_sound) in sounds_ordered.iter_mut().enumerate() {
+        let sound_id = ordered_sound.id;
+        let sound = sounds.get_mut(&sound_id).expect("no sound for the given `Id`");
+
+        // Update the ordered sound.
+        ordered_sound.channels = sound.channels;
+
+        // Update the GUI with the position of the sound.
+        let source_id = sound.source_id();
+        let position = sound.position;
+        let n_channels = sound.channels;
+        let normalised_progress = sound.normalised_progress();
+        let update = gui::ActiveSoundMessage::Update {
+            source_id,
+            position,
+            channels: n_channels,
+            normalised_progress,
+        };
+        let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, update);
+        channels.gui_audio_monitor_msg_tx.push(msg);
+
+        let ActiveSound {
+            ref mut sound,
+            ..
+        } = *sound;
+
+        // The number of samples to request from the sound for this buffer.
+        let num_samples = buffer.len_frames() * sound.channels;
+
+        // Don't play or request samples if paused.
+        if !sound.shared.is_playing() {
+            continue;
         }
 
-        // Clear the channel sounds buffer.
-        sound_channels.clear();
-        dbap_speaker_infos.clear();
+        // Don't play the sound if:
+        //
+        // - There are no speakers.
+        // - The source is muted.
+        // - Some other source(s) is/are soloed.
+        let play_condition = speakers.is_empty()
+            || sound.muted
+            || (!soloed.is_empty() && !soloed.contains(&sound.source_id()));
+        if play_condition {
+            // Pull samples from the signal but do not render them.
+            let samples_yielded = sound.signal.samples().take(num_samples).count();
+            if samples_yielded < num_samples {
+                exhausted_sounds.push(sound_id);
+            }
+            continue;
+        }
 
-        // For each sound, request `buffer.len()` number of frames and push them to the sound's
-        // `unmixed_sounds` buffer.
-        for (sound_i, ordered_sound) in sounds_ordered.iter_mut().enumerate() {
-            let sound_id = ordered_sound.id;
-            let sound = sounds.get_mut(&sound_id).expect("no sound for the given `Id`");
-
-            // Update the ordered sound.
-            ordered_sound.channels = sound.channels;
-
-            // Update the GUI with the position of the sound.
-            let source_id = sound.source_id();
-            let position = sound.position;
-            let n_channels = sound.channels;
-            let normalised_progress = sound.normalised_progress();
-            let update = gui::ActiveSoundMessage::Update {
-                source_id,
-                position,
-                channels: n_channels,
-                normalised_progress,
-            };
-            let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, update);
-            channels.gui_audio_monitor_msg_tx.push(msg);
-
-            let ActiveSound {
-                ref mut sound,
-                ..
-            } = *sound;
-
-            // The number of samples to request from the sound for this buffer.
-            let num_samples = buffer.len_frames() * sound.channels;
-
-            // Don't play or request samples if paused.
-            if !sound.shared.is_playing() {
-                continue;
+        // Collect the samples from the `Sound`'s `Signal`.
+        {
+            let mut samples_written = 0;
+            for sample in sound.signal.samples().take(num_samples) {
+                let sample = sample * sound.volume;
+                ordered_sound.unmixed_samples.push(sample);
+                samples_written += 1;
             }
 
-            // Don't play the sound if:
-            //
-            // - There are no speakers.
-            // - The source is muted.
-            // - Some other source(s) is/are soloed.
-            let play_condition = speakers.is_empty()
-                || sound.muted
-                || (!soloed.is_empty() && !soloed.contains(&sound.source_id()));
-            if play_condition {
-                // Pull samples from the signal but do not render them.
-                let samples_yielded = sound.signal.samples().take(num_samples).count();
-                if samples_yielded < num_samples {
-                    exhausted_sounds.push(sound_id);
-                }
-                continue;
+            // If CPU saving is not enabled, send the samples to the detector for analysis.
+            if !cpu_saving_enabled {
+                let mut detection_buffer = channels.detection.pop_sound_buffer();
+                detection_buffer.extend(ordered_sound.unmixed_samples.iter().cloned());
+                channels.detection.update_sound(sound_id, detection_buffer, n_channels);
             }
 
-            // Collect the samples from the `Sound`'s `Signal`.
-            {
-                let mut samples_written = 0;
-                for sample in sound.signal.samples().take(num_samples) {
-                    let sample = sample * sound.volume;
-                    ordered_sound.unmixed_samples.push(sample);
-                    samples_written += 1;
-                }
-
-                // If CPU saving is not enabled, send the samples to the detector for analysis.
-                if !cpu_saving_enabled {
-                    let mut detection_buffer = channels.detection.pop_sound_buffer();
-                    detection_buffer.extend(ordered_sound.unmixed_samples.iter().cloned());
-                    channels.detection.update_sound(sound_id, detection_buffer, n_channels);
-                }
-
-                // If we didn't write the expected number of samples, the sound has been exhausted.
-                if samples_written < num_samples {
-                    exhausted_sounds.push(sound_id);
-                    let remaining_silence = (samples_written..num_samples).map(|_| 0.0);
-                    ordered_sound.unmixed_samples.extend(remaining_silence);
-                }
+            // If we didn't write the expected number of samples, the sound has been exhausted.
+            if samples_written < num_samples {
+                exhausted_sounds.push(sound_id);
+                let remaining_silence = (samples_written..num_samples).map(|_| 0.0);
+                ordered_sound.unmixed_samples.extend(remaining_silence);
             }
+        }
 
-            // Mix the audio from the signal onto each of the output channels.
-            if speakers.is_empty() {
-                continue;
-            }
+        // Mix the audio from the signal onto each of the output channels.
+        if speakers.is_empty() {
+            continue;
+        }
 
-            // Get the currently stored DBAP speaker gains for this sound.
+        // Get the currently stored DBAP speaker gains for this sound.
+        let dbap_speaker_gains = dbap_speaker_gains
+            .entry(sound_id)
+            .or_insert_with(FxHashMap::default);
+
+        // Collect a `SoundChannel` for every channel in every sound.
+        for (sound_channel, channel_point) in sound.channel_points().enumerate() {
+            // Update the dbap_speakers buffer with their distances to this sound channel.
+            dbap_speakers.clear();
+
+            // Get the DBAP gains for this channel of the sound.
             let dbap_speaker_gains = dbap_speaker_gains
-                .entry(sound_id)
+                .entry(sound_channel)
                 .or_insert_with(FxHashMap::default);
 
-            // Collect a `SoundChannel` for every channel in every sound.
-            for (sound_channel, channel_point) in sound.channel_points().enumerate() {
-                // Update the dbap_speakers buffer with their distances to this sound channel.
-                dbap_speakers.clear();
+            // Track the range of speaker infos associated with this channel.
+            let speaker_infos_start = dbap_speaker_infos.len();
 
-                // Get the DBAP gains for this channel of the sound.
-                let dbap_speaker_gains = dbap_speaker_gains
-                    .entry(sound_channel)
-                    .or_insert_with(FxHashMap::default);
+            for channel in 0..buffer.channels() {
+                // Find the speaker for this channel.
+                let speaker_id = match channels_to_speakers.get(&channel) {
+                    Some(id) => id,
+                    None => continue,
+                };
+                let active = &speakers[speaker_id];
+                let speaker_point = &active.speaker.point;
 
-                // Track the range of speaker infos associated with this channel.
-                let speaker_infos_start = dbap_speaker_infos.len();
+                // Get the current gain by performing DBAP calc.
+                let channel_point_f = Point2 {
+                    x: channel_point.x.0,
+                    y: channel_point.y.0,
+                };
+                let speaker_point_f = Point2 {
+                    x: speaker_point.x.0,
+                    y: speaker_point.y.0,
+                };
 
-                for channel in 0..buffer.channels() {
-                    // Find the speaker for this channel.
-                    let speaker_id = match channels_to_speakers.get(&channel) {
-                        Some(id) => id,
-                        None => continue,
-                    };
-                    let active = &speakers[speaker_id];
-                    let speaker_point = &active.speaker.point;
+                // Get the squared distance between the channel and speaker.
+                let distance_2 = dbap::blurred_distance_2(
+                    channel_point_f,
+                    speaker_point_f,
+                    DISTANCE_BLUR,
+                );
 
-                    // Get the current gain by performing DBAP calc.
-                    let channel_point_f = Point2 {
-                        x: channel_point.x.0,
-                        y: channel_point.y.0,
-                    };
-                    let speaker_point_f = Point2 {
-                        x: speaker_point.x.0,
-                        y: speaker_point.y.0,
-                    };
-
-                    // Get the squared distance between the channel and speaker.
-                    let distance_2 = dbap::blurred_distance_2(
-                        channel_point_f,
-                        speaker_point_f,
-                        DISTANCE_BLUR,
-                    );
-
-                    // If this speaker is not within proximity, skip it.
-                    if proximity_limit_2 < Metres(distance_2) {
-                        continue;
-                    }
-
-                    // Weight the speaker based on whether or not it is assigned.
-                    let weight = speaker::dbap_weight(
-                        &sound.installations,
-                        &active.speaker.installations,
-                    );
-
-                    // TODO: Possibly skip speakers with a weight of 0 (as below)?
-                    // Uncertain how this will affect DBAP, but may drastically improve CPU.
-                    // if weight == 0.0 {
-                    //     continue;
-                    // }
-
-                    // Get the previous gain for this channel.
-                    let previous_gain = dbap_speaker_gains
-                        .get(speaker_id)
-                        .map(|&g| g)
-                        .unwrap_or(0.0);
-
-                    // Temporarily set the `current_gain` for this `SpeakerInfo` to `0.0`.
-                    //
-                    // The correct value will be set in the `SpeakerGains` that follow this loop.
-                    let current_gain = 0.0;
-                    let output_channel = channel;
-
-                    // Create the `DbapSpeakerInfo` relevant to this speaker for the sound channel.
-                    let dbap_speaker_info = DbapSpeakerInfo {
-                        previous_gain,
-                        current_gain,
-                        output_channel,
-                    };
-
-                    // Create the `dbap::Speaker` so that we may determine the current gain. This
-                    // is done following this loop.
-                    let speaker = dbap::Speaker { distance: distance_2, weight };
-                    dbap_speakers.push(speaker);
-                    dbap_speaker_infos.push(dbap_speaker_info);
-                }
-
-                // Create the speaker infos range.
-                let speaker_infos_end = dbap_speaker_infos.len();
-                let speaker_infos_range = speaker_infos_start..speaker_infos_end;
-
-                // If no speakers were found, skip this channel.
-                if dbap_speakers.is_empty() {
+                // If this speaker is not within proximity, skip it.
+                if proximity_limit_2 < Metres(distance_2) {
                     continue;
                 }
 
-                // Update the speaker gains.
-                let current_gains = dbap::SpeakerGains::new(&dbap_speakers, dbap_rolloff_db);
-                for (info_i, current_gain) in speaker_infos_range.clone().zip(current_gains) {
-                    dbap_speaker_infos[info_i].current_gain = current_gain as _;
-                }
+                // Weight the speaker based on whether or not it is assigned.
+                let weight = speaker::dbap_weight(
+                    &sound.installations,
+                    &active.speaker.installations,
+                );
 
-                // Create the `SoundChannel` ready for mixing.
-                let sound_channel = SoundChannel {
-                    sound_index: sound_i,
-                    sound_channel_index: sound_channel,
-                    speaker_infos_range,
+                // TODO: Possibly skip speakers with a weight of 0 (as below)?
+                // Uncertain how this will affect DBAP, but may drastically improve CPU.
+                // if weight == 0.0 {
+                //     continue;
+                // }
+
+                // Get the previous gain for this channel.
+                let previous_gain = dbap_speaker_gains
+                    .get(speaker_id)
+                    .map(|&g| g)
+                    .unwrap_or(0.0);
+
+                // Temporarily set the `current_gain` for this `SpeakerInfo` to `0.0`.
+                //
+                // The correct value will be set in the `SpeakerGains` that follow this loop.
+                let current_gain = 0.0;
+                let output_channel = channel;
+
+                // Create the `DbapSpeakerInfo` relevant to this speaker for the sound channel.
+                let dbap_speaker_info = DbapSpeakerInfo {
+                    previous_gain,
+                    current_gain,
+                    output_channel,
                 };
 
-                // Update the stored `dbap_speaker_gains` map for this sound channel.
-                for info_i in sound_channel.speaker_infos_range.clone() {
-                    let speaker_info = &dbap_speaker_infos[info_i];
-                    let channel = speaker_info.output_channel;
-                    let speaker_id = channels_to_speakers[&channel];
-                    let current = speaker_info.current_gain;
-                    *dbap_speaker_gains.entry(speaker_id).or_insert(current) = current;
-                }
-
-                sound_channels.push(sound_channel);
+                // Create the `dbap::Speaker` so that we may determine the current gain. This
+                // is done following this loop.
+                let speaker = dbap::Speaker { distance: distance_2, weight };
+                dbap_speakers.push(speaker);
+                dbap_speaker_infos.push(dbap_speaker_info);
             }
-        }
 
-        // Sum the samples for all sound channels onto the output buffer at once.
-        //
-        // Iterate over each frame and track its index for gain interpolation.
-        let frames_len = buffer.len_frames() as f32;
-        for (frame_i, frame) in buffer.frames_mut().enumerate() {
-            let lerp_amt = frame_i as f32 / frames_len;
+            // Create the speaker infos range.
+            let speaker_infos_end = dbap_speaker_infos.len();
+            let speaker_infos_range = speaker_infos_start..speaker_infos_end;
 
-            // Loop over each sound channel.
-            for sound_channel in sound_channels.iter() {
-                let SoundChannel {
-                    // The index into the sounds_ordered vec for this channel's sound.
-                    sound_index,
-                    // The index of the channel within the sound.
-                    sound_channel_index,
-                    // The index range into the speaker_infos vec for this channel.
-                    ref speaker_infos_range,
-                } = *sound_channel;
-
-                // Retrieve the unmixed sample for this channel at this frame.
-                let sound = &sounds_ordered[sound_index];
-                let channel_sample_index = frame_i * sound.channels + sound_channel_index;
-                let channel_sample = sound.unmixed_samples[channel_sample_index];
-
-                // Sum this sound channel onto each of the output channels for the nearby speakers.
-                for speaker_info in &dbap_speaker_infos[speaker_infos_range.clone()] {
-                    let DbapSpeakerInfo {
-                        previous_gain,
-                        current_gain,
-                        output_channel,
-                    } = *speaker_info;
-
-                    let speaker_gain = lerp(previous_gain, current_gain, lerp_amt);
-                    frame[output_channel] += channel_sample * speaker_gain;
-                }
+            // If no speakers were found, skip this channel.
+            if dbap_speakers.is_empty() {
+                continue;
             }
+
+            // Update the speaker gains.
+            let current_gains = dbap::SpeakerGains::new(&dbap_speakers, dbap_rolloff_db);
+            for (info_i, current_gain) in speaker_infos_range.clone().zip(current_gains) {
+                dbap_speaker_infos[info_i].current_gain = current_gain as _;
+            }
+
+            // Create the `SoundChannel` ready for mixing.
+            let sound_channel = SoundChannel {
+                sound_index: sound_i,
+                sound_channel_index: sound_channel,
+                speaker_infos_range,
+            };
+
+            // Update the stored `dbap_speaker_gains` map for this sound channel.
+            for info_i in sound_channel.speaker_infos_range.clone() {
+                let speaker_info = &dbap_speaker_infos[info_i];
+                let channel = speaker_info.output_channel;
+                let speaker_id = channels_to_speakers[&channel];
+                let current = speaker_info.current_gain;
+                *dbap_speaker_gains.entry(speaker_id).or_insert(current) = current;
+            }
+
+            sound_channels.push(sound_channel);
         }
-
-        // Send output buffer to detection thread for analysis.
-        let (mut detection_buffer, mut output_info) = channels.detection.pop_output_buffer();
-        detection_buffer.extend(buffer.iter().cloned());
-        output_info.speakers.extend({
-            speakers
-                .iter()
-                .map(|(&id, speaker)| {
-                    let info = detection::SpeakerInfo {
-                        channel: speaker.channel,
-                        installations: speaker.installations.clone(),
-                    };
-                    (id, info)
-                })
-        });
-        channels.detection.update_output(detection_buffer, buffer.channels(), output_info);
-
-        // Remove all sounds that have been exhausted.
-        for sound_id in exhausted_sounds.drain(..) {
-            // Remove the sound from DBAP gain tracking.
-            dbap_speaker_gains.remove(&sound_id);
-            // Send this with the `End` message to avoid de-allocating on audio thread.
-            let sound = sounds.remove(&sound_id).unwrap();
-            // Notify the other threads.
-            channels.notify_sound_end(sound_id, sound);
-        }
-
-        // Apply the master volume.
-        for sample in buffer.iter_mut() {
-            *sample *= master_volume;
-        }
-
-        // Find the peak amplitude and send it via the monitor channel.
-        let peak = buffer.iter().fold(0.0, |peak, &s| s.max(peak));
-        channels.gui_audio_monitor_msg_tx.push(gui::AudioMonitorMessage::Master { peak });
-
-        // Step the frame count.
-        frame_count.fetch_add(buffer.len_frames(), atomic::Ordering::Relaxed);
     }
 
-    (model, buffer)
+    // Sum the samples for all sound channels onto the output buffer at once.
+    //
+    // Iterate over each frame and track its index for gain interpolation.
+    let frames_len = buffer.len_frames() as f32;
+    for (frame_i, frame) in buffer.frames_mut().enumerate() {
+        let lerp_amt = frame_i as f32 / frames_len;
+
+        // Loop over each sound channel.
+        for sound_channel in sound_channels.iter() {
+            let SoundChannel {
+                // The index into the sounds_ordered vec for this channel's sound.
+                sound_index,
+                // The index of the channel within the sound.
+                sound_channel_index,
+                // The index range into the speaker_infos vec for this channel.
+                ref speaker_infos_range,
+            } = *sound_channel;
+
+            // Retrieve the unmixed sample for this channel at this frame.
+            let sound = &sounds_ordered[sound_index];
+            let channel_sample_index = frame_i * sound.channels + sound_channel_index;
+            let channel_sample = sound.unmixed_samples[channel_sample_index];
+
+            // Sum this sound channel onto each of the output channels for the nearby speakers.
+            for speaker_info in &dbap_speaker_infos[speaker_infos_range.clone()] {
+                let DbapSpeakerInfo {
+                    previous_gain,
+                    current_gain,
+                    output_channel,
+                } = *speaker_info;
+
+                let speaker_gain = lerp(previous_gain, current_gain, lerp_amt);
+                frame[output_channel] += channel_sample * speaker_gain;
+            }
+        }
+    }
+
+    // Send output buffer to detection thread for analysis.
+    let (mut detection_buffer, mut output_info) = channels.detection.pop_output_buffer();
+    detection_buffer.extend(buffer.iter().cloned());
+    output_info.speakers.extend({
+        speakers
+            .iter()
+            .map(|(&id, speaker)| {
+                let info = detection::SpeakerInfo {
+                    channel: speaker.channel,
+                    installations: speaker.installations.clone(),
+                };
+                (id, info)
+            })
+    });
+    channels.detection.update_output(detection_buffer, buffer.channels(), output_info);
+
+    // Remove all sounds that have been exhausted.
+    for sound_id in exhausted_sounds.drain(..) {
+        // Remove the sound from DBAP gain tracking.
+        dbap_speaker_gains.remove(&sound_id);
+        // Send this with the `End` message to avoid de-allocating on audio thread.
+        let sound = sounds.remove(&sound_id).unwrap();
+        // Notify the other threads.
+        channels.notify_sound_end(sound_id, sound);
+    }
+
+    // Apply the master volume.
+    for sample in buffer.iter_mut() {
+        *sample *= master_volume;
+    }
+
+    // Find the peak amplitude and send it via the monitor channel.
+    let peak = buffer.iter().fold(0.0, |peak, &s| s.max(peak));
+    channels.gui_audio_monitor_msg_tx.push(gui::AudioMonitorMessage::Master { peak });
+
+    // Step the frame count.
+    frame_count.fetch_add(buffer.len_frames(), atomic::Ordering::Relaxed);
 }
 
 pub fn channel_point(
@@ -890,7 +885,7 @@ pub fn channel_point(
 
 /// Tests whether or not the given speaker position is within the `PROXIMITY_LIMIT` distance of the
 /// given `point` (normally a `Sound`'s channel position).
-pub fn speaker_is_in_proximity(point: &Point2<Metres>, speaker: &Point2<Metres>, 
+pub fn speaker_is_in_proximity(point: &Point2<Metres>, speaker: &Point2<Metres>,
                                proximity_limit_2: Metres) -> bool {
     let point_f = Point2 {
         x: point.x.0,

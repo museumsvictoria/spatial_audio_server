@@ -15,15 +15,17 @@ name = "audio_server"
 path = "src/lib/lib.rs"
 
 [dependencies]
-conrod = { version = "0.61", features = ["winit", "glium"] }
-conrod_derive = "0.1"
+conrod_core = { git = "https://github.com/pistondevelopers/conrod", branch = "master" }
+conrod_derive = "0.65"
 crossbeam = "0.3"
 custom_derive = "0.1"
 fxhash = "0.2"
 hound = "3.3"
 mindtree_utils = "0.4"
 newtype_derive = "0.1"
-nannou = "0.8"
+nannou = { git = "https://github.com/mitchmindtree/nannou", branch = "audio_and_conrod_updates" }
+nannou_audio = { git = "https://github.com/mitchmindtree/nannou_audio", branch = "cpal_update" }
+nannou_osc = "0.1"
 num_cpus = "1.8"
 pitch_calc = "0.11"
 rustfft = "2.0"
@@ -36,4 +38,9 @@ threadpool = "1.7"
 walkdir = "2"
 
 [features]
+asio = ["nannou_audio/asio"]
 test_with_stereo = [] # Compile with this feature to set the max i/o channels as `2`.
+
+[patch.crates-io]
+conrod_core = { git = "https://github.com/pistondevelopers/conrod", branch = "master" }
+conrod_vulkano = { git = "https://github.com/pistondevelopers/conrod", branch = "master" }

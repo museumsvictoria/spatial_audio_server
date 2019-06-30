@@ -1,8 +1,8 @@
 use gui::{self, collapsible_area, Channels, Gui, ProjectState, State};
 use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
 use installation;
-use nannou::{self, ui};
-use nannou::osc::Connected;
+use nannou::ui;
+use nannou_osc::Connected;
 use nannou::ui::prelude::*;
 use osc;
 use project::{self, Project};
@@ -458,8 +458,8 @@ pub fn set(
         .top_left_of(ids.installation_editor_computer_canvas)
         .set(ids.installation_editor_computer_text, ui);
 
-    fn osc_sender(socket: &net::SocketAddrV4) -> io::Result<nannou::osc::Sender<Connected>> {
-        nannou::osc::sender()
+    fn osc_sender(socket: &net::SocketAddrV4) -> io::Result<nannou_osc::Sender<Connected>> {
+        nannou_osc::sender()
             .expect("failed to create OSC sender")
             .connect(socket)
     }
@@ -683,7 +683,7 @@ pub fn set(
         .color(color)
         .set(ids.installation_editor_osc_ip_text_box, ui)
     {
-        use nannou::ui::conrod::widget::text_box::Event;
+        use nannou::ui::widget::text_box::Event;
         match event {
             Event::Enter => {
                 update_addr(id, &selected_computer, channels, installations);
@@ -704,7 +704,7 @@ pub fn set(
         .font_size(SMALL_FONT_SIZE)
         .set(ids.installation_editor_osc_address_text_box, ui)
     {
-        use nannou::ui::conrod::widget::text_box::Event;
+        use nannou::ui::widget::text_box::Event;
         match event {
             Event::Enter => {
                 update_addr(id, &selected_computer, channels, installations);

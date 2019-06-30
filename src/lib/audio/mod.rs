@@ -51,3 +51,19 @@ pub const DISTANCE_BLUR: f64 = 0.01;
 pub const DEFAULT_PROXIMITY_LIMIT: Metres = Metres(7.0);
 /// Proximity limit squared for efficientcy efficiency.
 pub const DEFAULT_PROXIMITY_LIMIT_2: Metres = Metres(DEFAULT_PROXIMITY_LIMIT.0 * DEFAULT_PROXIMITY_LIMIT.0);
+
+/// Retrieve the desired audio host for the system.
+///
+/// In general, this uses the default host, but uses the ASIO host if the "asio" feature is enabled
+/// when building for a windows target.
+pub fn host() -> nannou_audio::Host {
+    #[cfg(all(windows, feature = "asio"))]
+    {
+        return nannou_audio::Host::from_id(nannou_audio::HostId::Asio)
+            .expect("failed to initialise ASIO audio host");
+    }
+    #[cfg(not(all(windows, features = "asio")))]
+    {
+        return nannou_audio::Host::default();
+    }
+}
