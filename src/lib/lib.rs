@@ -208,6 +208,18 @@ fn model(app: &App) -> Model {
         audio_output_channels,
     );
 
+    // Now that everything is initialized, kick off the input and output streams.
+    //
+    // Some platforms do this automatically, but this is necessary for platforms that are paused by
+    // default (e.g. ASIO). Eventually, CPAL should be made to have consistent behaviour across
+    // platforms.
+    if let Err(err) = audio_input_stream.play() {
+        eprintln!("Failed to start playing the audio input stream: {}", err);
+    }
+    if let Err(err) = audio_output_stream.play() {
+        eprintln!("Failed to start playing the audio output stream: {}", err);
+    }
+
     Model {
         soundscape,
         config,
