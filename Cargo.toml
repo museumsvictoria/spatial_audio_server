@@ -15,8 +15,8 @@ name = "audio_server"
 path = "src/lib/lib.rs"
 
 [dependencies]
-conrod_core = { git = "https://github.com/pistondevelopers/conrod", branch = "master" }
-conrod_derive = "0.65"
+conrod_core = "0.66"
+conrod_derive = "0.66"
 crossbeam = "0.3"
 custom_derive = "0.1"
 fxhash = "0.2"
@@ -40,7 +40,3 @@ walkdir = "2"
 [features]
 asio = ["nannou_audio/asio"]
 test_with_stereo = [] # Compile with this feature to set the max i/o channels as `2`.
-
-[patch.crates-io]
-conrod_core = { git = "https://github.com/pistondevelopers/conrod", branch = "master" }
-conrod_vulkano = { git = "https://github.com/pistondevelopers/conrod", branch = "master" }
