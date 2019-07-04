@@ -176,6 +176,44 @@ pub fn duration_to_secs(d: &time::Duration) -> f64 {
     d.as_secs() as f64 + d.subsec_nanos() as f64 * 1e-9
 }
 
+/// Given a path to some file, return whether or not it is a hidden file.
+pub fn is_file_hidden<P>(path: P) -> bool
+where
+    P: AsRef<std::path::Path>,
+{
+    #[cfg(all(target_os = "windows", not(feature = "windows_metadataext")))]
+    fn is_file_hidden_inner(_path: &std::path::Path) -> bool {
+        false
+    }
+
+    #[cfg(all(target_os = "windows", feature = "windows_metadataext"))]
+    /// Check if a file is hidden on windows, using the file attributes.
+    /// To be enabled once windows::fs::MetadataExt is no longer an unstable API.
+    fn is_file_hidden_inner(path: &std::path::Path) -> bool {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+
+        let metadata = std::fs::metadata(&path).ok();
+        if let Some(metadata) = metadata {
+            let win_attr: u32 = metadata.file_attributes();
+            return (win_attr & FILE_ATTRIBUTE_HIDDEN) != 0;
+        }
+        false
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    /// Check if a file is hidden on any other OS than windows, using the dot file namings.
+    fn is_file_hidden_inner(path: &std::path::Path) -> bool {
+        let name = path.file_name();
+        if let Some(name) = name {
+            return name.to_string_lossy().starts_with(".");
+        }
+        false
+    }
+
+    is_file_hidden_inner(path.as_ref())
+}
+
 /// Errors that might occur when saving a file.
 #[derive(Debug)]
 pub enum FileError<E> {
