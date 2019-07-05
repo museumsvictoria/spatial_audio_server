@@ -13,6 +13,19 @@ pub struct Config {
     /// Whether or not CPU saving mode is enabled upon opening the server.
     #[serde(default = "default::cpu_saving_mode")]
     pub cpu_saving_mode: bool,
+    /// Specify the name of the device that the audio server should use as the input audio device.
+    /// The first device that contains the given string will be selected.
+    ///
+    /// If the device cannot be found, or if the string is empty, the default input device will be
+    /// selected.
+    #[serde(default)]
+    pub target_input_device_name: String,
+    /// Specify the name of the device that the audio server should use as the output audio device.
+    ///
+    /// If the device cannot be found, or if the string is empty, the default output device will be
+    /// selected.
+    #[serde(default)]
+    pub target_output_device_name: String,
 }
 
 impl Default for Config {
@@ -20,7 +33,15 @@ impl Default for Config {
         let project_default = Default::default();
         let selected_project_slug = default::project_slug();
         let cpu_saving_mode = Default::default();
-        Config { project_default, selected_project_slug, cpu_saving_mode}
+        let target_input_device_name = Default::default();
+        let target_output_device_name = Default::default();
+        Config {
+            project_default,
+            selected_project_slug,
+            cpu_saving_mode,
+            target_input_device_name,
+            target_output_device_name,
+        }
     }
 }
 

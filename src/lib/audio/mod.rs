@@ -1,4 +1,5 @@
 use metres::Metres;
+use nannou_audio::{Device, Host};
 use time_calc::Ms;
 
 pub use self::detector::{EnvDetector, Fft, FftDetector, FFT_BIN_STEP_HZ, FFT_WINDOW_LEN};
@@ -56,14 +57,52 @@ pub const DEFAULT_PROXIMITY_LIMIT_2: Metres = Metres(DEFAULT_PROXIMITY_LIMIT.0 *
 ///
 /// In general, this uses the default host, but uses the ASIO host if the "asio" feature is enabled
 /// when building for a windows target.
-pub fn host() -> nannou_audio::Host {
+pub fn host() -> Host {
     #[cfg(all(windows, feature = "asio"))]
     {
-        return nannou_audio::Host::from_id(nannou_audio::HostId::Asio)
+        return Host::from_id(nannou_audio::HostId::Asio)
             .expect("failed to initialise ASIO audio host");
     }
     #[cfg(not(all(windows, features = "asio")))]
     {
-        return nannou_audio::Host::default();
+        return Host::default();
+    }
+}
+
+/// Given a target device name, find the device within the host and return it.
+///
+/// If no device with the given name can be found, or if the given `target_name` is empty, the
+/// default will be returned.
+///
+/// Returns `None` if no input devices could be found.
+pub fn find_input_device(host: &Host, target_name: &str) -> Option<Device> {
+    if target_name.is_empty() {
+        host.default_input_device()
+    } else {
+        host.input_devices()
+            .ok()
+            .into_iter()
+            .flat_map(std::convert::identity)
+            .find(|d| d.name().map(|n| n.contains(&target_name)).unwrap_or(false))
+            .or_else(|| host.default_input_device())
+    }
+}
+
+/// Given a target device name, find the device within the host and return it.
+///
+/// If no device with the given name can be found, or if the given `target_name` is empty, the
+/// default will be returned.
+///
+/// Returns `None` if no output devices could be found.
+pub fn find_output_device(host: &Host, target_name: &str) -> Option<Device> {
+    if target_name.is_empty() {
+        host.default_output_device()
+    } else {
+        host.output_devices()
+            .ok()
+            .into_iter()
+            .flat_map(std::convert::identity)
+            .find(|d| d.name().map(|n| n.contains(&target_name)).unwrap_or(false))
+            .or_else(|| host.default_output_device())
     }
 }

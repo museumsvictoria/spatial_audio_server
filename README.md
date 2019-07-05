@@ -27,6 +27,7 @@ The audio server runs on a single machine and is responsible for the following:
 3. [Glossary / Common Terms](./README.md#glossary--common-terms)
 4. [Usage](./README.md#usage)
    - [Overview](./README.md#overview)
+   - [Audio Device Selection](./README.md#audio-device-selection)
    - [Floorplan](./README.md#floorplan)
    - [Projects](./README.md#projects)
    - [Master](./README.md#master)
@@ -251,6 +252,39 @@ loaded by the audio server at runtime.
   name is the slugified version of the actual project name.
 
 Run the audio server by double clicking the executable.
+
+### Audio Device Selection
+
+By default, the spatial audio server will select the default audio input device
+and default audio output device on the system. These can normally be changed in
+your operating system's audio settings, however when using ASIO for example this
+might not be possible.
+
+In order to specify a specific audio device for input or output, add the name of
+your device to the `target_input_device_name` and/or `target_output_device_name`
+fields of the `assets/config.json`. By default, these fields should look like
+this:
+
+```
+  "target_input_device_name": "",
+  "target_output_device_name": ""
+```
+
+If we wanted to select the first available dante input or output device, we
+might change these fields to something like this:
+
+```
+  "target_input_device_name": "Dante",
+  "target_output_device_name": "Dante"
+```
+
+If this fails, try removing or adding capitalisation. The first device with a
+name that contains the specified target name either as the full name or as some
+part of the name will be selected. If no matching name can be found, the program
+will fall back to the default available device on the system.
+
+Please be careful when editing the `assets/config.json` file, as an invalid
+`assets/config.json` file may cause loss of existing configuration parameters.
 
 ### Floorplan
 
