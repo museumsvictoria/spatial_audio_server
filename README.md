@@ -68,16 +68,82 @@ To build and run the audio server from scratch
 Cross-platform support is in the pipeline, however currently some platforms are
 better supported than others:
 
-- **macOS** - The best supported and most well tested platform. Currently
-  running the Beyond Perception exhibition.
-- **Linux** - Works well with ALSA and X11. Make sure that pulseaudio is not
-  running as the audio server currently requires exclusive access to the audio
-  device via ALSA.
-- **Windows** - Support is currently blocked on adding ASIO support to
-  [CPAL](https://github.com/tomaka/cpal). See [this
-  issue](https://github.com/museumsvictoria/spatial_audio_server/issues/52) for
-  more details and see [this PR](https://github.com/tomaka/cpal/pull/221) to see
-  the WIP support.
+- **macOS** - The best supported and most well tested platform. Uses the native
+  CoreAudio audio API. Currently running the Beyond Perception exhibition.
+
+- **Linux** - Works well with ALSA. Make sure that pulseaudio is not running as
+  the audio server currently requires exclusive access to the audio device via
+  ALSA.
+
+- **Windows** - By default, windows will use the **WASAPI** audio host that
+  ships with windows. However, this host has some severe limitations w.r.t.
+  multi-channel support and driver compatibility.
+
+  As a result, we have also provided support for a third-party **ASIO** host
+  which has traditionally been the go-to 3rd-party solution for pro audio
+  software on Windows. Unfortunately, setting up ASIO is not the most trivial
+  process as it requires downloading and installing the 3rd-party SDK and all
+  its dependencies.
+
+  Setting up ASIO:
+
+  1. **Download the ASIO SDK** `.zip` from [this
+     link](https://www.steinberg.net/en/company/developers.html). The version as
+     of writing this is 2.3.1.
+
+  2. Extract the files and place the directory somewhere you are happy for it to
+     stay (e.g. `~/.asio`). Be sure to read the LICENSE provided with the SDK.
+
+  3. Assign the full path of the directory (that contains the `readme`,
+     `changes`, `ASIO SDK 2.3` pdf, etc) to the `CPAL_ASIO_DIR` environment
+     variable. This is necessary for the upstream `asio-sys` build script to
+     build and bind to the SDK.
+
+  4. `bindgen`, the library used to generate bindings to the C++ SDK, requires
+     clang. **Download and install LLVM** from
+     [here](http://releases.llvm.org/download.html) under the "Pre-Built
+     Binaries" section. The version as of writing this is 7.0.0.
+
+  5. Add the LLVM `bin` directory to a `LIBCLANG_PATH` environment variable. If
+     you installed LLVM to the default directory, this should work in the
+     command prompt:
+     ```
+     setx LIBCLANG_PATH "C:\Program Files\LLVM\bin"
+     ```
+
+  6. If you don't have any ASIO devices or drivers available, you can
+     [**download and install ASIO4ALL**](http://www.asio4all.org/). Be sure to
+     enable the "offline" feature during installation despite what the installer
+     says about it being useless.
+
+  7. **Loading VCVARS**. `rust-bindgen` uses the C++ tool-chain when generating
+     bindings to the ASIO SDK. As a result, it is necessary to load some
+     environment variables in the command prompt that we use to build our
+     project.
+
+     On 64-bit machines run:
+     ```
+     "C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" amd64
+     ```
+
+     On 32-bit machines run:
+     ```
+     "C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" x86
+     ```
+
+     Note that, depending on your version of Visual Studio, this script might be
+     in a slightly different location.
+
+  8. Make sure to enable the `asio` feature when building the spatial audio
+     server:
+
+     ```
+     cargo build --release --features "asio"
+     ```
+
+  After following these steps, the spatial audio server should be built and will
+  use the default ASIO driver that is available for its input and output
+  streams.
 
 ### Rust
 
