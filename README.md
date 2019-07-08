@@ -47,15 +47,17 @@ framework](https://github.com/nannou-org/nannou).
 To build and run the audio server from scratch
 
 1. Install rust [here](https://www.rust-lang.org/install.html).
-2. Clone the github repo:
+2. Check the [**Platforms**](./README.md#platforms) section below for any
+   other platform-specific setup that might be necessary before going on.
+3. Clone the github repo:
    ```
-   git clone https://museumsvictoria/beyond_perception_audio_server
+   git clone https://github.com/museumsvictoria/spatial_audio_server
    ```
-3. Change to the cloned repo directory:
+4. Change to the cloned repo directory:
    ```
-   cd beyond_perception_audio_server/
+   cd spatial_audio_server/
    ```
-4. Build and run the project with:
+5. Build and run the project with:
    ```
    cargo run --release
    ```
@@ -90,7 +92,7 @@ better supported than others:
 
   1. **Download the ASIO SDK** `.zip` from [this
      link](https://www.steinberg.net/en/company/developers.html). The version as
-     of writing this is 2.3.1.
+     of writing this is 2.3.3.
 
   2. Extract the files and place the directory somewhere you are happy for it to
      stay (e.g. `~/.asio`). Be sure to read the LICENSE provided with the SDK.
@@ -103,7 +105,7 @@ better supported than others:
   4. `bindgen`, the library used to generate bindings to the C++ SDK, requires
      clang. **Download and install LLVM** from
      [here](http://releases.llvm.org/download.html) under the "Pre-Built
-     Binaries" section. The version as of writing this is 7.0.0.
+     Binaries" section. The version as of writing this is 8.0.0.
 
   5. Add the LLVM `bin` directory to a `LIBCLANG_PATH` environment variable. If
      you installed LLVM to the default directory, this should work in the
