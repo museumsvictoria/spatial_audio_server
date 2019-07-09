@@ -47,17 +47,22 @@ framework](https://github.com/nannou-org/nannou).
 To build and run the audio server from scratch
 
 1. Install rust [here](https://www.rust-lang.org/install.html).
-2. Check the [**Platforms**](./README.md#platforms) section below for any
+2. Make sure to download and install [cmake](https://cmake.org/download/) and
+   [python](https://www.python.org/downloads/) and that they are accessible via
+   `PATH`. These are required by `shaderc`, the GLSL -> Vulkan SPIR-V compiler
+   used under the hood. This will hopefully become unnecessary in the future as
+   progress is made on pure-rust GLSL->SPIR-V solutions.
+3. Check the [**Platforms**](./README.md#platforms) section below for any
    other platform-specific setup that might be necessary before going on.
-3. Clone the github repo:
+4. Clone the github repo:
    ```
    git clone https://github.com/museumsvictoria/spatial_audio_server
    ```
-4. Change to the cloned repo directory:
+5. Change to the cloned repo directory:
    ```
    cd spatial_audio_server/
    ```
-5. Build and run the project with:
+6. Build and run the project with:
    ```
    cargo run --release
    ```
@@ -78,9 +83,22 @@ better supported than others:
   the audio server currently requires exclusive access to the audio device via
   ALSA.
 
-- **Windows** - By default, windows will use the **WASAPI** audio host that
-  ships with windows. However, this host has some severe limitations w.r.t.
-  multi-channel support and driver compatibility.
+- **Windows** - On windows, the default rust toolchain requires that the
+  *Microsoft Visual Studio Build Tools* are installed with the *C++ build tools*
+  box ticked. This provides a linker for the rust compiler. Be sure to download
+  and install these first. As of writing this, the current version is 2019.
+
+  On Windows, **ninja** is also required for building the `shaderc` dependency.
+  You can download the release from
+  [here](https://github.com/ninja-build/ninja/releases). Unzip the `ninja.exe`
+  file and place it somewhere you are happy for it to stay. Ensure that the
+  `ninja.exe` file is accessible via the `Path` environment variable.
+
+  **Audio APIs**
+
+  By default, CPAL on Windows will use the **WASAPI** audio host that ships with
+  Windows. However, this host has some severe limitations w.r.t. multi-channel
+  support and driver compatibility.
 
   As a result, we have also provided support for a third-party **ASIO** host
   which has traditionally been the go-to 3rd-party solution for pro audio
@@ -88,7 +106,7 @@ better supported than others:
   process as it requires downloading and installing the 3rd-party SDK and all
   its dependencies.
 
-  Setting up ASIO:
+  **Setting up ASIO:**
 
   1. **Download the ASIO SDK** `.zip` from [this
      link](https://www.steinberg.net/en/company/developers.html). The version as
@@ -146,7 +164,9 @@ better supported than others:
 
   After following these steps, the spatial audio server should be built and will
   use the default ASIO driver that is available for its input and output
-  streams.
+  streams. If you wish to specify the input and output audio devices used, see
+  the [Audio Device Selection](./README.md#audio-device-selection) section
+  below.
 
 ### Rust
 
@@ -280,6 +300,9 @@ might change these fields to something like this:
   "target_output_device_name": "Dante"
 ```
 
+The terminal will print the names of the selected input and output devices,
+allowing you to check whether or not your device has been selected successfully.
+
 If this fails, try removing or adding capitalisation. The first device with a
 name that contains the specified target name either as the full name or as some
 part of the name will be selected. If no matching name can be found, the program
@@ -287,6 +310,12 @@ will fall back to the default available device on the system.
 
 Please be careful when editing the `assets/config.json` file, as an invalid
 `assets/config.json` file may cause loss of existing configuration parameters.
+
+**Important Note:** Nannou's audio backend currently expects the driver to
+support either **16-bit signed integer** or **32-bit floating point** sample
+formats. Dante for example seems to default to 24-bit streams and in turn will
+fail to provide a "Supported Format" to nannou. Changing the Dante Virtual
+Soundcard settings to use 16-bit seems to fix this.
 
 ### Floorplan
 
