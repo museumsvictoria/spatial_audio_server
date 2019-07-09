@@ -63,7 +63,7 @@ pub fn host() -> Host {
         return Host::from_id(nannou_audio::HostId::Asio)
             .expect("failed to initialise ASIO audio host");
     }
-    #[cfg(not(all(windows, features = "asio")))]
+    #[cfg(not(features = "asio"))]
     {
         return Host::default();
     }
