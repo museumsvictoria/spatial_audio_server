@@ -128,6 +128,7 @@ fn model(app: &App) -> Model {
         .expect("no input devices available on the system");
     let max_supported_input_channels = input_device.max_supported_input_channels();
     let audio_input_channels = std::cmp::min(max_supported_input_channels, audio::MAX_CHANNELS);
+    println!("Selected Input Device: {:?}", input_device.name());
     let audio_input_model = audio::input::Model::new();
     let audio_input_stream = audio_host
         .new_input_stream(audio_input_model)
@@ -142,6 +143,7 @@ fn model(app: &App) -> Model {
     // Initialise the audio output model and create the output stream.
     let output_device = audio::find_output_device(&audio_host, &config.target_output_device_name)
         .expect("no output devices available on the system");
+    println!("Selected Output Device: {:?}", output_device.name());
     let max_supported_output_channels = output_device.max_supported_output_channels();
     let audio_output_channels = std::cmp::min(max_supported_output_channels, audio::MAX_CHANNELS);
     let audio_output_model = audio::output::Model::new(
