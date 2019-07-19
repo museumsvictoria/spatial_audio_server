@@ -17,6 +17,7 @@ extern crate nannou_osc;
 extern crate newtype_derive;
 extern crate num_cpus;
 extern crate pitch_calc;
+extern crate rand_xorshift;
 extern crate rustfft;
 extern crate serde; // serialization
 #[macro_use]
