@@ -1,5 +1,5 @@
 use hound;
-use nannou::audio::sample::{FromSample, Sample};
+use nannou_audio::sample::{FromSample, Sample};
 use std::io;
 
 /// Retrieve the next sample from the given wav reader samples iterator and yield it in the sample
@@ -41,7 +41,7 @@ where
 //     I32(hound::WavSamples<'a, R, i32>),
 //     F32(hound::WavSamples<'a, R, f32>),
 // }
-// 
+//
 // /// The `WavSamples` iterator.
 // pub struct WavSamplesIter<'a, R, S>
 // where
@@ -50,7 +50,7 @@ where
 //     wav_samples: WavSamples<'a, R>,
 //     sample_type: PhantomData<S>,
 // }
-// 
+//
 // impl<'a, R> WavSamples<'a, R>
 // where
 //     R: io::Read,
@@ -67,7 +67,7 @@ where
 //             WavSamples::F32(ref mut r) => r.next().map(|r| r.map(Sample::from_sample)),
 //         }
 //     }
-// 
+//
 //     /// The exact number of remaining items in the iterator.
 //     pub fn len(&self) -> usize
 //     where
@@ -84,7 +84,7 @@ where
 //         }
 //     }
 // }
-// 
+//
 // macro_rules! impl_from {
 //     ($S:ty, $Variant:ident) => {
 //         impl<'a, R> From<hound::WavSamples<'a, R, $S>> for WavSamples<'a, R> {
@@ -94,12 +94,12 @@ where
 //         }
 //     };
 // }
-// 
+//
 // impl_from!(i8, I8);
 // impl_from!(i16, I16);
 // impl_from!(i32, I32);
 // impl_from!(f32, F32);
-// 
+//
 // impl<'a, R, S> Iterator for WavSamplesIter<'a, R, S>
 // where
 //     R: io::Read,
@@ -109,7 +109,7 @@ where
 //     fn next(&mut self) -> Option<Self::Item> {
 //         self.wav_samples.next()
 //     }
-// 
+//
 //     fn size_hint(&self) -> (usize, Option<usize>) {
 //         match self.wav_samples {
 //             WavSamples::I8(ref r) => r.size_hint(),
@@ -119,7 +119,7 @@ where
 //         }
 //     }
 // }
-// 
+//
 // impl<'a, R, S> ExactSizeIterator for WavSamplesIter<'a, R, S>
 // where
 //     R: io::Read,

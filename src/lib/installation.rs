@@ -31,7 +31,6 @@ impl<'de> Deserialize<'de> for Id {
     where
         D: Deserializer<'de>,
     {
-        use serde_json;
         match serde_json::Value::deserialize(d)? {
             // Deserialize the Id as a string rather than an int.
             serde_json::Value::String(string) => {
@@ -150,7 +149,7 @@ pub mod computer {
     #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
     pub struct Id(pub usize);
 
-    /// The address of a single 
+    /// The address of a single
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct Address {
         // The IP address of the target installation computer.

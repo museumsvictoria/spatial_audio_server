@@ -5,8 +5,7 @@ use fxhash::FxHashMap;
 use metres::Metres;
 use nannou;
 use nannou::prelude::*;
-use nannou::glium;
-use nannou::ui;
+use nannou::{ui, vk};
 use nannou::ui::prelude::*;
 use osc;
 use osc::input::Log as OscInputLog;
@@ -281,7 +280,8 @@ impl Model {
     ) -> Self {
 
         // Load a Nannou UI.
-        let mut ui = app.new_ui(window_id)
+        let mut ui = app.new_ui()
+            .window(window_id)
             .with_theme(theme::construct())
             .build()
             .expect("failed to build `Ui`");
@@ -301,7 +301,7 @@ impl Model {
         let floorplan_path = images_directory(assets).join("floorplan.png");
         let floorplan = insert_image(
             &floorplan_path,
-            app.window(window_id).unwrap().inner_glium_display(),
+            app.window(window_id).unwrap().swapchain_queue().clone(),
             &mut ui.image_map,
         );
         let images = Images { floorplan };
@@ -741,10 +741,10 @@ impl Log<OscOutputLog> {
 
                 // Format the `Type` argument into a string.
                 // TODO: Perhaps this should be provided by nannou?
-                fn format_arg(arg: &nannou::osc::Type) -> String {
+                fn format_arg(arg: &nannou_osc::Type) -> String {
                     match arg {
-                        &nannou::osc::Type::Float(f) => format!("{:.2}", f),
-                        &nannou::osc::Type::Int(i) => format!("{}", i),
+                        &nannou_osc::Type::Float(f) => format!("{:.2}", f),
+                        &nannou_osc::Type::Int(i) => format!("{}", i),
                         arg => format!("{:?}", arg),
                     }
                 }
@@ -825,25 +825,40 @@ fn images_directory(assets: &Path) -> PathBuf {
 /// Returns the dimensions of the image alongside the texture.
 fn load_image(
     path: &Path,
-    display: &glium::Display,
-) -> ((Scalar, Scalar), glium::texture::Texture2d) {
+    queue: Arc<vk::Queue>,
+) -> ui::conrod_vulkano::Image {
     let rgba_image = nannou::image::open(&path)
         .unwrap_or_else(|err| panic!("failed to load image \"{}\": {}", path.display(), err))
         .to_rgba();
-    let (w, h) = rgba_image.dimensions();
-    let raw_image =
-        glium::texture::RawImage2d::from_raw_rgba_reversed(&rgba_image.into_raw(), (w, h));
-    let texture = glium::texture::Texture2d::new(display, raw_image)
-        .expect("failed to create texture for imaage");
-    ((w as Scalar, h as Scalar), texture)
+    let (width, height) = rgba_image.dimensions();
+
+    let (raw_image, load_image_future) = vk::ImmutableImage::from_iter(
+        rgba_image.into_raw().iter().cloned(),
+        vk::image::Dimensions::Dim2d { width, height },
+        vk::Format::R8G8B8A8Srgb,
+        queue,
+    ).expect("failed to construct immutable image from raw image");
+
+    load_image_future
+        .then_signal_fence_and_flush()
+        .expect("failed to signal fence and flush `load_image_future`")
+        .wait(None)
+        .expect("failed to wait for the `load_image_future` to complete");
+
+    ui::conrod_vulkano::Image {
+        image_access: raw_image,
+        width,
+        height,
+    }
 }
 
 /// Insert the image at the given path into the given `ImageMap`.
 ///
 /// Return its Id and Dimensions in the form of an `Image`.
-fn insert_image(path: &Path, display: &glium::Display, image_map: &mut ui::Texture2dMap) -> Image {
-    let ((width, height), texture) = load_image(path, display);
-    let id = image_map.insert(texture);
+fn insert_image(path: &Path, queue: Arc<vk::Queue>, image_map: &mut ui::ImageMap) -> Image {
+    let image = load_image(path, queue);
+    let (width, height) = (image.width.into(), image.height.into());
+    let id = image_map.insert(image);
     let image = Image { id, width, height };
     image
 }

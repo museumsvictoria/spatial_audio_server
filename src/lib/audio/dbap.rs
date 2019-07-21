@@ -1,6 +1,6 @@
 //! An implementation of Distance-Based Amplitude Panning as published by Trond Lossius, 2009.
 
-use nannou::math::Point2;
+use nannou::geom::Point2;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Speaker {

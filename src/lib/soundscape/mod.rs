@@ -5,7 +5,8 @@ use metres::Metres;
 use mindtree_utils::noise_walk;
 use nannou;
 use nannou::prelude::*;
-use nannou::rand::{Rng, SeedableRng, XorShiftRng};
+use nannou::rand::{Rng, SeedableRng};
+use rand_xorshift::XorShiftRng;
 use std::cmp;
 use std::ops;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
@@ -68,7 +69,7 @@ pub struct Tick {
 ///
 /// This is a workaround for the current inability to call a `Box<FnOnce>`
 pub struct UpdateFn {
-    function: Box<FnMut(&mut Model) + Send>,
+    function: Box<dyn FnMut(&mut Model) + Send>,
 }
 
 /// The handle to the soundscape that can be used and shared amonth the main thread.
@@ -1026,10 +1027,10 @@ fn generate_movement(
 }
 
 // A unique, constant seed associated with the installation.
-fn installation_seed(installation: &installation::Id) -> [u32; 4] {
+fn installation_seed(installation: &installation::Id) -> Seed {
     // Convert the installation to its integer representation.
-    let u = installation.0 as u32;
-    let seed = [u; 4];
+    let u = (installation.0 % 256) as u8;
+    let seed = [u; 16];
     seed
 }
 
@@ -1101,7 +1102,7 @@ fn installation_target_sounds(
     let hz = 1.0 / hr_secs;
     // Offset the phase using the `installation::Id` as a unique seed.
     let mut noise_walk_seed = utils::add_seeds(&seed, &installation_seed(&installation));
-    if noise_walk_seed == [0, 0, 0, 0] {
+    if noise_walk_seed == [0; 16] {
         noise_walk_seed[0] = 1;
     }
     let mut rng = XorShiftRng::from_seed(noise_walk_seed);

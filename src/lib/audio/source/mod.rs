@@ -111,7 +111,7 @@ pub struct SignalSamples<'a> {
     attack: &'a mut Attack,
     release: &'a mut Release,
     duration: &'a mut Option<Duration>,
-    samples: &'a mut Iterator<Item = f32>,
+    samples: &'a mut dyn Iterator<Item = f32>,
 }
 
 /// An iterator yielding the same gain for each channel in a frame.
@@ -154,7 +154,7 @@ pub struct Soundscape {
 
 /// Items related to the movement of a source's associated sounds within a soundscape.
 pub mod movement {
-    use nannou::math::{Point2, Vector2};
+    use nannou::geom::{Point2, Vector2};
     use nannou::prelude::PI_F64;
     use utils::Range;
 
@@ -406,7 +406,7 @@ impl SignalKind {
     }
 
     /// Borrow the inner iterator yielding samples.
-    pub fn samples(&mut self) -> &mut Iterator<Item = f32> {
+    pub fn samples(&mut self) -> &mut dyn Iterator<Item = f32> {
         match *self {
             SignalKind::Wav { ref mut samples, .. } => samples as _,
             SignalKind::Realtime { ref mut samples } => samples as _,
@@ -607,7 +607,7 @@ pub mod skew {
 
 pub mod default {
     use metres::Metres;
-    use nannou::math::{Point2, Vector2};
+    use nannou::geom::{Point2, Vector2};
     use super::{movement, Movement};
     use time_calc::Ms;
     use utils::{HR_MS, Range};

@@ -1,5 +1,5 @@
 use metres::Metres;
-use nannou::math::Point2;
+use nannou::geom::Point2;
 use nannou::ui::Scalar;
 
 /// A 2D camera location in exhibition space.

@@ -1,5 +1,4 @@
-use nannou::osc;
-use nannou::osc::Type::Float;
+use nannou_osc::{self as osc, Type::Float};
 use std;
 use std::net::SocketAddr;
 use std::sync::mpsc;

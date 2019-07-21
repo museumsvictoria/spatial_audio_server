@@ -27,6 +27,7 @@ The audio server runs on a single machine and is responsible for the following:
 3. [Glossary / Common Terms](./README.md#glossary--common-terms)
 4. [Usage](./README.md#usage)
    - [Overview](./README.md#overview)
+   - [Audio Device Selection](./README.md#audio-device-selection)
    - [Floorplan](./README.md#floorplan)
    - [Projects](./README.md#projects)
    - [Master](./README.md#master)
@@ -46,15 +47,22 @@ framework](https://github.com/nannou-org/nannou).
 To build and run the audio server from scratch
 
 1. Install rust [here](https://www.rust-lang.org/install.html).
-2. Clone the github repo:
+2. Make sure to download and install [cmake](https://cmake.org/download/) and
+   [python](https://www.python.org/downloads/) and that they are accessible via
+   `PATH`. These are required by `shaderc`, the GLSL -> Vulkan SPIR-V compiler
+   used under the hood. This will hopefully become unnecessary in the future as
+   progress is made on pure-rust GLSL->SPIR-V solutions.
+3. Check the [**Platforms**](./README.md#platforms) section below for any
+   other platform-specific setup that might be necessary before going on.
+4. Clone the github repo:
    ```
-   git clone https://museumsvictoria/beyond_perception_audio_server
+   git clone https://github.com/museumsvictoria/spatial_audio_server
    ```
-3. Change to the cloned repo directory:
+5. Change to the cloned repo directory:
    ```
-   cd beyond_perception_audio_server/
+   cd spatial_audio_server/
    ```
-4. Build and run the project with:
+6. Build and run the project with:
    ```
    cargo run --release
    ```
@@ -68,16 +76,97 @@ To build and run the audio server from scratch
 Cross-platform support is in the pipeline, however currently some platforms are
 better supported than others:
 
-- **macOS** - The best supported and most well tested platform. Currently
-  running the Beyond Perception exhibition.
-- **Linux** - Works well with ALSA and X11. Make sure that pulseaudio is not
-  running as the audio server currently requires exclusive access to the audio
-  device via ALSA.
-- **Windows** - Support is currently blocked on adding ASIO support to
-  [CPAL](https://github.com/tomaka/cpal). See [this
-  issue](https://github.com/museumsvictoria/spatial_audio_server/issues/52) for
-  more details and see [this PR](https://github.com/tomaka/cpal/pull/221) to see
-  the WIP support.
+- **macOS** - The best supported and most well tested platform. Uses the native
+  CoreAudio audio API. Currently running the Beyond Perception exhibition.
+
+- **Linux** - Works well with ALSA. Make sure that pulseaudio is not running as
+  the audio server currently requires exclusive access to the audio device via
+  ALSA.
+
+- **Windows** - On windows, the default rust toolchain requires that the
+  *Microsoft Visual Studio Build Tools* are installed with the *C++ build tools*
+  box ticked. This provides a linker for the rust compiler. Be sure to download
+  and install these first. As of writing this, the current version is 2019.
+
+  On Windows, **ninja** is also required for building the `shaderc` dependency.
+  You can download the release from
+  [here](https://github.com/ninja-build/ninja/releases). Unzip the `ninja.exe`
+  file and place it somewhere you are happy for it to stay. Ensure that the
+  `ninja.exe` file is accessible via the `Path` environment variable.
+
+  **Audio APIs**
+
+  By default, CPAL on Windows will use the **WASAPI** audio host that ships with
+  Windows. However, this host has some severe limitations w.r.t. multi-channel
+  support and driver compatibility.
+
+  As a result, we have also provided support for a third-party **ASIO** host
+  which has traditionally been the go-to 3rd-party solution for pro audio
+  software on Windows. Unfortunately, setting up ASIO is not the most trivial
+  process as it requires downloading and installing the 3rd-party SDK and all
+  its dependencies.
+
+  **Setting up ASIO:**
+
+  1. **Download the ASIO SDK** `.zip` from [this
+     link](https://www.steinberg.net/en/company/developers.html). The version as
+     of writing this is 2.3.3.
+
+  2. Extract the files and place the directory somewhere you are happy for it to
+     stay (e.g. `~/.asio`). Be sure to read the LICENSE provided with the SDK.
+
+  3. Assign the full path of the directory (that contains the `readme`,
+     `changes`, `ASIO SDK 2.3` pdf, etc) to the `CPAL_ASIO_DIR` environment
+     variable. This is necessary for the upstream `asio-sys` build script to
+     build and bind to the SDK.
+
+  4. `bindgen`, the library used to generate bindings to the C++ SDK, requires
+     clang. **Download and install LLVM** from
+     [here](http://releases.llvm.org/download.html) under the "Pre-Built
+     Binaries" section. The version as of writing this is 8.0.0.
+
+  5. Add the LLVM `bin` directory to a `LIBCLANG_PATH` environment variable. If
+     you installed LLVM to the default directory, this should work in the
+     command prompt:
+     ```
+     setx LIBCLANG_PATH "C:\Program Files\LLVM\bin"
+     ```
+
+  6. If you don't have any ASIO devices or drivers available, you can
+     [**download and install ASIO4ALL**](http://www.asio4all.org/). Be sure to
+     enable the "offline" feature during installation despite what the installer
+     says about it being useless.
+
+  7. **Loading VCVARS**. `rust-bindgen` uses the C++ tool-chain when generating
+     bindings to the ASIO SDK. As a result, it is necessary to load some
+     environment variables in the command prompt that we use to build our
+     project.
+
+     On 64-bit machines run:
+     ```
+     "C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" amd64
+     ```
+
+     On 32-bit machines run:
+     ```
+     "C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" x86
+     ```
+
+     Note that, depending on your version of Visual Studio, this script might be
+     in a slightly different location.
+
+  8. Make sure to enable the `asio` feature when building the spatial audio
+     server:
+
+     ```
+     cargo build --release --features "asio"
+     ```
+
+  After following these steps, the spatial audio server should be built and will
+  use the default ASIO driver that is available for its input and output
+  streams. If you wish to specify the input and output audio devices used, see
+  the [Audio Device Selection](./README.md#audio-device-selection) section
+  below.
 
 ### Rust
 
@@ -185,6 +274,48 @@ loaded by the audio server at runtime.
   name is the slugified version of the actual project name.
 
 Run the audio server by double clicking the executable.
+
+### Audio Device Selection
+
+By default, the spatial audio server will select the default audio input device
+and default audio output device on the system. These can normally be changed in
+your operating system's audio settings, however when using ASIO for example this
+might not be possible.
+
+In order to specify a specific audio device for input or output, add the name of
+your device to the `target_input_device_name` and/or `target_output_device_name`
+fields of the `assets/config.json`. By default, these fields should look like
+this:
+
+```
+  "target_input_device_name": "",
+  "target_output_device_name": ""
+```
+
+If we wanted to select the first available dante input or output device, we
+might change these fields to something like this:
+
+```
+  "target_input_device_name": "Dante",
+  "target_output_device_name": "Dante"
+```
+
+The terminal will print the names of the selected input and output devices,
+allowing you to check whether or not your device has been selected successfully.
+
+If this fails, try removing or adding capitalisation. The first device with a
+name that contains the specified target name either as the full name or as some
+part of the name will be selected. If no matching name can be found, the program
+will fall back to the default available device on the system.
+
+Please be careful when editing the `assets/config.json` file, as an invalid
+`assets/config.json` file may cause loss of existing configuration parameters.
+
+**Important Note:** Nannou's audio backend currently expects the driver to
+support either **16-bit signed integer** or **32-bit floating point** sample
+formats. Dante for example seems to default to 24-bit streams and in turn will
+fail to provide a "Supported Format" to nannou. Changing the Dante Virtual
+Soundcard settings to use 16-bit seems to fix this.
 
 ### Floorplan
 

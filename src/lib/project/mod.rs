@@ -17,7 +17,6 @@ use fxhash::{FxHashMap, FxHashSet};
 use gui;
 use installation::{self, Installation};
 use master::Master;
-use nannou;
 use osc;
 use slug::slugify;
 use soundscape;
@@ -294,7 +293,7 @@ impl Project {
 
             // OSC output thread.
             for (&computer, addr) in installation.computers.iter() {
-                let osc_tx = nannou::osc::sender()
+                let osc_tx = nannou_osc::sender()
                     .expect("failed to create OSC sender")
                     .connect(&addr.socket)
                     .expect("failed to connect OSC sender");
@@ -614,6 +613,8 @@ where
     let audio_path = audio_path.as_ref();
 
     // If there are any WAVs in `assets/audio/` that we have not yet listed, load them.
+    //
+    // Ignores all hidden files.
     if audio_path.exists() && audio_path.is_dir() {
         let wav_paths = WalkDir::new(&audio_path)
             .follow_links(true)
@@ -623,6 +624,9 @@ where
             .filter_map(|e| {
                 let file_name = e.file_name();
                 let file_path = Path::new(&file_name);
+                if utils::is_file_hidden(&file_path) {
+                    return None;
+                }
                 let ext = file_path
                     .extension()
                     .and_then(OsStr::to_str)

@@ -4,14 +4,13 @@
 
 use audio::source;
 use fxhash::FxHashMap;
-use nannou;
-use nannou::audio::Buffer;
+use nannou_audio::Buffer;
 use std::cmp;
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 
 /// Simplified type alias for the nannou audio input stream used by the audio server.
-pub type Stream = nannou::audio::Stream<Model>;
+pub type Stream = nannou_audio::Stream<Model>;
 
 /// The state stored on each device's input audio stream.
 pub struct Model {
@@ -71,85 +70,82 @@ impl Model {
 }
 
 /// The function given to nannou to use for capturing audio for a device.
-pub fn capture(mut model: Model, buffer: &Buffer) -> Model {
-    {
-        let Model {
-            ref sources,
-            ref mut active_sounds,
-        } = model;
+pub fn capture(model: &mut Model, buffer: &Buffer) {
+    let Model {
+        ref sources,
+        ref mut active_sounds,
+    } = *model;
 
-        // Remove any sounds that have been closed.
-        for sounds in active_sounds.values_mut() {
-            sounds.retain(|s| !s.is_closed.load(atomic::Ordering::Relaxed));
-        }
+    // Remove any sounds that have been closed.
+    for sounds in active_sounds.values_mut() {
+        sounds.retain(|s| !s.is_closed.load(atomic::Ordering::Relaxed));
+    }
 
-        // Send every sample buffered in chronological order to the active sounds.
-        for (source_id, sounds) in active_sounds.iter() {
-            // Retrieve the realtime data for this source.
-            let realtime = match sources.get(source_id) {
-                None => continue,
-                Some(rt) => rt,
+    // Send every sample buffered in chronological order to the active sounds.
+    for (source_id, sounds) in active_sounds.iter() {
+        // Retrieve the realtime data for this source.
+        let realtime = match sources.get(source_id) {
+            None => continue,
+            Some(rt) => rt,
+        };
+
+        for sound in sounds {
+            if !sound.is_capturing.load(atomic::Ordering::Relaxed) {
+                continue;
+            }
+
+            // Determine the number of frames to take.
+            let frames_to_take = match sound.duration {
+                Duration::Frames(frames) => cmp::min(frames, buffer.len_frames()),
+                Duration::Infinite => buffer.len_frames(),
             };
 
-            for sound in sounds {
-                if !sound.is_capturing.load(atomic::Ordering::Relaxed) {
-                    continue;
-                }
-
-                // Determine the number of frames to take.
-                let frames_to_take = match sound.duration {
-                    Duration::Frames(frames) => cmp::min(frames, buffer.len_frames()),
-                    Duration::Infinite => buffer.len_frames(),
-                };
-
-                // If there are no frames to take for this source, skip it.
-                if frames_to_take == 0 {
-                    continue;
-                }
-
-                // Retrieve the empty buffer to use for sending samples.
-                let mut samples = match sound.buffer_rx.try_pop() {
-                    // This branch should never be hit but is here just in case.
-                    None => {
-                        let samples_len = frames_to_take * realtime.channels.len();
-                        Vec::with_capacity(samples_len)
-                    },
-                    // There should always be a buffer waiting in this channel.
-                    Some(mut samples) => {
-                        samples.clear();
-                        samples
-                    },
-                };
-
-                // Get the channel range and ensure it is no greater than the buffer len.
-                let start = cmp::min(realtime.channels.start, buffer.channels());
-                let end = cmp::min(realtime.channels.end, buffer.channels());
-
-                // Read the necessary samples from the buffer.
-                for frame in buffer.frames().take(frames_to_take) {
-                    samples.extend(frame[start..end].iter().cloned());
-                }
-
-                // Send the buffer to the realtime signal.
-                sound.buffer_tx.push(samples);
+            // If there are no frames to take for this source, skip it.
+            if frames_to_take == 0 {
+                continue;
             }
-        }
 
-        // Subtract from the remaining frames from each active sound.
-        //
-        // Remove sounds that have no more remaining samples to capture.
-        let n_frames = buffer.len_frames();
-        for sounds in active_sounds.values_mut() {
-            sounds.retain(|s| match s.duration {
-                Duration::Frames(frames) => frames > n_frames,
-                Duration::Infinite => true,
-            });
-            for sound in sounds.iter_mut() {
-                if let Duration::Frames(ref mut frames) = sound.duration {
-                    *frames -= n_frames;
-                }
+            // Retrieve the empty buffer to use for sending samples.
+            let mut samples = match sound.buffer_rx.try_pop() {
+                // This branch should never be hit but is here just in case.
+                None => {
+                    let samples_len = frames_to_take * realtime.channels.len();
+                    Vec::with_capacity(samples_len)
+                },
+                // There should always be a buffer waiting in this channel.
+                Some(mut samples) => {
+                    samples.clear();
+                    samples
+                },
+            };
+
+            // Get the channel range and ensure it is no greater than the buffer len.
+            let start = cmp::min(realtime.channels.start, buffer.channels());
+            let end = cmp::min(realtime.channels.end, buffer.channels());
+
+            // Read the necessary samples from the buffer.
+            for frame in buffer.frames().take(frames_to_take) {
+                samples.extend(frame[start..end].iter().cloned());
+            }
+
+            // Send the buffer to the realtime signal.
+            sound.buffer_tx.push(samples);
+        }
+    }
+
+    // Subtract from the remaining frames from each active sound.
+    //
+    // Remove sounds that have no more remaining samples to capture.
+    let n_frames = buffer.len_frames();
+    for sounds in active_sounds.values_mut() {
+        sounds.retain(|s| match s.duration {
+            Duration::Frames(frames) => frames > n_frames,
+            Duration::Infinite => true,
+        });
+        for sound in sounds.iter_mut() {
+            if let Duration::Frames(ref mut frames) = sound.duration {
+                *frames -= n_frames;
             }
         }
     }
-    model
 }
