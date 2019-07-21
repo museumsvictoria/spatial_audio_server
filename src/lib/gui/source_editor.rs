@@ -2328,7 +2328,7 @@ pub fn set(
 
                     let min = ngon.vertices.min as f64;
                     let max = ngon.vertices.max as f64;
-                    let total_min = 0.0;
+                    let total_min = 1.0;
                     let total_max = audio::source::movement::MAX_VERTICES as f64;
                     let label = format!("{} to {} vertices", min, max);
                     for (edge, value) in range_slider(min, max, total_min, total_max)
