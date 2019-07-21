@@ -239,9 +239,8 @@ fn update(_app: &App, model: &mut Model, _update: Update) {
 }
 
 // Draw the state of the application to the screen.
-fn view(app: &App, model: &Model, frame: Frame) -> Frame {
-    model.gui.ui.draw_to_frame_if_changed(app, &frame).expect("failed to draw to frame");
-    frame
+fn view(app: &App, model: &Model, frame: &Frame) {
+    model.gui.ui.draw_to_frame_if_changed(app, frame).expect("failed to draw to frame");
 }
 
 // Re-join with spawned threads on application exit.

@@ -23,7 +23,7 @@ fxhash = "0.2"
 hound = "3.3"
 mindtree_utils = "0.4"
 newtype_derive = "0.1"
-nannou = { git = "https://github.com/nannou-org/nannou", branch = "master" }
+nannou = "0.10"
 nannou_audio = "0.2"
 nannou_osc = "0.1"
 num_cpus = "1.8"
