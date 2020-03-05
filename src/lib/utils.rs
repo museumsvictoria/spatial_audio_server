@@ -233,24 +233,15 @@ impl From<serde_json::Error> for FileError<serde_json::Error> {
     }
 }
 
-impl<E> Error for FileError<E>
-where
-    E: Error,
-{
-    fn description(&self) -> &str {
-        match *self {
-            FileError::Io(ref err) => err.description(),
-            FileError::Format(ref err) => err.description(),
-        }
-    }
-}
-
 impl<E> fmt::Display for FileError<E>
 where
     E: Error,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.description())
+        match *self {
+            FileError::Io(ref err) => fmt::Display::fmt(err, f),
+            FileError::Format(ref err) => fmt::Display::fmt(err, f),
+        }
     }
 }
 

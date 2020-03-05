@@ -256,7 +256,7 @@ fn run(msg_rx: Rx, log_tx: mpsc::Sender<Log>) {
 
                     // Log the message for displaying in the GUI.
                     let addr = osc_tx.remote_addr();
-                    let mut log = Log {
+                    let log = Log {
                         installation,
                         computer,
                         addr,
