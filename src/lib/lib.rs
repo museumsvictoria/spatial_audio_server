@@ -85,7 +85,7 @@ fn model(app: &App) -> Model {
         // Set the app to wait on events.
         //
         // We will wake it up if it is necessary to re-instantiate and redraw the GUI.
-        app.set_loop_mode(LoopMode::wait(3));
+        app.set_loop_mode(LoopMode::Wait);
     }
 
     // Find the assets directory.
@@ -182,8 +182,8 @@ fn model(app: &App) -> Model {
 
     // Create a window.
     let window = app.new_window()
-        .with_title("Audio Server")
-        .with_dimensions(config.window_width, config.window_height)
+        .title("Audio Server")
+        .size(config.window_width, config.window_height)
         .build()
         .expect("failed to create window");
 
@@ -239,8 +239,8 @@ fn update(_app: &App, model: &mut Model, _update: Update) {
 }
 
 // Draw the state of the application to the screen.
-fn view(app: &App, model: &Model, frame: &Frame) {
-    model.gui.ui.draw_to_frame_if_changed(app, frame).expect("failed to draw to frame");
+fn view(app: &App, model: &Model, frame: Frame) {
+    model.gui.ui.draw_to_frame_if_changed(app, &frame).expect("failed to draw to frame");
 }
 
 // Re-join with spawned threads on application exit.

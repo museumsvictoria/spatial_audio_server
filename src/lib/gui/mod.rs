@@ -5,7 +5,7 @@ use fxhash::FxHashMap;
 use metres::Metres;
 use nannou;
 use nannou::prelude::*;
-use nannou::{ui, vk};
+use nannou::ui;
 use nannou::ui::prelude::*;
 use osc;
 use osc::input::Log as OscInputLog;
@@ -299,11 +299,21 @@ impl Model {
 
         // Load and insert the images to be used.
         let floorplan_path = images_directory(assets).join("floorplan.png");
-        let floorplan = insert_image(
-            &floorplan_path,
-            app.window(window_id).unwrap().swapchain_queue().clone(),
-            &mut ui.image_map,
-        );
+        let floorplan_texture = {
+            let window = app.window(window_id).expect("window closed unexpectedly");
+            let device  = window.swap_chain_device();
+            let image = nannou::image::open(floorplan_path).unwrap();
+            let image_rgba = image.into_rgba();
+            // The wgpu device queue used to load the image data.
+            let mut queue = window.swap_chain_queue().lock().unwrap();
+            // Describe how we will use the texture so that the GPU may handle it efficiently.
+            let usage = wgpu::TextureUsage::SAMPLED;
+            wgpu::Texture::load_from_image_buffer(device, &mut *queue, usage, &image_rgba)
+        };
+        let [width, height] = floorplan_texture.size();
+        let [width, height] = [width as f64, height as f64];
+        let id = ui.image_map.insert(floorplan_texture.into_ui_image());
+        let floorplan = Image { id, width, height };
         let images = Images { floorplan };
 
         // Initialise the GUI state.
@@ -818,49 +828,6 @@ fn fonts_directory(assets: &Path) -> PathBuf {
 /// The directory in which all images are stored.
 fn images_directory(assets: &Path) -> PathBuf {
     assets.join("images")
-}
-
-/// Load the image at the given path into a texture.
-///
-/// Returns the dimensions of the image alongside the texture.
-fn load_image(
-    path: &Path,
-    queue: Arc<vk::Queue>,
-) -> ui::conrod_vulkano::Image {
-    let rgba_image = nannou::image::open(&path)
-        .unwrap_or_else(|err| panic!("failed to load image \"{}\": {}", path.display(), err))
-        .to_rgba();
-    let (width, height) = rgba_image.dimensions();
-
-    let (raw_image, load_image_future) = vk::ImmutableImage::from_iter(
-        rgba_image.into_raw().iter().cloned(),
-        vk::image::Dimensions::Dim2d { width, height },
-        vk::Format::R8G8B8A8Srgb,
-        queue,
-    ).expect("failed to construct immutable image from raw image");
-
-    load_image_future
-        .then_signal_fence_and_flush()
-        .expect("failed to signal fence and flush `load_image_future`")
-        .wait(None)
-        .expect("failed to wait for the `load_image_future` to complete");
-
-    ui::conrod_vulkano::Image {
-        image_access: raw_image,
-        width,
-        height,
-    }
-}
-
-/// Insert the image at the given path into the given `ImageMap`.
-///
-/// Return its Id and Dimensions in the form of an `Image`.
-fn insert_image(path: &Path, queue: Arc<vk::Queue>, image_map: &mut ui::ImageMap) -> Image {
-    let image = load_image(path, queue);
-    let (width, height) = (image.width.into(), image.height.into());
-    let id = image_map.insert(image);
-    let image = Image { id, width, height };
-    image
 }
 
 // A unique ID for each widget in the GUI.
