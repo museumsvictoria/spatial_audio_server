@@ -47,22 +47,17 @@ framework](https://github.com/nannou-org/nannou).
 To build and run the audio server from scratch
 
 1. Install rust [here](https://www.rust-lang.org/install.html).
-2. Make sure to download and install [cmake](https://cmake.org/download/) and
-   [python](https://www.python.org/downloads/) and that they are accessible via
-   `PATH`. These are required by `shaderc`, the GLSL -> Vulkan SPIR-V compiler
-   used under the hood. This will hopefully become unnecessary in the future as
-   progress is made on pure-rust GLSL->SPIR-V solutions.
-3. Check the [**Platforms**](./README.md#platforms) section below for any
+2. Check the [**Platforms**](./README.md#platforms) section below for any
    other platform-specific setup that might be necessary before going on.
-4. Clone the github repo:
+3. Clone the github repo:
    ```
    git clone https://github.com/museumsvictoria/spatial_audio_server
    ```
-5. Change to the cloned repo directory:
+4. Change to the cloned repo directory:
    ```
    cd spatial_audio_server/
    ```
-6. Build and run the project with:
+5. Build and run the project with:
    ```
    cargo run --release
    ```
@@ -87,12 +82,6 @@ better supported than others:
   *Microsoft Visual Studio Build Tools* are installed with the *C++ build tools*
   box ticked. This provides a linker for the rust compiler. Be sure to download
   and install these first. As of writing this, the current version is 2019.
-
-  On Windows, **ninja** is also required for building the `shaderc` dependency.
-  You can download the release from
-  [here](https://github.com/ninja-build/ninja/releases). Unzip the `ninja.exe`
-  file and place it somewhere you are happy for it to stay. Ensure that the
-  `ninja.exe` file is accessible via the `Path` environment variable.
 
   **Audio APIs**
 
