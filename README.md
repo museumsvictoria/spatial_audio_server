@@ -1,4 +1,4 @@
-# Spatial Audio Server
+# Spatial Audio Server [![Build Status](https://travis-ci.org/museumsvictoria/spatial_audio_server.svg?branch=master)](https://travis-ci.org/museumsvictoria/spatial_audio_server)
 
 A cross-platform, n-channel spatial audio server developed by
 [MindBuffer](https://www.mindbuffer.net/) using the [Nannou Creative Coding
