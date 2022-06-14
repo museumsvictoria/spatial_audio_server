@@ -1,24 +1,31 @@
-use audio;
+use crate::{
+    audio, installation,
+    metres::Metres,
+    utils::{self, duration_to_secs, Range, Seed},
+};
+use ::utils::noise_walk;
 use fxhash::{FxHashMap, FxHashSet};
-use installation;
-use metres::Metres;
-use mindtree_utils::noise_walk;
-use nannou;
-use nannou::prelude::*;
-use nannou::rand::{Rng, SeedableRng};
+use nannou::{
+    self,
+    prelude::*,
+    rand::{Rng, SeedableRng},
+};
 use rand_xorshift::XorShiftRng;
-use std::cmp;
-use std::ops;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::{atomic, mpsc, Arc, Mutex};
-use std::thread;
-use std::time;
+use std::{
+    cmp, ops,
+    sync::{
+        atomic::{self, AtomicBool, AtomicUsize},
+        mpsc, Arc, Mutex,
+    },
+    thread, time,
+};
 use time_calc::Ms;
-use utils::{self, duration_to_secs, Range, Seed};
+
+type Point2 = nannou::glam::DVec2;
 
 pub use self::group::Group;
-pub use self::movement::Movement;
 use self::movement::BoundingRect;
+pub use self::movement::Movement;
 
 pub mod group;
 pub mod movement;
@@ -86,7 +93,7 @@ pub struct Soundscape {
 #[derive(Clone, Debug)]
 pub struct Speaker {
     /// The position of the speaker in metres.
-    pub point: Point2<Metres>,
+    pub point: Point2,
     /// All installations assigned to the speaker.
     pub installations: FxHashSet<installation::Id>,
 }
@@ -155,7 +162,6 @@ pub struct Model {
     // They should not be relied upon to have up-to-date state without first calling their
     // associated `update_*` function. These are primarily for efficiency within the `tick`
     // function.
-
     /// Tracks the speakers assignned to each installation. Updated at the beginning of each tick.
     installation_speakers: InstallationSpeakers,
     /// This tracks the bounding area for each installation at the beginning of each tick.
@@ -172,7 +178,6 @@ pub struct Model {
     available_sources: AvailableSources,
 
     // Communication channels.
-
     /// A handle to the wav reader thread.
     wav_reader: audio::source::wav::reader::Handle,
     /// A handle for submitting new sounds to the input stream.
@@ -246,7 +251,7 @@ impl ActiveSound {
         let source_id = self.handle.source_id();
         ActiveSoundPosition {
             source_id,
-            position
+            position,
         }
     }
 }
@@ -373,8 +378,7 @@ impl Model {
     pub fn remove_installation(
         &mut self,
         id: &installation::Id,
-    ) -> Option<installation::Soundscape>
-    {
+    ) -> Option<installation::Soundscape> {
         // Remove from speakers.
         for speaker in self.speakers.values_mut() {
             speaker.installations.remove(id);
@@ -540,7 +544,7 @@ impl Model {
                     );
                     // Update the sound.
                     active_sounds.get_mut(&sound_id).unwrap().movement = movement;
-                },
+                }
             }
         }
     }
@@ -749,11 +753,13 @@ pub fn spawn(
     };
 
     // Spawn the soundscape thread.
+    /*
     let thread = thread::Builder::new()
         .name("soundscape".into())
         .spawn(move || run(model, rx))
         .unwrap();
-    let thread = Arc::new(Mutex::new(Some(thread)));
+    // */
+    let thread = Arc::new(Mutex::new(None));
     Soundscape {
         tx,
         thread,
@@ -798,7 +804,9 @@ fn update_active_sound_positions(
     active_sound_positions: &mut ActiveSoundPositions,
 ) {
     active_sound_positions.clear();
-    let extension = active_sounds.iter().map(|(&id, sound)| (id, sound.active_sound_position()));
+    let extension = active_sounds
+        .iter()
+        .map(|(&id, sound)| (id, sound.active_sound_position()));
     active_sound_positions.extend(extension);
 }
 
@@ -813,36 +821,30 @@ fn closest_assigned_installation(
     sound: &ActiveSoundPosition,
     sources: &Sources,
     installation_areas: &InstallationAreas,
-) -> Option<installation::Id>
-{
+) -> Option<installation::Id> {
     if let Some(source) = sources.get(&sound.source_id) {
-        let sound_point = Point2 {
-            x: sound.position.x.0,
-            y: sound.position.y.0,
-        };
+        let sound_point = Point2::new(sound.position.point.x, sound.position.point.y);
         let mut distances = source
             .constraints
             .installations
             .iter()
             .filter_map(|&i| installation_areas.get(&i).map(|a| (i, a)))
             .map(|(i, a)| {
-                let centroid = Point2 {
-                    x: a.centroid.x.0,
-                    y: a.centroid.y.0,
-                };
-                (i, sound_point.distance2(centroid))
+                let centroid = Point2::new(a.centroid.x, a.centroid.y);
+                (i, sound_point.distance(centroid))
             });
         if let Some((i, dist)) = distances.next() {
-            let (closest_installation, _) = distances.fold(
-                (i, dist),
-                |(ia, min), (ib, dist)| {
-                    if dist < min {
-                        (ib, dist)
-                    } else {
-                        (ia, min)
-                    }
-                },
-            );
+            let (closest_installation, _) =
+                distances.fold(
+                    (i, dist),
+                    |(ia, min), (ib, dist)| {
+                        if dist < min {
+                            (ib, dist)
+                        } else {
+                            (ia, min)
+                        }
+                    },
+                );
             return Some(closest_installation);
         }
     }
@@ -877,14 +879,13 @@ fn agent_installation_data(
     installation_areas: &InstallationAreas,
     target_sounds_per_installation: &TargetSoundsPerInstallation,
     active_sound_positions: &ActiveSoundPositions,
-) -> movement::agent::InstallationDataMap
-{
+) -> movement::agent::InstallationDataMap {
     // We can't find installation data if there is no source for the given id.
     let source = match sources.get(&source_id) {
         None => {
             eprintln!("`agent_installation_data`: no source found for given `source::Id`");
             return Default::default();
-        },
+        }
         Some(s) => s,
     };
 
@@ -906,7 +907,7 @@ fn agent_installation_data(
         .filter_map(|inst| {
             let area = match installation_areas.get(inst) {
                 None => return None,
-                Some(area) => area.clone()
+                Some(area) => area.clone(),
             };
             let range = &installations[inst].simultaneous_sounds;
             let current_num_sounds = active_sounds_per_installation
@@ -959,11 +960,11 @@ fn generate_movement(
                 .expect("no area for the given installation");
             let x = area.bounding_rect.left + area.bounding_rect.width() * pos.x;
             let y = area.bounding_rect.bottom + area.bounding_rect.height() * pos.y;
-            let point = pt2(x, y);
+            let point = Point2::new(x, y);
             let radians = 0.0;
             let position = audio::sound::Position { point, radians };
             Movement::Fixed(position)
-        },
+        }
         audio::source::Movement::Generative(ref gen) => match *gen {
             audio::source::movement::Generative::Agent(ref agent) => {
                 let mut rng = nannou::rand::thread_rng();
@@ -996,7 +997,7 @@ fn generate_movement(
                 let generative = movement::Generative::Agent(agent);
                 let movement = Movement::Generative(generative);
                 movement
-            },
+            }
 
             audio::source::movement::Generative::Ngon(ref ngon) => {
                 let mut rng = nannou::rand::thread_rng();
@@ -1067,9 +1068,10 @@ fn update_installation_areas(
             None => continue,
             Some(rect) => rect,
         };
-        let centroid = match nannou::geom::centroid(speaker_points().map(|p| pt2(p.x.0, p.y.0))) {
+        let centroid = match nannou::geom::centroid(speaker_points().map(|p| Point2::new(p.x, p.y)))
+        {
             None => continue,
-            Some(p) => pt2(Metres(p.x), Metres(p.y)),
+            Some(p) => Point2::new(p.x, p.y),
         };
         let area = movement::Area {
             bounding_rect,
@@ -1151,71 +1153,66 @@ fn update_available_groups(
     available_groups: &mut AvailableGroups,
 ) {
     available_groups.clear();
-    let extension = groups
-        .iter()
-        .filter_map(|(group_id, group)| {
-            // The total number of active sounds spawned via this group across all installations.
-            let num_active_sounds = active_sounds
-                .values()
-                .filter(|sound| {
-                    let source_id = sound.source_id();
-                    let source = match sources.get(&source_id) {
-                        None => return false,
-                        Some(s) => s,
-                    };
-                    source.groups.contains(group_id)
-                })
-                .count();
+    let extension = groups.iter().filter_map(|(group_id, group)| {
+        // The total number of active sounds spawned via this group across all installations.
+        let num_active_sounds = active_sounds
+            .values()
+            .filter(|sound| {
+                let source_id = sound.source_id();
+                let source = match sources.get(&source_id) {
+                    None => return false,
+                    Some(s) => s,
+                };
+                source.groups.contains(group_id)
+            })
+            .count();
 
-            // If there are no available sounds, skip this group.
-            let num_available_sounds = if group.simultaneous_sounds.max > num_active_sounds {
-                group.simultaneous_sounds.max - num_active_sounds
+        // If there are no available sounds, skip this group.
+        let num_available_sounds = if group.simultaneous_sounds.max > num_active_sounds {
+            group.simultaneous_sounds.max - num_active_sounds
+        } else {
+            return None;
+        };
+
+        let num_sounds_needed = if group.simultaneous_sounds.min > num_active_sounds {
+            group.simultaneous_sounds.min - num_active_sounds
+        } else {
+            0
+        };
+
+        // Find the duration since the last time a sound was spawned using a source from
+        // this group.
+        let timing = if let Some(&last_used) = groups_last_used.get(group_id) {
+            let duration_since_last: time::Duration = tick.instant.duration_since(last_used);
+            let duration_since_last_ms = Ms(duration_to_secs(&duration_since_last) * 1_000.0);
+            let duration_since_min_interval = if duration_since_last_ms > group.occurrence_rate.min
+            {
+                duration_since_last_ms - group.occurrence_rate.min
             } else {
                 return None;
             };
-
-            let num_sounds_needed = if group.simultaneous_sounds.min > num_active_sounds {
-                group.simultaneous_sounds.min - num_active_sounds
-            } else {
-                0
-            };
-
-            // Find the duration since the last time a sound was spawned using a source from
-            // this group.
-            let timing = if let Some(&last_used) = groups_last_used.get(group_id) {
-                let duration_since_last: time::Duration =
-                    tick.instant.duration_since(last_used);
-                let duration_since_last_ms =
-                    Ms(duration_to_secs(&duration_since_last) * 1_000.0);
-                let duration_since_min_interval =
-                    if duration_since_last_ms > group.occurrence_rate.min {
-                        duration_since_last_ms - group.occurrence_rate.min
-                    } else {
-                        return None;
-                    };
-                let duration_until_sound_needed =
-                    group.occurrence_rate.max - duration_since_last_ms;
-                Some(Timing {
-                    duration_since_min_interval,
-                    duration_until_sound_needed,
-                })
-            } else {
-                None
-            };
-
-            let occurrence_rate_interval = group.occurrence_rate;
-            let suitability = Suitability {
-                occurrence_rate_interval,
-                num_sounds_needed,
-                num_available_sounds,
-                timing,
-            };
-
-            Some(AvailableGroup {
-                id: *group_id,
-                suitability,
+            let duration_until_sound_needed = group.occurrence_rate.max - duration_since_last_ms;
+            Some(Timing {
+                duration_since_min_interval,
+                duration_until_sound_needed,
             })
-        });
+        } else {
+            None
+        };
+
+        let occurrence_rate_interval = group.occurrence_rate;
+        let suitability = Suitability {
+            occurrence_rate_interval,
+            num_sounds_needed,
+            num_available_sounds,
+            timing,
+        };
+
+        Some(AvailableGroup {
+            id: *group_id,
+            suitability,
+        })
+    });
 
     available_groups.extend(extension);
 }
@@ -1238,7 +1235,10 @@ fn update_available_sources(
         }
 
         // We only want sources if they are a part of an available group.
-        if available_groups.iter().all(|g| !source.groups.contains(&g.id)) {
+        if available_groups
+            .iter()
+            .all(|g| !source.groups.contains(&g.id))
+        {
             return None;
         }
 
@@ -1266,16 +1266,14 @@ fn update_available_sources(
         // from this group.
         let timing = if let Some(&last_use) = sources_last_used.get(source_id) {
             let duration_since_last = tick.instant.duration_since(last_use);
-            let duration_since_last_ms =
-                Ms(duration_to_secs(&duration_since_last) * 1_000.0);
-            let duration_since_min_interval =
-                if duration_since_last_ms > source.occurrence_rate.min {
-                    duration_since_last_ms - source.occurrence_rate.min
-                } else {
-                    return None;
-                };
-            let duration_until_sound_needed =
-                source.occurrence_rate.max - duration_since_last_ms;
+            let duration_since_last_ms = Ms(duration_to_secs(&duration_since_last) * 1_000.0);
+            let duration_since_min_interval = if duration_since_last_ms > source.occurrence_rate.min
+            {
+                duration_since_last_ms - source.occurrence_rate.min
+            } else {
+                return None;
+            };
+            let duration_until_sound_needed = source.occurrence_rate.max - duration_since_last_ms;
             Some(Timing {
                 duration_since_min_interval,
                 duration_until_sound_needed,
@@ -1303,7 +1301,6 @@ fn update_available_sources(
     available_sources.extend(extension);
 }
 
-
 // Order the two sets or properties by their suitability for use as the next sound.
 fn suitability(a: &Suitability, b: &Suitability) -> cmp::Ordering {
     match b.num_sounds_needed.cmp(&a.num_sounds_needed) {
@@ -1311,7 +1308,8 @@ fn suitability(a: &Suitability, b: &Suitability) -> cmp::Ordering {
             (&None, &Some(_)) => cmp::Ordering::Less,
             (&Some(_), &None) => cmp::Ordering::Greater,
             (&None, &None) => cmp::Ordering::Equal,
-            (&Some(ref a), &Some(ref b)) => a.duration_until_sound_needed
+            (&Some(ref a), &Some(ref b)) => a
+                .duration_until_sound_needed
                 .partial_cmp(&b.duration_until_sound_needed)
                 .expect("could not compare `duration_until_sound_needed`"),
         },
@@ -1390,12 +1388,12 @@ fn tick(model: &mut Model, tick: Tick) {
                             &active_sound_positions,
                         );
                         agent.update(&mut rng, &tick.since_last_tick, &installation_data);
-                    },
+                    }
                     movement::Generative::Ngon(ref mut ngon) => {
                         if let Some(area) = initial_installation_area {
                             ngon.update(&tick.since_last_tick, &area.bounding_rect);
                         }
-                    },
+                    }
                 },
             }
 
@@ -1429,7 +1427,8 @@ fn tick(model: &mut Model, tick: Tick) {
 
     // Determine how many sounds to add (if any) by finding the difference between the target
     // number and actual number.
-    'installations: for (installation, &num_target_sounds) in target_sounds_per_installation.iter() {
+    'installations: for (installation, &num_target_sounds) in target_sounds_per_installation.iter()
+    {
         let num_active_sounds = match active_sounds_per_installation.get(installation) {
             None => 0,
             Some(sounds) => sounds.len(),
@@ -1504,7 +1503,7 @@ fn tick(model: &mut Model, tick: Tick) {
                     let num_equal = utils::count_equal(&*available_groups, |a, b| {
                         suitability(&a.suitability, &b.suitability)
                     });
-                    nannou::rand::thread_rng().gen_range(0, num_equal)
+                    nannou::rand::thread_rng().gen_range(0..num_equal)
                 };
 
                 // Retrieve one of the most suitable sources.
@@ -1512,7 +1511,7 @@ fn tick(model: &mut Model, tick: Tick) {
                     let num_equal = utils::count_equal(&*available_sources, |a, b| {
                         suitability(&a.suitability, &b.suitability)
                     });
-                    nannou::rand::thread_rng().gen_range(0, num_equal)
+                    nannou::rand::thread_rng().gen_range(0..num_equal)
                 };
 
                 // Pick one of the most suitable sources.
@@ -1530,13 +1529,13 @@ fn tick(model: &mut Model, tick: Tick) {
                         let x_mag: f64 = rng.gen();
                         let x = match left {
                             true => {
-                                Metres(x_mag)
+                                (x_mag) as Metres
                                     * (installation_area.centroid.x
                                         - installation_area.bounding_rect.left)
                                     + installation_area.centroid.x
                             }
                             false => {
-                                Metres(x_mag)
+                                (x_mag) as Metres
                                     * (installation_area.centroid.x
                                         - installation_area.bounding_rect.right)
                                     + installation_area.centroid.x
@@ -1546,19 +1545,19 @@ fn tick(model: &mut Model, tick: Tick) {
                         let y_mag: f64 = rng.gen();
                         let y = match down {
                             true => {
-                                Metres(y_mag)
+                                (y_mag)
                                     * (installation_area.centroid.y
                                         - installation_area.bounding_rect.bottom)
                                     + installation_area.centroid.y
                             }
                             false => {
-                                Metres(y_mag)
+                                (y_mag) as Metres
                                     * (installation_area.centroid.y
                                         - installation_area.bounding_rect.top)
                                     + installation_area.centroid.y
                             }
                         };
-                        let point = Point2 { x, y };
+                        let point = Point2::new(x, y);
                         let radians = rng.gen::<f32>() * 2.0 * ::std::f32::consts::PI;
                         audio::sound::Position { point, radians }
                     };

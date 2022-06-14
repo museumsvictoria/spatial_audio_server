@@ -1,6 +1,7 @@
-use audio;
+use crate::audio;
+use crate::metres::Metres;
+use serde::{Deserialize, Serialize};
 use time_calc::Ms;
-use metres::Metres;
 
 /// Master state of the project.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -27,8 +28,12 @@ impl Default for Master {
         let realtime_source_latency = default_realtime_source_latency();
         let dbap_rolloff_db = default_dbap_rolloff_db();
         let proximity_limit_2 = default_proximity_limit();
-        Master { volume, realtime_source_latency, 
-            dbap_rolloff_db, proximity_limit_2 }
+        Master {
+            volume,
+            realtime_source_latency,
+            dbap_rolloff_db,
+            proximity_limit_2,
+        }
     }
 }
 

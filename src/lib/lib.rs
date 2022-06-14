@@ -1,40 +1,12 @@
 // Extend the macro recursion limit to allow for many GUI widget IDs.
 #![recursion_limit = "256"]
 
-#[macro_use]
-extern crate conrod_core;
-#[macro_use]
-extern crate conrod_derive;
-extern crate crossbeam;
-#[macro_use]
-extern crate custom_derive;
-extern crate fxhash;
-extern crate hound; // wav loading
-extern crate nannou;
-extern crate nannou_audio;
-extern crate nannou_osc;
-#[macro_use]
-extern crate newtype_derive;
-extern crate num_cpus;
-extern crate pitch_calc;
-extern crate rand_xorshift;
-extern crate rustfft;
-extern crate serde; // serialization
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-extern crate slug;
-extern crate time_calc;
-extern crate threadpool;
-extern crate utils as mindtree_utils;
-extern crate walkdir;
-
 use config::Config;
 use nannou::prelude::*;
 use soundscape::Soundscape;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc};
 use std::sync::atomic::AtomicUsize;
+use std::sync::{mpsc, Arc};
 
 mod audio;
 mod camera;
@@ -43,8 +15,8 @@ mod gui;
 mod installation;
 mod master;
 mod metres;
-mod project;
 mod osc;
+mod project;
 mod soundscape;
 mod utils;
 
@@ -89,18 +61,19 @@ fn model(app: &App) -> Model {
     }
 
     // Find the assets directory.
-    let assets = app.assets_path()
-        .expect("could not find assets directory");
+    let assets = app.assets_path().expect("could not find assets directory");
 
     // Load the configuration struct.
     let config_path = config_path(&assets);
     let config: Config = utils::load_from_json_or_default(&config_path);
 
     // Spawn the OSC input thread.
-    let osc_receiver = nannou_osc::receiver(config.osc_input_port)
-        .unwrap_or_else(|err| {
-            panic!("failed to create OSC receiver bound to port {}: {}", config.osc_input_port, err)
-        });
+    let osc_receiver = nannou_osc::receiver(config.osc_input_port).unwrap_or_else(|err| {
+        panic!(
+            "failed to create OSC receiver bound to port {}: {}",
+            config.osc_input_port, err
+        )
+    });
     let (_osc_in_thread_handle, osc_in_log_rx, control_rx) = osc::input::spawn(osc_receiver);
 
     // Spawn the OSC output thread.
@@ -108,8 +81,8 @@ fn model(app: &App) -> Model {
 
     // A channel for sending active sound info from the audio thread to the GUI.
     let app_proxy = app.create_proxy();
-    let (audio_monitor, audio_monitor_tx, audio_monitor_rx) = gui::monitor::spawn(app_proxy)
-        .expect("failed to spawn audio_monitor thread");
+    let (audio_monitor, audio_monitor_tx, audio_monitor_rx) =
+        gui::monitor::spawn(app_proxy).expect("failed to spawn audio_monitor thread");
 
     // Spawn the thread used for reading wavs.
     let wav_reader = audio::source::wav::reader::spawn();
@@ -181,7 +154,8 @@ fn model(app: &App) -> Model {
     );
 
     // Create a window.
-    let window = app.new_window()
+    let window = app
+        .new_window()
         .title("Audio Server")
         .size(config.window_width, config.window_height)
         .build()
@@ -234,13 +208,21 @@ fn model(app: &App) -> Model {
 
 // Update the application in accordance with the given event.
 fn update(_app: &App, model: &mut Model, _update: Update) {
-    let Model { ref mut gui, ref config, .. } = *model;
+    let Model {
+        ref mut gui,
+        ref config,
+        ..
+    } = *model;
     gui.update(&config.project_default);
 }
 
 // Draw the state of the application to the screen.
 fn view(app: &App, model: &Model, frame: Frame) {
-    model.gui.ui.draw_to_frame_if_changed(app, &frame).expect("failed to draw to frame");
+    model
+        .gui
+        .ui
+        .draw_to_frame_if_changed(app, &frame)
+        .expect("failed to draw to frame");
 }
 
 // Re-join with spawned threads on application exit.
@@ -281,13 +263,19 @@ fn exit(app: &App, model: Model) {
     // Wait for the audio monitoring thread to close
     //
     // This should be instant as `GUI` has exited and the receiving channel should be dropped.
-    audio_monitor.join().expect("failed to join audio_monitor thread when exiting");
+    audio_monitor
+        .join()
+        .expect("failed to join audio_monitor thread when exiting");
 
     // Send exit signal to the composer thread.
     let soundscape_thread = soundscape.exit().expect("failed to exit soundscape thread");
-    soundscape_thread.join().expect("failed to join the soundscape thread when exiting");
+    soundscape_thread
+        .join()
+        .expect("failed to join the soundscape thread when exiting");
 
     // Send exit signal to the wav reader thread.
     let wav_reader_thread = wav_reader.exit().expect("failed to exit wav_reader thread");
-    wav_reader_thread.join().expect("failed to join the wav_reader thread when exiting");
+    wav_reader_thread
+        .join()
+        .expect("failed to join the wav_reader thread when exiting");
 }

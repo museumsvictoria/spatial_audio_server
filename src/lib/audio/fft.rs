@@ -1,7 +1,8 @@
 //! An audio-specific FFT implementation using RustFFT.
 
-use rustfft::FFTplanner as FftPlanner;
+use nannou::prelude::Zero;
 use rustfft::num_complex::Complex;
+use rustfft::{FftDirection, FftPlanner};
 
 /// An FFT generic over its window type.
 pub struct Fft<S> {
@@ -53,8 +54,8 @@ where
         planner: &mut Planner,
         channel_samples: I,
         freq_amplitudes: &mut [f32],
-    )
-    where
+        direction: FftDirection,
+    ) where
         I: IntoIterator<Item = f32>,
     {
         process(
@@ -63,6 +64,7 @@ where
             self.input_window.slice_mut(),
             self.output_window.slice_mut(),
             freq_amplitudes,
+            direction,
         );
     }
 }
@@ -81,6 +83,7 @@ pub fn process<I>(
     input_window: &mut [Complex<f32>],
     output_window: &mut [Complex<f32>],
     frequency_amplitudes_2: &mut [f32],
+    direction: rustfft::FftDirection,
 ) where
     I: IntoIterator<Item = f32>,
 {
@@ -102,8 +105,10 @@ pub fn process<I>(
     assert_eq!(count, input_window.len());
 
     // Perform the fourier transform.
-    let fft = planner.plan_fft(input_window.len());
-    fft.process(input_window, output_window);
+    let fft = planner.plan_fft(input_window.len(), direction);
+
+    let mut scratch = vec![Complex::zero(); fft.get_outofplace_scratch_len()];
+    fft.process_outofplace_with_scratch(input_window, output_window, &mut scratch);
 
     // Retrieve the magnitude of the complex numbers as the amplitude of each frequency.
     //

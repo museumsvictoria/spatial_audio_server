@@ -1,13 +1,14 @@
-use gui::{self, collapsible_area, Channels, Gui, ProjectState, State};
-use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
-use installation;
-use nannou::ui;
+use crate::gui::{self, collapsible_area, Channels, Gui, ProjectState, State};
+use crate::gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
+use crate::installation;
+use crate::osc;
+use crate::project::{self, Project};
+use nannou_conrod as ui;
+use nannou_conrod::prelude::*;
 use nannou_osc::Connected;
-use nannou::ui::prelude::*;
-use osc;
-use project::{self, Project};
-use std::{io, net};
 use std::sync::Arc;
+use std::{io, net};
+use ui::{color, position, widget, Scalar};
 
 /// Runtime state relevant to the installation editor GUI.
 #[derive(Default)]
@@ -40,8 +41,7 @@ pub fn set(
         ref ids,
         channels,
         state: &mut State {
-            ref mut is_open,
-            ..
+            ref mut is_open, ..
         },
         ..
     } = *gui;
@@ -53,10 +53,7 @@ pub fn set(
         ..
     } = *project;
     let ProjectState {
-        installation_editor:
-            InstallationEditor {
-                ref mut selected,
-            },
+        installation_editor: InstallationEditor { ref mut selected },
         ..
     } = *project_state;
 
@@ -78,19 +75,27 @@ pub fn set(
     let computer_canvas_h = ITEM_HEIGHT + PAD + ITEM_HEIGHT + PAD + COMPUTER_LIST_HEIGHT;
     let soundscape_canvas_h = PAD + PAD * 3.0 + PAD + SLIDER_H + PAD;
     let selected_canvas_h = PAD
-        + NAME_H + PAD
-        + computer_canvas_h + PAD
-        + osc_canvas_h + PAD
-        + soundscape_canvas_h + PAD;
+        + NAME_H
+        + PAD
+        + computer_canvas_h
+        + PAD
+        + osc_canvas_h
+        + PAD
+        + soundscape_canvas_h
+        + PAD;
 
     // The total height of the installation editor as a sum of the previous heights plus necessary
     // padding.
     let installation_editor_h = LIST_HEIGHT + ADD_H + selected_canvas_h;
 
-    let (area, event) = collapsible_area(is_open.installation_editor, "Installation Editor", ids.side_menu)
-        .align_middle_x_of(ids.side_menu)
-        .down_from(last_area_id, 0.0)
-        .set(ids.installation_editor, ui);
+    let (area, event) = collapsible_area(
+        is_open.installation_editor,
+        "Installation Editor",
+        ids.side_menu,
+    )
+    .align_middle_x_of(ids.side_menu)
+    .down_from(last_area_id, 0.0)
+    .set(ids.installation_editor, ui);
     if let Some(event) = event {
         is_open.installation_editor = event.is_open();
     }
@@ -120,7 +125,11 @@ pub fn set(
         let name = installation.name.clone();
         installations.insert(id, installation);
         let selected_computer = None;
-        *selected = Some(Selected { id, name, selected_computer });
+        *selected = Some(Selected {
+            id,
+            name,
+            selected_computer,
+        });
 
         // Update the soundscape thread.
         channels
@@ -171,11 +180,12 @@ pub fn set(
     let mut maybe_remove_index = None;
 
     // The index of the selected installation.
-    let selected_index = selected.as_ref()
+    let selected_index = selected
+        .as_ref()
         .and_then(|s| installations_vec.iter().position(|&id| id == s.id));
 
     while let Some(event) = events.next(ui, |i| selected_index == Some(i)) {
-        use nannou::ui::widget::list_select::Event;
+        use widget::list_select::Event;
         match event {
             // Instantiate a button for each installation.
             Event::Item(item) => {
@@ -202,12 +212,14 @@ pub fn set(
 
                 // If the button or any of its children are capturing the mouse, display
                 // the `remove` button.
-                let show_remove_button = ui.global_input()
+                let show_remove_button = ui
+                    .global_input()
                     .current
                     .widget_capturing_mouse
                     .map(|id| {
                         id == item.widget_id
-                            || ui.widget_graph()
+                            || ui
+                                .widget_graph()
                                 .does_recursive_depth_edge_exist(item.widget_id, id)
                     })
                     .unwrap_or(false);
@@ -313,7 +325,8 @@ pub fn set(
         .y(selected_canvas_y.middle())
         .align_middle_x_of(ids.side_menu)
         .set(ids.installation_editor_selected_canvas, ui);
-    let selected_canvas_kid_area = ui.kid_area_of(ids.installation_editor_selected_canvas)
+    let selected_canvas_kid_area = ui
+        .kid_area_of(ids.installation_editor_selected_canvas)
         .unwrap();
 
     // If an installation is selected, display the installation computer canvas.
@@ -346,7 +359,7 @@ pub fn set(
         .mid_top_of(ids.installation_editor_selected_canvas)
         .set(ids.installation_editor_name, ui)
     {
-        use nannou::ui::widget::text_box::Event;
+        use widget::text_box::Event;
         match event {
             Event::Update(s) => *name = s,
             Event::Enter => {
@@ -367,7 +380,7 @@ pub fn set(
                     let msg = osc::output::Message::Osc(update);
                     channels.osc_out_msg_tx.push(msg);
                 }
-            },
+            }
         }
     }
 
@@ -405,11 +418,14 @@ pub fn set(
         .kid_area_w_of(ids.installation_editor_soundscape_canvas)
         .h(SLIDER_H)
         .label_font_size(SMALL_FONT_SIZE)
-        .color(ui::color::LIGHT_CHARCOAL)
+        .color(color::LIGHT_CHARCOAL)
         .align_left()
         .label(&label)
         .down(PAD * 2.0)
-        .set(ids.installation_editor_soundscape_simultaneous_sounds_slider, ui)
+        .set(
+            ids.installation_editor_soundscape_simultaneous_sounds_slider,
+            ui,
+        )
     {
         let num = value as usize;
 
@@ -419,7 +435,7 @@ pub fn set(
             match edge {
                 widget::range_slider::Edge::Start => {
                     installation.soundscape.simultaneous_sounds.min = num;
-                },
+                }
                 widget::range_slider::Edge::End => {
                     installation.soundscape.simultaneous_sounds.max = num;
                 }
@@ -490,7 +506,7 @@ pub fn set(
                     Err(err) => {
                         eprintln!("failed to connect localhost OSC sender: {}", err);
                         break;
-                    },
+                    }
                 };
                 let target = osc::output::TargetSource::New(osc_tx);
                 let add = osc::output::OscTarget::Add(id, computer, target, osc_addr.clone());
@@ -539,7 +555,7 @@ pub fn set(
     while let Some(event) = events.next(ui, |i| {
         selected_computer.as_ref().map(|s| s.computer) == Some(installation::computer::Id(i))
     }) {
-        use self::ui::widget::list_select::Event;
+        use widget::list_select::Event;
         match event {
             // Instantiate a button for each computer.
             Event::Item(item) => {
@@ -619,8 +635,8 @@ pub fn set(
             Ok(s) => s,
             Err(_) => {
                 eprintln!("could not parse socket string");
-                return
-            },
+                return;
+            }
         };
 
         // Check for an existing sender using this socket.
@@ -643,7 +659,7 @@ pub fn set(
                 Ok(osc_tx) => {
                     let osc_tx = Arc::new(osc_tx);
                     osc::output::TargetSource::New(osc_tx)
-                },
+                }
                 Err(err) => {
                     eprintln!("could not connect osc_sender: {}", err);
                     return;
@@ -683,7 +699,7 @@ pub fn set(
         .color(color)
         .set(ids.installation_editor_osc_ip_text_box, ui)
     {
-        use nannou::ui::widget::text_box::Event;
+        use widget::text_box::Event;
         match event {
             Event::Enter => {
                 update_addr(id, &selected_computer, channels, installations);
@@ -704,7 +720,7 @@ pub fn set(
         .font_size(SMALL_FONT_SIZE)
         .set(ids.installation_editor_osc_address_text_box, ui)
     {
-        use nannou::ui::widget::text_box::Event;
+        use widget::text_box::Event;
         match event {
             Event::Enter => {
                 update_addr(id, &selected_computer, channels, installations);

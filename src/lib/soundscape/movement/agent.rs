@@ -1,18 +1,18 @@
-use audio;
+use crate::audio;
+use crate::installation;
+use crate::metres::Metres;
+use crate::utils::{self, duration_to_secs};
 use fxhash::FxHashMap;
-use installation;
-use metres::Metres;
-use nannou::prelude::*;
+use nannou::glam;
 use nannou::rand::Rng;
 use std::{cmp, time};
-use utils::{self, duration_to_secs, pt2, vt2};
 
 // The minimum distance that the point may be from the target before it may switch to the next.
-const TARGET_DISTANCE_THRESHOLD: Metres = Metres(1.0);
+const TARGET_DISTANCE_THRESHOLD: Metres = 1.0;
 
 // The point and vector types in exhibition space.
-type Point = Point2<Metres>;
-type Vector = Vector2<Metres>;
+type Point = glam::DVec2;
+type Vector = glam::DVec2;
 
 /// An automous-agent style movement kind.
 ///
@@ -78,12 +78,12 @@ impl Agent {
         // Generate these based on "weight" or whatever user params are decided upon.
         let start_magnitude = rng.gen::<f64>() * max_speed;
         let desired_velocity = desired_velocity(location, target_location);
-        let desired_radians = desired_velocity.y.0.atan2(desired_velocity.x.0);
+        let desired_radians = desired_velocity.y.atan2(desired_velocity.x);
         // Generate initial angle and create velocity from this.
         let initial_radians = desired_radians + rng.gen::<f64>() * 2.0 - 1.0;
         let velocity = {
             let (vx, vy) = utils::rad_mag_to_x_y(initial_radians, start_magnitude);
-            [Metres(vx), Metres(vy)].into()
+            [vx, vy].into()
         };
         let agent = Agent {
             location,
@@ -102,7 +102,7 @@ impl Agent {
     pub fn position(&self) -> audio::sound::Position {
         let point = self.location;
         let radians = if self.directional {
-            let vel = vt2::to_f64(self.velocity);
+            let vel = self.velocity;
             vel.y.atan2(vel.x) as f32
         } else {
             0.0
@@ -128,30 +128,33 @@ impl Agent {
         use std::f64::consts::PI;
 
         let delta_secs = duration_to_secs(delta_time);
-        let mut new_velocity = vt2::to_f64(self.velocity) + vt2::to_f64(force);
+        let mut new_velocity = self.velocity + force;
 
-        fn is_counter_clockwise(b: Vector2<f64>, c: Vector2<f64>) -> bool {
-             (b.x * c.y - b.y * c.x) > 0.0
+        fn is_counter_clockwise(b: Vector, c: Vector) -> bool {
+            (b.x * c.y - b.y * c.x) > 0.0
         }
 
         // Limit `new_velocity` by max_rotation TODO: There must be a way to simplify this.
-        let new_magnitude = new_velocity.magnitude();
-        let radians_start = self.velocity.y.0.atan2(self.velocity.x.0);
+        let new_magnitude = new_velocity.length();
+        let radians_start = self.velocity.y.atan2(self.velocity.x);
         let radians_end = new_velocity.y.atan2(new_velocity.x);
         let delta_radians = radians_end - radians_start;
-        let abs_delta_radians = delta_radians.abs().min(utils::fmod(-delta_radians.abs(), 2.0 * PI));
+        let abs_delta_radians = delta_radians
+            .abs()
+            .min(utils::fmod(-delta_radians.abs(), 2.0 * PI));
         let max_delta_radians = delta_secs * self.max_rotation;
         if max_delta_radians < abs_delta_radians {
             let abs_delta_radians_limited = abs_delta_radians.min(max_delta_radians);
-            let is_left = is_counter_clockwise(vt2::to_f64(self.velocity), new_velocity);
-            let delta_radians_limited = abs_delta_radians_limited * if is_left { 1.0 } else { -1.0 };
+            let is_left = is_counter_clockwise(self.velocity, new_velocity);
+            let delta_radians_limited =
+                abs_delta_radians_limited * if is_left { 1.0 } else { -1.0 };
             let radians_end_limited = radians_start + delta_radians_limited;
             let (new_vx, new_vy) = utils::rad_mag_to_x_y(radians_end_limited, new_magnitude);
-            new_velocity = vec2(new_vx, new_vy);
+            new_velocity = Vector::new(new_vx, new_vy);
         }
 
-        self.velocity = vt2::to_metres(new_velocity);
-        self.location = pt2::to_metres(pt2::to_f64(self.location) + new_velocity * delta_secs);
+        self.velocity = new_velocity;
+        self.location = (self.location) + new_velocity * delta_secs;
     }
 
     /// Update the agent for the given past amount of time.
@@ -220,9 +223,9 @@ fn closest_installation(
     let mut iter = installations.iter();
     iter.next()
         .map(|first| {
-            let first_dist = Metres(pt2::to_f64(p).distance2(pt2::to_f64(first.1.area.centroid)));
+            let first_dist: Metres = (p).distance(first.1.area.centroid);
             iter.fold((first.0, first_dist), |(closest, dist), inst| {
-                let inst_dist = Metres(pt2::to_f64(p).distance2(pt2::to_f64(inst.1.area.centroid)));
+                let inst_dist: Metres = (p).distance(inst.1.area.centroid);
                 if inst_dist < dist {
                     (inst.0, inst_dist)
                 } else {
@@ -283,19 +286,19 @@ where
     let y_len = installation_area.bounding_rect.top - installation_area.bounding_rect.bottom;
     let x = installation_area.bounding_rect.left + x_len * rng.gen::<f64>();
     let y = installation_area.bounding_rect.bottom + y_len * rng.gen::<f64>();
-    Point2 { x, y }
+    Point::new(x, y)
 }
 
 /// Whether or not the current point has reached the target.
 fn reached_target(current: Point, target: Point) -> bool {
-    let distance = Metres(pt2::to_f64(current).distance(pt2::to_f64(target)));
+    let distance: Metres = (current).distance(target);
     distance <= TARGET_DISTANCE_THRESHOLD
 }
 
 /// The desired velocity is the velocity that would take the agent from its `current` position
 /// directly to the `target` position.
 fn desired_velocity(current: Point, target: Point) -> Vector {
-    vt2::to_metres(pt2::to_f64(target) - pt2::to_f64(current))
+    (target) - (current)
 }
 
 /// The steering vector is the target velocity minus the current velocity.
@@ -307,19 +310,18 @@ fn desired_velocity(current: Point, target: Point) -> Vector {
 /// The resulting vector is a force that may be applied to the current velocity to steer it
 /// directly towards the target location.
 fn steering_force(current_velocity: Vector, target_velocity: Vector) -> Vector {
-    vt2::to_metres(vt2::to_f64(target_velocity) - vt2::to_f64(current_velocity))
+    (target_velocity) - (current_velocity)
 }
 
 /// Limit the magnitude of the given vector.
 fn limit_magnitude(v: Vector, limit: f64) -> Vector {
-    let vf = vt2::to_f64(v);
-    let magnitude = vf.magnitude();
-    let f = if magnitude > limit {
+    let vf = v;
+    let magnitude = vf.length();
+    if magnitude > limit {
         vf.normalize() * limit
     } else {
         vf
-    };
-    vt2::to_metres(f)
+    }
 }
 
 /// Produces a force that steers an agent toward its desired target.
@@ -331,9 +333,9 @@ fn seek_force(
     max_force: f64,
 ) -> Vector {
     let desired_velocity = desired_velocity(current_position, target_position);
-    let desired_normalised = vt2::to_f64(desired_velocity).normalize();
+    let desired_normalised = (desired_velocity).normalize();
     let desired = desired_normalised * max_speed;
-    let steering_force = steering_force(current_velocity, vt2::to_metres(desired));
+    let steering_force = steering_force(current_velocity, desired);
     let steering_limited = limit_magnitude(steering_force, max_force);
     steering_limited
 }

@@ -1,10 +1,11 @@
-use audio;
-use gui::{collapsible_area, Gui, ProjectState};
-use gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
-use nannou::ui;
-use nannou::ui::prelude::*;
-use project::{self, Project};
-use soundscape;
+use crate::audio;
+use crate::gui::{collapsible_area, Gui, ProjectState};
+use crate::gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
+use crate::project::{self, Project};
+use crate::soundscape;
+use conrod_core::{Borderable, Colorable, Labelable, Positionable, Sizeable, Widget};
+use nannou_conrod as ui;
+use ui::{FontSize, Scalar};
 
 /// Runtime state related to the speaker editor GUI panel.
 #[derive(Default)]
@@ -22,11 +23,11 @@ pub fn sorted_speakers_vec(speakers: &project::Speakers) -> Vec<audio::speaker::
 
 // Instantiate the sidebar speaker editor widgets.
 pub fn set(
-    last_area_id: widget::Id,
+    last_area_id: ui::widget::Id,
     gui: &mut Gui,
     project: &mut Project,
     project_state: &mut ProjectState,
-) -> widget::Id {
+) -> ui::widget::Id {
     let Gui {
         ref mut ui,
         ref mut state,
@@ -36,12 +37,13 @@ pub fn set(
     } = *gui;
 
     let Project {
-        state: project::State {
-            ref camera,
-            ref installations,
-            ref mut speakers,
-            ..
-        },
+        state:
+            project::State {
+                ref camera,
+                ref installations,
+                ref mut speakers,
+                ..
+            },
         ..
     } = *project;
 
@@ -49,7 +51,6 @@ pub fn set(
         ref mut speaker_editor,
         ..
     } = *project_state;
-
 
     let is_open = state.is_open.speaker_editor;
     const LIST_HEIGHT: Scalar = 140.0;
@@ -76,7 +77,7 @@ pub fn set(
     };
 
     // The canvas on which the log will be placed.
-    let canvas = widget::Canvas::new()
+    let canvas = ui::widget::Canvas::new()
         .pad(0.0)
         .h(speaker_editor_canvas_h);
     area.set(canvas, ui);
@@ -93,7 +94,7 @@ pub fn set(
 
     // If there are no speakers, display a message saying how to add some.
     if speakers.is_empty() {
-        widget::Text::new("Add some speaker outputs with the `+` button")
+        ui::widget::Text::new("Add some speaker outputs with the `+` button")
             .padded_w_of(area.id, TEXT_PAD)
             .mid_top_with_margin_on(area.id, TEXT_PAD)
             .font_size(SMALL_FONT_SIZE)
@@ -106,22 +107,20 @@ pub fn set(
         let mut speakers_vec = sorted_speakers_vec(speakers);
 
         let num_items = speakers_vec.len();
-        let (mut list_events, scrollbar) = widget::ListSelect::single(num_items)
+        let (mut list_events, scrollbar) = ui::widget::ListSelect::single(num_items)
             .item_size(ITEM_HEIGHT)
             .h(LIST_HEIGHT)
             .align_middle_x_of(area.id)
             .align_top_of(area.id)
             .scrollbar_next_to()
-            .scrollbar_color(color::LIGHT_CHARCOAL)
+            .scrollbar_color(ui::color::LIGHT_CHARCOAL)
             .set(ids.speaker_editor_list, ui);
 
         // If a speaker was removed, process it after the whole list is instantiated to avoid
         // invalid indices.
         let mut maybe_remove_index = None;
 
-        while let Some(event) =
-            list_events.next(ui, |i| speaker_editor.selected == Some(i))
-        {
+        while let Some(event) = list_events.next(ui, |i| speaker_editor.selected == Some(i)) {
             use self::ui::widget::list_select::Event;
             match event {
                 // Instantiate a button for each speaker.
@@ -134,37 +133,39 @@ pub fn set(
                             "{} - CH {} - ({}mx, {}my)",
                             speaker.name,
                             speaker.channel + 1,
-                            (speaker.point.x.0 * 100.0).trunc() / 100.0,
-                            (speaker.point.y.0 * 100.0).trunc() / 100.0
+                            (speaker.point.x * 100.0).trunc() / 100.0,
+                            (speaker.point.y * 100.0).trunc() / 100.0
                         );
                         label
                     };
 
                     // Blue if selected, gray otherwise.
                     let color = if selected {
-                        color::BLUE
+                        ui::color::BLUE
                     } else {
-                        color::CHARCOAL
+                        ui::color::CHARCOAL
                     };
 
                     // Use `Button`s for the selectable items.
-                    let button = widget::Button::new()
+                    let button = ui::widget::Button::new()
                         .label(&label)
                         .label_font_size(SMALL_FONT_SIZE)
-                        .label_x(position::Relative::Place(position::Place::Start(Some(
-                            10.0,
-                        ))))
+                        .label_x(ui::position::Relative::Place(ui::position::Place::Start(
+                            Some(10.0),
+                        )))
                         .color(color);
                     item.set(button, ui);
 
                     // If the button or any of its children are capturing the mouse, display
                     // the `remove` button.
-                    let show_remove_button = ui.global_input()
+                    let show_remove_button = ui
+                        .global_input()
                         .current
                         .widget_capturing_mouse
                         .map(|id| {
                             id == item.widget_id
-                                || ui.widget_graph()
+                                || ui
+                                    .widget_graph()
                                     .does_recursive_depth_edge_exist(item.widget_id, id)
                         })
                         .unwrap_or(false);
@@ -173,10 +174,10 @@ pub fn set(
                         continue;
                     }
 
-                    if widget::Button::new()
+                    if ui::widget::Button::new()
                         .label("X")
                         .label_font_size(SMALL_FONT_SIZE)
-                        .color(color::DARK_RED.alpha(0.5))
+                        .color(ui::color::DARK_RED.alpha(0.5))
                         .w_h(ITEM_HEIGHT, ITEM_HEIGHT)
                         .align_right_of(item.widget_id)
                         .align_middle_y_of(item.widget_id)
@@ -234,7 +235,7 @@ pub fn set(
 
     if show_add_button {
         let plus_size = (ITEM_HEIGHT * 0.66) as FontSize;
-        if widget::Button::new()
+        if ui::widget::Button::new()
             .color(DARK_A)
             .label("+")
             .label_font_size(plus_size)
@@ -285,7 +286,7 @@ pub fn set(
     let end = start + SELECTED_CANVAS_H;
     let selected_canvas_y = ui::Range { start, end };
 
-    widget::Canvas::new()
+    ui::widget::Canvas::new()
         .pad(PAD)
         .w_of(ids.side_menu)
         .h(SELECTED_CANVAS_H)
@@ -297,7 +298,7 @@ pub fn set(
     let i = match speaker_editor.selected {
         None => {
             // Otherwise no speaker is selected.
-            widget::Text::new("No speaker selected")
+            ui::widget::Text::new("No speaker selected")
                 .padded_w_of(area.id, TEXT_PAD)
                 .mid_top_with_margin_on(ids.speaker_editor_selected_canvas, TEXT_PAD)
                 .font_size(SMALL_FONT_SIZE)
@@ -312,7 +313,7 @@ pub fn set(
     let id = speakers_vec[i];
 
     // The name of the speaker.
-    for event in widget::TextBox::new(&speakers[&id].name)
+    for event in ui::widget::TextBox::new(&speakers[&id].name)
         .mid_top_of(ids.speaker_editor_selected_canvas)
         .kid_area_w_of(ids.speaker_editor_selected_canvas)
         .parent(gui.ids.speaker_editor_selected_canvas)
@@ -321,7 +322,7 @@ pub fn set(
         .font_size(SMALL_FONT_SIZE)
         .set(ids.speaker_editor_selected_name, ui)
     {
-        if let widget::text_box::Event::Update(string) = event {
+        if let ui::widget::text_box::Event::Update(string) = event {
             speakers.get_mut(&id).unwrap().name = string;
         }
     }
@@ -340,7 +341,7 @@ pub fn set(
     let selected_channel = speakers[&id].audio.channel;
 
     // The drop down list for channel selection.
-    for new_index in widget::DropDownList::new(&channel_vec, Some(selected_channel))
+    for new_index in ui::widget::DropDownList::new(&channel_vec, Some(selected_channel))
         .down_from(ids.speaker_editor_selected_name, PAD)
         .align_middle_x_of(ids.side_menu)
         .kid_area_w_of(ids.speaker_editor_selected_canvas)
@@ -349,7 +350,7 @@ pub fn set(
         .scrollbar_on_top()
         .max_visible_items(5)
         .color(DARK_A)
-        .border_color(color::LIGHT_CHARCOAL)
+        .border_color(ui::color::LIGHT_CHARCOAL)
         .label_font_size(SMALL_FONT_SIZE)
         .set(ids.speaker_editor_selected_channel, ui)
     {
@@ -391,16 +392,16 @@ pub fn set(
     }
 
     // A canvas on which installation selection widgets are instantiated.
-    widget::Canvas::new()
+    ui::widget::Canvas::new()
         .kid_area_w_of(ids.speaker_editor_selected_canvas)
         .h(INSTALLATIONS_CANVAS_H)
         .mid_bottom_of(ids.speaker_editor_selected_canvas)
         .pad(PAD)
-        .color(color::CHARCOAL)
+        .color(ui::color::CHARCOAL)
         .set(ids.speaker_editor_selected_installations_canvas, ui);
 
     // A header for the installations editing area.
-    widget::Text::new("Installations")
+    ui::widget::Text::new("Installations")
         .top_left_of(ids.speaker_editor_selected_installations_canvas)
         .font_size(SMALL_FONT_SIZE)
         .set(ids.speaker_editor_selected_installations_text, ui);
@@ -417,7 +418,7 @@ pub fn set(
         .iter()
         .map(|inst_id| &installations[&inst_id].name)
         .collect::<Vec<_>>();
-    for index in widget::DropDownList::new(&installation_strs, None)
+    for index in ui::widget::DropDownList::new(&installation_strs, None)
         .align_middle_x_of(ids.speaker_editor_selected_installations_canvas)
         .down_from(ids.speaker_editor_selected_installations_text, PAD * 2.0)
         .h(ITEM_HEIGHT)
@@ -458,17 +459,15 @@ pub fn set(
         .iter()
         .cloned()
         .collect::<Vec<_>>();
-    selected_installations.sort_by(|a, b| {
-        installations[a].name.cmp(&installations[b].name)
-    });
-    let (mut items, scrollbar) = widget::List::flow_down(selected_installations.len())
+    selected_installations.sort_by(|a, b| installations[a].name.cmp(&installations[b].name));
+    let (mut items, scrollbar) = ui::widget::List::flow_down(selected_installations.len())
         .item_size(ITEM_HEIGHT)
         .h(INSTALLATION_LIST_H)
         .kid_area_w_of(ids.speaker_editor_selected_installations_canvas)
         .align_middle_x_of(ids.speaker_editor_selected_installations_canvas)
         .down_from(ids.speaker_editor_selected_installations_ddl, PAD)
         .scrollbar_next_to()
-        .scrollbar_color(color::LIGHT_CHARCOAL)
+        .scrollbar_color(ui::color::LIGHT_CHARCOAL)
         .set(ids.speaker_editor_selected_installations_list, ui);
     let mut maybe_remove_index = None;
     while let Some(item) = items.next(ui) {
@@ -476,22 +475,24 @@ pub fn set(
         let label = &installations[&inst].name;
 
         // Use `Button`s for the selectable items.
-        let button = widget::Button::new()
+        let button = ui::widget::Button::new()
             .label(&label)
             .label_font_size(SMALL_FONT_SIZE)
-            .label_x(position::Relative::Place(position::Place::Start(Some(
-                10.0,
-            ))));
+            .label_x(ui::position::Relative::Place(ui::position::Place::Start(
+                Some(10.0),
+            )));
         item.set(button, ui);
 
         // If the button or any of its children are capturing the mouse, display
         // the `remove` button.
-        let show_remove_button = ui.global_input()
+        let show_remove_button = ui
+            .global_input()
             .current
             .widget_capturing_mouse
             .map(|id| {
                 id == item.widget_id
-                    || ui.widget_graph()
+                    || ui
+                        .widget_graph()
                         .does_recursive_depth_edge_exist(item.widget_id, id)
             })
             .unwrap_or(false);
@@ -500,10 +501,10 @@ pub fn set(
             continue;
         }
 
-        if widget::Button::new()
+        if ui::widget::Button::new()
             .label("X")
             .label_font_size(SMALL_FONT_SIZE)
-            .color(color::DARK_RED.alpha(0.5))
+            .color(ui::color::DARK_RED.alpha(0.5))
             .w_h(ITEM_HEIGHT, ITEM_HEIGHT)
             .align_right_of(item.widget_id)
             .align_middle_y_of(item.widget_id)

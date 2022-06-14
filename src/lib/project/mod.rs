@@ -11,22 +11,23 @@
 //! 4. Seaker layout.
 //! 5. Audio source params and soundscape constraints.
 
-use audio;
-use camera::Camera;
+use crate::audio;
+use crate::camera::Camera;
+use crate::gui;
+use crate::installation::{self, Installation};
+use crate::master::Master;
+use crate::osc;
+use crate::soundscape;
+use crate::utils;
 use fxhash::{FxHashMap, FxHashSet};
-use gui;
-use installation::{self, Installation};
-use master::Master;
-use osc;
+use serde::{Deserialize, Serialize};
 use slug::slugify;
-use soundscape;
-use std::{cmp, fs, io};
 use std::ffi::OsStr;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use utils;
+use std::{cmp, fs, io};
 use walkdir::WalkDir;
 
 pub mod config;
@@ -177,7 +178,11 @@ impl State {
     ///
     /// Returns `true` if installations were renamed, false if not.
     fn auto_name_installations_if_all_unnamed(&mut self) -> bool {
-        if self.installations.values().all(|inst| &inst.name == installation::default::name()) {
+        if self
+            .installations
+            .values()
+            .all(|inst| &inst.name == installation::default::name())
+        {
             for (id, installation) in self.installations.iter_mut() {
                 let name = match id.0 {
                     0 => "Waves At Work",
@@ -198,18 +203,13 @@ impl State {
             false
         }
     }
-
 }
 
 impl Project {
     /// Construct the project from its `State` and `Config` parts.
     ///
     /// This is used internally within the `load` and `default` constructors.
-    fn from_config_and_state<P>(
-        assets: P,
-        config: Config,
-        mut state: State,
-    ) -> Self
+    fn from_config_and_state<P>(assets: P, config: Config, mut state: State) -> Self
     where
         P: AsRef<Path>,
     {
@@ -363,8 +363,6 @@ impl Project {
                     .expect("failed to send source to soundscape thread");
             }
         }
-
-
     }
 
     /// Create a new project with a unique, default name.
@@ -387,7 +385,7 @@ impl Project {
             } else {
                 i += 1;
             }
-        };
+        }
 
         // Create the default state.
         let config = default_config.clone();
@@ -418,24 +416,20 @@ impl Project {
     ///
     /// **Panics** if the project "state.json" does not exist or is invalid. However, the method
     /// will attempt to fall back to reasonable default for each field that cannot be deserialized.
-    pub fn load<A, P>(
-        assets_path: A,
-        project_directory_path: P,
-        default_config: &Config,
-    ) -> Self
+    pub fn load<A, P>(assets_path: A, project_directory_path: P, default_config: &Config) -> Self
     where
         A: AsRef<Path>,
         P: AsRef<Path>,
     {
         // Load the configuration json.
         let config_path = project_config_path(&project_directory_path);
-        let config: Config = utils::load_from_json(&config_path)
-            .unwrap_or_else(|_| default_config.clone());
+        let config: Config =
+            utils::load_from_json(&config_path).unwrap_or_else(|_| default_config.clone());
 
         // Load the state json.
         let state_path = project_state_path(project_directory_path);
-        let state: State = utils::load_from_json(&state_path)
-            .expect("failed to load project state");
+        let state: State =
+            utils::load_from_json(&state_path).expect("failed to load project state");
 
         Self::from_config_and_state(assets_path, config, state)
     }
@@ -492,7 +486,10 @@ impl Sources {
     /// This is necessary for startup where the soloed file may contain sources that are no longer
     /// valid.
     pub fn remove_invalid_soloed(&mut self) {
-        let Sources { ref map, ref mut soloed } = *self;
+        let Sources {
+            ref map,
+            ref mut soloed,
+        } = *self;
         soloed.retain(|id| map.contains_key(id));
     }
 
@@ -530,7 +527,8 @@ where
             _ => false,
         })
         .map(|_| {
-            relative.components()
+            relative
+                .components()
                 .chain(components)
                 .map(|c| c.as_os_str())
                 .collect()
@@ -542,7 +540,10 @@ fn test_update_path_from_relative() {
     let path = Path::new("/foo/bar/baz/qux");
     let relative = Path::new("/flim/baz");
     let expected = Path::new("/flim/baz/qux");
-    assert_eq!(update_path_from_relative(path, relative), Some(PathBuf::from(expected)));
+    assert_eq!(
+        update_path_from_relative(path, relative),
+        Some(PathBuf::from(expected))
+    );
 }
 
 /// Check for invalid WAV sources.
@@ -576,22 +577,29 @@ where
                     let mut new_wav = match audio::source::Wav::from_path(new_path.clone()) {
                         Ok(wav) => wav,
                         Err(err) => {
-                            eprintln!("Failed to load wav from path \"{}\": {}. It will be ignored.",
-                                      new_path.display(), err);
+                            eprintln!(
+                                "Failed to load wav from path \"{}\": {}. It will be ignored.",
+                                new_path.display(),
+                                err
+                            );
                             continue;
-                        },
+                        }
                     };
                     new_wav.should_loop = wav.should_loop;
                     new_wav.playback = wav.playback;
                     mem::swap(wav, &mut new_wav);
                     continue;
                 }
-                eprintln!("Could not find WAV source at \"{}\" or at \"{}\". It will be ignored.",
-                          wav.path.display(),
-                          new_path.display());
+                eprintln!(
+                    "Could not find WAV source at \"{}\" or at \"{}\". It will be ignored.",
+                    wav.path.display(),
+                    new_path.display()
+                );
             } else {
-                eprintln!("Could not find WAV source at \"{}\". It will be ignored.",
-                          wav.path.display());
+                eprintln!(
+                    "Could not find WAV source at \"{}\". It will be ignored.",
+                    wav.path.display()
+                );
             }
 
             to_remove.push(id);
@@ -645,11 +653,13 @@ where
             // If we already have this one, continue.
             for s in sources.map.values() {
                 match s.audio.kind {
-                    audio::source::Kind::Wav(ref wav) => if wav.path == path {
+                    audio::source::Kind::Wav(ref wav) => {
                         if wav.path == path {
-                            continue 'paths;
+                            if wav.path == path {
+                                continue 'paths;
+                            }
                         }
-                    },
+                    }
                     _ => (),
                 }
             }
@@ -794,8 +804,8 @@ pub fn default_beyond_perception_installations() -> Installations {
         .enumerate()
         .map(|(i, &name)| {
             let id = installation::Id(i);
-            let n_computers = installation::beyond_perception_default_num_computers(name)
-                .unwrap_or(0);
+            let n_computers =
+                installation::beyond_perception_default_num_computers(name).unwrap_or(0);
             let osc_addr = installation::osc_addr_string(name);
             let computers = (0..n_computers)
                 .map(|i| {
@@ -808,7 +818,11 @@ pub fn default_beyond_perception_installations() -> Installations {
                 .collect();
             let soundscape = Default::default();
             let name = name.into();
-            let installation = Installation { name, computers, soundscape };
+            let installation = Installation {
+                name,
+                computers,
+                soundscape,
+            };
             (id, installation)
         })
         .collect()
@@ -869,7 +883,11 @@ where
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| p.is_dir())
-        .filter(|p| p.join(STATE_FILE_STEM).with_extension(STATE_EXTENSION).exists())
+        .filter(|p| {
+            p.join(STATE_FILE_STEM)
+                .with_extension(STATE_EXTENSION)
+                .exists()
+        })
         .collect();
     Ok(paths)
 }

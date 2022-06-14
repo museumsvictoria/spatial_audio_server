@@ -1,10 +1,12 @@
 //! Items related to the realtime audio input sound source kind.
 
-use crossbeam::sync::SegQueue;
+use crossbeam::queue::SegQueue;
+use serde::Deserialize;
+use serde::Serialize;
 use std::mem;
 use std::ops;
-use std::sync::{atomic, Arc};
 use std::sync::atomic::AtomicBool;
+use std::sync::{atomic, Arc};
 use time_calc::{Ms, Samples};
 
 pub type BufferTx = Arc<SegQueue<Vec<f32>>>;
@@ -46,7 +48,8 @@ impl Signal {
     ///
     /// Returns `None` if the signal is "continuous" or has no duration.
     pub fn remaining_frames(&self) -> Option<Samples> {
-        self.remaining_samples.map(|s| Samples((s / self.channels) as _))
+        self.remaining_samples
+            .map(|s| Samples((s / self.channels) as _))
     }
 }
 
@@ -69,13 +72,13 @@ impl Iterator for Signal {
                 *sample_index += 1;
                 return Some(sample);
             }
-            match buffer_rx.try_pop() {
+            match buffer_rx.pop() {
                 None => return None,
                 Some(buffer) => {
                     let used_buffer = mem::replace(current_buffer, buffer);
                     buffer_tx.push(used_buffer);
                     *sample_index = 0;
-                },
+                }
             }
         }
     }

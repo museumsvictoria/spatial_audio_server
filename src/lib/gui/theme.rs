@@ -1,14 +1,16 @@
-use nannou::ui::{self, widget};
-use nannou::ui::theme::WidgetDefault;
+use conrod_core as ui;
+use conrod_core::{position, Range, Scalar};
+use nannou_conrod::theme::WidgetDefault;
+use nannou_conrod::{self, widget};
 use std;
 
 /// The default width for a widget within a column.
-pub const DEFAULT_WIDTH: ui::Scalar = 220.0;
+pub const DEFAULT_WIDTH: Scalar = 220.0;
 
-fn common_style(w: ui::Scalar, h: ui::Scalar) -> widget::CommonStyle {
+fn common_style(w: ui::Scalar, h: Scalar) -> widget::CommonStyle {
     widget::CommonStyle {
-        maybe_x_dimension: Some(ui::position::Dimension::Absolute(w)),
-        maybe_y_dimension: Some(ui::position::Dimension::Absolute(h)),
+        maybe_x_dimension: Some(position::Dimension::Absolute(w)),
+        maybe_y_dimension: Some(position::Dimension::Absolute(h)),
         ..widget::CommonStyle::default()
     }
 }
@@ -24,9 +26,9 @@ where
 pub fn construct() -> ui::Theme {
     ui::Theme {
         name: "Monochroma".to_owned(),
-        padding: ui::position::Padding {
-            x: ui::Range::new(20.0, 20.0),
-            y: ui::Range::new(20.0, 20.0),
+        padding: position::Padding {
+            x: Range::new(20.0, 20.0),
+            y: Range::new(20.0, 20.0),
         },
         background_color: ui::color::DARK_CHARCOAL,
         shape_color: ui::color::BLACK,

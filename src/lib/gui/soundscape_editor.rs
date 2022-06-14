@@ -3,14 +3,15 @@
 //! - Play/Pause toggle for the soundscape.
 //! - Groups panel for creating/removing soundscape source groups.
 
-use gui::{collapsible_area, hz_label, Gui, ProjectState, State};
-use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
-use project::{self, Project};
-use nannou::ui;
-use nannou::ui::prelude::*;
-use soundscape;
+use crate::gui::{collapsible_area, hz_label, Gui, ProjectState, State};
+use crate::gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
+use crate::project::{self, Project};
+use crate::soundscape;
+use crate::utils;
+use nannou_conrod as ui;
+use nannou_conrod::prelude::*;
 use time_calc::Ms;
-use utils;
+use ui::{color, position, widget, Scalar};
 
 /// GUI state related to the soundscape editor area.
 #[derive(Default)]
@@ -36,8 +37,7 @@ pub fn set(
         ref ids,
         channels,
         state: &mut State {
-            ref mut is_open,
-            ..
+            ref mut is_open, ..
         },
         ..
     } = gui;
@@ -65,16 +65,30 @@ pub fn set(
     const GROUP_CANVAS_H: Scalar = PAD + TITLE_H + PAD + PLUS_GROUP_H + GROUP_LIST_MAX_H + PAD;
     const SLIDER_H: Scalar = ITEM_HEIGHT;
     const SELECTED_CANVAS_H: Scalar = PAD
-        + TITLE_H + PAD * 2.0 + TEXT_BOX_H + PAD
-        + TITLE_H + PAD * 2.0 + SLIDER_H + PAD
-        + TITLE_H + PAD + SLIDER_H + PAD;
-    let soundscape_editor_canvas_h = PAD + IS_PLAYING_H + PAD + GROUP_CANVAS_H + PAD + SELECTED_CANVAS_H + PAD;
+        + TITLE_H
+        + PAD * 2.0
+        + TEXT_BOX_H
+        + PAD
+        + TITLE_H
+        + PAD * 2.0
+        + SLIDER_H
+        + PAD
+        + TITLE_H
+        + PAD
+        + SLIDER_H
+        + PAD;
+    let soundscape_editor_canvas_h =
+        PAD + IS_PLAYING_H + PAD + GROUP_CANVAS_H + PAD + SELECTED_CANVAS_H + PAD;
 
     // The collapsible area.
-    let (area, event) = collapsible_area(is_open.soundscape_editor, "Soundscape Editor", ids.side_menu)
-        .align_middle_x_of(ids.side_menu)
-        .down_from(last_area_id, 0.0)
-        .set(ids.soundscape_editor, ui);
+    let (area, event) = collapsible_area(
+        is_open.soundscape_editor,
+        "Soundscape Editor",
+        ids.side_menu,
+    )
+    .align_middle_x_of(ids.side_menu)
+    .down_from(last_area_id, 0.0)
+    .set(ids.soundscape_editor, ui);
     if let Some(event) = event {
         is_open.soundscape_editor = event.is_open();
     }
@@ -86,9 +100,7 @@ pub fn set(
     };
 
     // The canvas on which the soundscape editor will be placed.
-    let canvas = widget::Canvas::new()
-        .pad(PAD)
-        .h(soundscape_editor_canvas_h);
+    let canvas = widget::Canvas::new().pad(PAD).h(soundscape_editor_canvas_h);
     area.set(canvas, ui);
 
     // The toggle for whether or not the soundscape should be playing back.
@@ -227,12 +239,14 @@ pub fn set(
 
                 // If the button or any of its children are capturing the mouse, display
                 // the `remove` button.
-                let show_remove_button = ui.global_input()
+                let show_remove_button = ui
+                    .global_input()
                     .current
                     .widget_capturing_mouse
                     .map(|id| {
                         id == item.widget_id
-                            || ui.widget_graph()
+                            || ui
+                                .widget_graph()
                                 .does_recursive_depth_edge_exist(item.widget_id, id)
                     })
                     .unwrap_or(false);
@@ -254,13 +268,16 @@ pub fn set(
                 {
                     maybe_remove_index = Some(item.i);
                 }
-            },
+            }
 
             // Update the selected source.
             Event::Selection(idx) => {
                 soundscape_editor.selected = {
                     let (id, ref name) = groups_vec[idx];
-                    Some(Selected { id, name: name.clone() })
+                    Some(Selected {
+                        id,
+                        name: name.clone(),
+                    })
                 };
             }
 
@@ -300,8 +317,7 @@ pub fn set(
 
     // Only continue if there is some selected group.
     let SoundscapeEditor {
-        ref mut selected,
-        ..
+        ref mut selected, ..
     } = *soundscape_editor;
 
     let selected = match selected.as_mut() {
@@ -341,13 +357,13 @@ pub fn set(
             // When typing generally, only update the temp selected name.
             Event::Update(new_name) => {
                 selected.name = new_name;
-            },
+            }
             // Only when enter is pressed do we update the actual name.
             Event::Enter => {
                 if let Some(group) = soundscape_groups.get_mut(&selected.id) {
                     group.name = selected.name.clone();
                 }
-            },
+            }
         }
     }
 
@@ -399,7 +415,7 @@ pub fn set(
                 widget::range_slider::Edge::Start => {
                     let ms = utils::hz_to_ms_interval(hz);
                     group.occurrence_rate.max = ms;
-                },
+                }
                 widget::range_slider::Edge::End => {
                     let ms = utils::hz_to_ms_interval(hz);
                     group.occurrence_rate.min = ms;
@@ -451,7 +467,7 @@ pub fn set(
             match edge {
                 widget::range_slider::Edge::Start => {
                     group.simultaneous_sounds.min = num;
-                },
+                }
                 widget::range_slider::Edge::End => {
                     group.simultaneous_sounds.max = num;
                 }

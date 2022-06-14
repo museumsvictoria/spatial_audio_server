@@ -1,6 +1,6 @@
 //! An implementation of Distance-Based Amplitude Panning as published by Trond Lossius, 2009.
 
-use nannou::geom::Point2;
+use nannou::glam::DVec2 as Point2;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Speaker {
@@ -25,9 +25,9 @@ pub struct SpeakerGains<'a> {
 /// speaker only."
 ///
 /// A non-zero blur will ensure that the distance is greater than `0.0` and that we never divide by 0.0.
-pub fn blurred_distance_2(source: Point2<f64>, speaker: Point2<f64>, blur: f64) -> f64 {
-    let x = speaker.x - source.x;
-    let y = speaker.y - source.y;
+pub fn blurred_distance_2(source: Point2, speaker: Point2, blur: f64) -> f64 {
+    let x: f64 = speaker.x - source.x;
+    let y: f64 = speaker.y - source.y;
     (x * x + y * y + blur * blur).max(::std::f64::EPSILON)
 }
 
@@ -105,17 +105,15 @@ fn k_coefficient(a: f64, speakers: &[Speaker]) -> f64 {
 
 #[test]
 fn speaker_gains() {
-    use nannou::prelude::*;
-
-    let src = pt2(5.0, 5.0);
-    let speaker = |v: Point2<f64>, w| Speaker {
+    let src = Point2::new(5.0, 5.0);
+    let speaker = |v: Point2, w| Speaker {
         distance: v.distance(src),
         weight: w,
     };
-    let a = speaker(pt2(0.0, 0.0), 1.0);
-    let b = speaker(pt2(10.0, 0.0), 1.0);
-    let c = speaker(pt2(10.0, 10.0), 1.0);
-    let d = speaker(pt2(0.0, 10.0), 1.0);
+    let a = speaker(Point2::new(0.0, 0.0), 1.0);
+    let b = speaker(Point2::new(10.0, 0.0), 1.0);
+    let c = speaker(Point2::new(10.0, 10.0), 1.0);
+    let d = speaker(Point2::new(0.0, 10.0), 1.0);
     let spkrs = vec![a, b, c, d];
     let r = 6.0; // free-field rolloff db.
     let gains = SpeakerGains::new(&spkrs, r).collect::<Vec<_>>();

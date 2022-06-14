@@ -1,4 +1,4 @@
-use metres::Metres;
+use crate::metres::Metres;
 use nannou_audio::{Device, Host};
 use time_calc::Ms;
 
@@ -49,9 +49,9 @@ pub const DEFAULT_DBAP_ROLLOFF_DB: f64 = 4.0;
 pub const DISTANCE_BLUR: f64 = 0.01;
 
 /// The initial, default proximity limit.
-pub const DEFAULT_PROXIMITY_LIMIT: Metres = Metres(7.0);
+pub const DEFAULT_PROXIMITY_LIMIT: Metres = 7.0;
 /// Proximity limit squared for efficientcy efficiency.
-pub const DEFAULT_PROXIMITY_LIMIT_2: Metres = Metres(DEFAULT_PROXIMITY_LIMIT.0 * DEFAULT_PROXIMITY_LIMIT.0);
+pub const DEFAULT_PROXIMITY_LIMIT_2: Metres = DEFAULT_PROXIMITY_LIMIT * DEFAULT_PROXIMITY_LIMIT;
 
 /// Retrieve the desired audio host for the system.
 ///

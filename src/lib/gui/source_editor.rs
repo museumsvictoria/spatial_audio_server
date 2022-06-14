@@ -1,18 +1,20 @@
-use audio;
-use audio::source::Role;
-use audio::source::wav::Playback;
-use gui::{collapsible_area, duration_label, hz_label, Gui, ProjectState, State};
-use gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
-use metres::Metres;
-use nannou::prelude::*;
-use nannou::ui;
-use nannou::ui::prelude::*;
-use project::{self, Project};
-use soundscape;
-use std::{self, cmp, mem, ops};
+use crate::audio;
+use crate::audio::source::wav::Playback;
+use crate::audio::source::Role;
+use crate::gui::{collapsible_area, duration_label, hz_label, Gui, ProjectState, State};
+use crate::gui::{DARK_A, ITEM_HEIGHT, SMALL_FONT_SIZE};
+use crate::metres::Metres;
+use crate::project::{self, Project};
+use crate::soundscape;
+use crate::utils;
+use nannou_conrod as ui;
 use std::sync::atomic;
+use std::{self, cmp, mem, ops};
 use time_calc::{Ms, Samples};
-use utils;
+use ui::prelude::*;
+use ui::{color, position, widget, Scalar};
+
+type Point2 = nannou::glam::DVec2;
 
 /// Runtime state related to the source editor GUI panel.
 #[derive(Debug, Default)]
@@ -27,7 +29,7 @@ pub struct SourceEditor {
 #[derive(Debug, Default)]
 pub struct SourcePreview {
     pub current: Option<(SourcePreviewMode, audio::sound::Id)>,
-    pub point: Option<Point2<Metres>>,
+    pub point: Option<Point2>,
 }
 
 /// The mode of source preview.
@@ -40,16 +42,14 @@ pub enum SourcePreviewMode {
 /// Sort sources by kind and then name when displaying in the list.
 fn source_display_order(a: &project::Source, b: &project::Source) -> cmp::Ordering {
     match (&a.kind, &b.kind) {
-        (&audio::source::Kind::Wav(_), &audio::source::Kind::Realtime(_)) => {
-            cmp::Ordering::Less
-        }
+        (&audio::source::Kind::Wav(_), &audio::source::Kind::Realtime(_)) => cmp::Ordering::Less,
         _ => a.name.cmp(&b.name),
     }
 }
 
-const SOUNDSCAPE_COLOR: ui::Color = ui::color::DARK_RED;
-const INTERACTIVE_COLOR: ui::Color = ui::color::DARK_GREEN;
-const SCRIBBLES_COLOR: ui::Color = ui::color::DARK_PURPLE;
+const SOUNDSCAPE_COLOR: ui::Color = color::DARK_RED;
+const INTERACTIVE_COLOR: ui::Color = color::DARK_GREEN;
+const SCRIBBLES_COLOR: ui::Color = color::DARK_PURPLE;
 
 pub fn set(
     last_area_id: widget::Id,
@@ -57,7 +57,6 @@ pub fn set(
     project: &mut Project,
     project_state: &mut ProjectState,
 ) -> widget::Id {
-
     let Gui {
         ref mut ui,
         ref mut ids,
@@ -74,14 +73,15 @@ pub fn set(
     } = *gui;
 
     let Project {
-        state: project::State {
-            ref camera,
-            ref master,
-            ref soundscape_groups,
-            ref installations,
-            ref mut sources,
-            ..
-        },
+        state:
+            project::State {
+                ref camera,
+                ref master,
+                ref soundscape_groups,
+                ref installations,
+                ref mut sources,
+                ..
+            },
         ..
     } = *project;
 
@@ -100,29 +100,74 @@ pub fn set(
     const SLIDER_H: Scalar = ITEM_HEIGHT;
     const SOUNDSCAPE_GROUP_LIST_H: Scalar = ITEM_HEIGHT * 3.0;
     const BUTTON_H: Scalar = ITEM_HEIGHT;
-    const SOUNDSCAPE_CANVAS_H: Scalar = PAD + TEXT_PAD + PAD
-        + TEXT_PAD + PAD + SLIDER_H + PAD
-        + TEXT_PAD + PAD + SLIDER_H + PAD
-        + TEXT_PAD + PAD + SLIDER_H + PAD
-        + TEXT_PAD + PAD + SLIDER_H + PAD
-        + TEXT_PAD + PAD + SLIDER_H + PAD
-        + TEXT_PAD + PAD * 3.5 + SOUNDSCAPE_GROUP_LIST_H + PAD
-        + TEXT_PAD + PAD * 2.0 + BUTTON_H + PAD + BUTTON_H + PAD
-        + TEXT_PAD + PAD * 2.0 + SLIDER_H + PAD
-        + TEXT_PAD + PAD * 2.0 + SLIDER_H + PAD
-        + TEXT_PAD + PAD * 2.0 + SLIDER_H + PAD
-        + TEXT_PAD + PAD * 2.0 + SLIDER_H * 2.0 + PAD
-        + TEXT_PAD + PAD * 2.0 + SLIDER_H + PAD;
+    const SOUNDSCAPE_CANVAS_H: Scalar = PAD
+        + TEXT_PAD
+        + PAD
+        + TEXT_PAD
+        + PAD
+        + SLIDER_H
+        + PAD
+        + TEXT_PAD
+        + PAD
+        + SLIDER_H
+        + PAD
+        + TEXT_PAD
+        + PAD
+        + SLIDER_H
+        + PAD
+        + TEXT_PAD
+        + PAD
+        + SLIDER_H
+        + PAD
+        + TEXT_PAD
+        + PAD
+        + SLIDER_H
+        + PAD
+        + TEXT_PAD
+        + PAD * 3.5
+        + SOUNDSCAPE_GROUP_LIST_H
+        + PAD
+        + TEXT_PAD
+        + PAD * 2.0
+        + BUTTON_H
+        + PAD
+        + BUTTON_H
+        + PAD
+        + TEXT_PAD
+        + PAD * 2.0
+        + SLIDER_H
+        + PAD
+        + TEXT_PAD
+        + PAD * 2.0
+        + SLIDER_H
+        + PAD
+        + TEXT_PAD
+        + PAD * 2.0
+        + SLIDER_H
+        + PAD
+        + TEXT_PAD
+        + PAD * 2.0
+        + SLIDER_H * 2.0
+        + PAD
+        + TEXT_PAD
+        + PAD * 2.0
+        + SLIDER_H
+        + PAD;
     const LOOP_TOGGLE_H: Scalar = ITEM_HEIGHT;
     const PLAYBACK_MODE_H: Scalar = ITEM_HEIGHT;
-    const WAV_CANVAS_H: Scalar =
-        100.0 + PAD + LOOP_TOGGLE_H + PAD * 4.0 + PLAYBACK_MODE_H + PAD;
+    const WAV_CANVAS_H: Scalar = 100.0 + PAD + LOOP_TOGGLE_H + PAD * 4.0 + PLAYBACK_MODE_H + PAD;
     const REALTIME_CANVAS_H: Scalar = 94.0;
     const CHANNEL_LAYOUT_H: Scalar = 200.0;
     const COMMON_CANVAS_H: Scalar = TEXT_PAD + PAD + SLIDER_H + PAD + CHANNEL_LAYOUT_H;
     let kind_specific_h = WAV_CANVAS_H.max(REALTIME_CANVAS_H);
-    let selected_canvas_h = ITEM_HEIGHT * 2.0 + PAD * 7.0 + PREVIEW_CANVAS_H + kind_specific_h
-        + COMMON_CANVAS_H + INSTALLATIONS_CANVAS_H + PAD + SOUNDSCAPE_CANVAS_H;
+    let selected_canvas_h = ITEM_HEIGHT * 2.0
+        + PAD * 7.0
+        + PREVIEW_CANVAS_H
+        + kind_specific_h
+        + COMMON_CANVAS_H
+        + INSTALLATIONS_CANVAS_H
+        + PAD
+        + SOUNDSCAPE_CANVAS_H;
     let source_editor_canvas_h = LIST_HEIGHT + ITEM_HEIGHT + selected_canvas_h;
 
     let (area, event) = collapsible_area(is_open.source_editor, "Source Editor", ids.side_menu)
@@ -139,9 +184,7 @@ pub fn set(
     };
 
     // The canvas on which the source editor will be placed.
-    let canvas = widget::Canvas::new()
-        .pad(0.0)
-        .h(source_editor_canvas_h);
+    let canvas = widget::Canvas::new().pad(0.0).h(source_editor_canvas_h);
     area.set(canvas, ui);
 
     // Convert the given map into a sorted list of source Ids.
@@ -181,12 +224,13 @@ pub fn set(
         // invalid indices.
         let mut maybe_remove_index = None;
         let selected_id = source_editor.selected;
-        let selected_index = sources_vec.iter()
+        let selected_index = sources_vec
+            .iter()
             .position(|&id| Some(id) == selected_id)
             .unwrap_or(0);
 
         while let Some(event) = events.next(ui, |i| i == selected_index) {
-            use self::ui::widget::list_select::Event;
+            use widget::list_select::Event;
             match event {
                 // Instantiate a button for each source.
                 Event::Item(item) => {
@@ -230,12 +274,14 @@ pub fn set(
                     // If the button or any of its children are capturing the mouse, display
                     // the `remove` button.
                     let show_remove_button = !is_wav
-                        && ui.global_input()
+                        && ui
+                            .global_input()
                             .current
                             .widget_capturing_mouse
                             .map(|id| {
                                 id == item.widget_id
-                                    || ui.widget_graph()
+                                    || ui
+                                        .widget_graph()
                                         .does_recursive_depth_edge_exist(item.widget_id, id)
                             })
                             .unwrap_or(false);
@@ -295,7 +341,9 @@ pub fn set(
             }
 
             // Remove any monitored sounds using this source ID.
-            audio_monitor.active_sounds.retain(|_, s| s.source_id != remove_id);
+            audio_monitor
+                .active_sounds
+                .retain(|_, s| s.source_id != remove_id);
 
             // Remove the local copy.
             sources.remove(&remove_id);
@@ -403,8 +451,7 @@ pub fn set(
         .parent(area.id)
         .set(ids.source_editor_selected_canvas, ui);
 
-    let selected_canvas_kid_area = ui.kid_area_of(ids.source_editor_selected_canvas)
-        .unwrap();
+    let selected_canvas_kid_area = ui.kid_area_of(ids.source_editor_selected_canvas).unwrap();
 
     // If a source is selected, display its info.
     let id = match source_editor.selected {
@@ -481,11 +528,16 @@ pub fn set(
         }
     }
 
-    let selected_role_index = sources[&id].audio.role.as_ref().map(role_index).unwrap_or(0);
+    let selected_role_index = sources[&id]
+        .audio
+        .role
+        .as_ref()
+        .map(role_index)
+        .unwrap_or(0);
     let role_selected = |j| j == selected_role_index;
 
     while let Some(event) = events.next(ui, &role_selected) {
-        use self::ui::widget::list_select::Event;
+        use widget::list_select::Event;
         match event {
             // Instantiate a button for each role.
             Event::Item(item) => {
@@ -519,15 +571,16 @@ pub fn set(
 
                     // If the source became a soundscape source, send it to the soundscape thread.
                     (_, Some(Role::Soundscape(_))) => {
-                        let soundscape_source = soundscape::Source::from_audio_source(&source.audio)
-                            .expect("source did not have soundscape role");
+                        let soundscape_source =
+                            soundscape::Source::from_audio_source(&source.audio)
+                                .expect("source did not have soundscape role");
                         channels
                             .soundscape
                             .send(move |soundscape| {
                                 soundscape.insert_source(id, soundscape_source);
                             })
                             .expect("failed to send soundscape source to soundscape thread");
-                    },
+                    }
 
                     // If it is no longer a soundscape.
                     (Some(Role::Soundscape(_)), _) => {
@@ -546,7 +599,7 @@ pub fn set(
                                 audio.remove_sounds_with_source(&id);
                             })
                             .expect("failed to remove soundscape source sounds from audio output thread");
-                    },
+                    }
 
                     _ => (),
                 }
@@ -739,8 +792,14 @@ pub fn set(
                 .set(ids.source_editor_selected_wav_data, ui);
 
             // A `Toggle` for whether or not the WAV should loop.
-            let label = if wav.should_loop { "Looping: ON" } else { "Looping: OFF" };
-            let canvas_kid_area = ui.kid_area_of(ids.source_editor_selected_wav_canvas).unwrap();
+            let label = if wav.should_loop {
+                "Looping: ON"
+            } else {
+                "Looping: OFF"
+            };
+            let canvas_kid_area = ui
+                .kid_area_of(ids.source_editor_selected_wav_canvas)
+                .unwrap();
             for new_loop in widget::Toggle::new(wav.should_loop)
                 .color(color::LIGHT_CHARCOAL)
                 .label(label)
@@ -811,13 +870,13 @@ pub fn set(
 
             let selected_index = index_from_playback(&wav.playback);
             while let Some(event) = events.next(ui, |i| i == selected_index) {
-                use self::ui::widget::list_select::Event;
+                use widget::list_select::Event;
                 match event {
                     // Instantiate a button for each source.
                     Event::Item(item) => {
                         let selected = item.i == selected_index;
-                        let playback = playback_from_index(item.i)
-                            .expect("no playback mode for index");
+                        let playback =
+                            playback_from_index(item.i).expect("no playback mode for index");
                         let label = playback_label(&playback);
 
                         // Blue if selected, gray otherwise.
@@ -832,11 +891,11 @@ pub fn set(
                             .label_font_size(SMALL_FONT_SIZE)
                             .color(color);
                         item.set(button, ui);
-                    },
+                    }
                     // If a selection has occurred.
                     Event::Selection(new_index) => {
-                        let new_playback = playback_from_index(new_index)
-                            .expect("no playback mode for index");
+                        let new_playback =
+                            playback_from_index(new_index).expect("no playback mode for index");
 
                         // Update the local copy.
                         wav.playback = new_playback;
@@ -858,13 +917,16 @@ pub fn set(
                             .audio_output
                             .send(move |audio| {
                                 audio.update_sounds_with_source(&id, move |_, sound| {
-                                    if let audio::source::SignalKind::Wav { ref mut playback, .. } = sound.signal.kind {
+                                    if let audio::source::SignalKind::Wav {
+                                        ref mut playback, ..
+                                    } = sound.signal.kind
+                                    {
                                         *playback = new_playback;
                                     }
                                 });
                             })
                             .expect("failed to send source playback mode to audio output thread");
-                    },
+                    }
                     _ => (),
                 }
             }
@@ -913,7 +975,8 @@ pub fn set(
                         .soundscape
                         .send(move |soundscape| {
                             soundscape.update_source(&id, |source| {
-                                if let audio::source::Kind::Realtime(ref mut realtime) = source.kind {
+                                if let audio::source::Kind::Realtime(ref mut realtime) = source.kind
+                                {
                                     $update_fn(realtime);
                                 }
                             });
@@ -942,7 +1005,9 @@ pub fn set(
             {
                 // Update the local copy.
                 let new_duration = Ms(new_ms as _);
-                update_realtime!(|realtime: &mut audio::source::Realtime| realtime.duration = new_duration);
+                update_realtime!(
+                    |realtime: &mut audio::source::Realtime| realtime.duration = new_duration
+                );
             }
 
             // Starting channel index (to the left).
@@ -952,9 +1017,12 @@ pub fn set(
                 .map(|ch| format!("Start Channel: {}", ch + 1))
                 .collect::<Vec<_>>();
             let selected_start = Some(realtime.channels.start as usize);
-            let channel_w = ui.kid_area_of(ids.source_editor_selected_realtime_canvas)
+            let channel_w = ui
+                .kid_area_of(ids.source_editor_selected_realtime_canvas)
                 .unwrap()
-                .w() / 2.0 - PAD / 2.0;
+                .w()
+                / 2.0
+                - PAD / 2.0;
             for new_start in widget::DropDownList::new(&start_channel_labels, selected_start)
                 .down(PAD)
                 .align_left()
@@ -1052,13 +1120,16 @@ pub fn set(
     }
 
     // Buttons for solo and mute behaviour.
-    let channel_layout_kid_area = ui.kid_area_of(ids.source_editor_selected_common_canvas)
+    let channel_layout_kid_area = ui
+        .kid_area_of(ids.source_editor_selected_common_canvas)
         .unwrap();
     let button_w = channel_layout_kid_area.w() / 2.0 - PAD / 2.0;
-    let toggle = |value: bool| widget::Toggle::new(value)
-        .w(button_w)
-        .h(ITEM_HEIGHT)
-        .label_font_size(SMALL_FONT_SIZE);
+    let toggle = |value: bool| {
+        widget::Toggle::new(value)
+            .w(button_w)
+            .h(ITEM_HEIGHT)
+            .label_font_size(SMALL_FONT_SIZE)
+    };
 
     // Solo button.
     let solo = sources.soloed.contains(&id);
@@ -1070,7 +1141,12 @@ pub fn set(
         .set(ids.source_editor_selected_solo, ui)
     {
         // If the CTRL key was down, unsolo all other sources.
-        if ui.global_input().current.modifiers.contains(ui::input::keyboard::ModifierKey::CTRL) {
+        if ui
+            .global_input()
+            .current
+            .modifiers
+            .contains(ui::input::keyboard::ModifierKey::CTRL)
+        {
             // Update local copy.
             sources.soloed.clear();
 
@@ -1080,7 +1156,9 @@ pub fn set(
                 .send(move |audio| {
                     audio.soloed.clear();
                 })
-                .expect("failed to send message for clearing soloed sources to audio output thread");
+                .expect(
+                    "failed to send message for clearing soloed sources to audio output thread",
+                );
         }
 
         // Update local copy.
@@ -1150,7 +1228,7 @@ pub fn set(
     // Slider for controlling how far apart speakers should be spread.
     const MIN_SPREAD: f32 = 0.0;
     const MAX_SPREAD: f32 = 10.0;
-    let mut spread = sources[&id].audio.spread.0 as f32;
+    let mut spread = sources[&id].audio.spread as f32;
     let label = format!("Spread: {:.2} metres", spread);
     for new_spread in slider(spread, MIN_SPREAD, MAX_SPREAD)
         .skew(2.0)
@@ -1160,7 +1238,7 @@ pub fn set(
         .set(ids.source_editor_selected_channel_layout_spread, ui)
     {
         spread = new_spread;
-        let spread_m = Metres(spread as _);
+        let spread_m: Metres = spread as _;
 
         // Update the local copy.
         sources.get_mut(&id).unwrap().audio.spread = spread_m;
@@ -1222,7 +1300,8 @@ pub fn set(
     }
 
     // The field over which the channel layout will be visualised.
-    let spread_rect = ui.rect_of(ids.source_editor_selected_channel_layout_spread)
+    let spread_rect = ui
+        .rect_of(ids.source_editor_selected_channel_layout_spread)
         .unwrap();
     let layout_top = spread_rect.bottom() - PAD;
     let layout_bottom = channel_layout_kid_area.bottom();
@@ -1259,8 +1338,10 @@ pub fn set(
         ids.source_editor_selected_channel_layout_channels
             .resize(num_channels, id_gen);
     }
-    if ids.source_editor_selected_channel_layout_channel_labels
-        .len() < num_channels
+    if ids
+        .source_editor_selected_channel_layout_channel_labels
+        .len()
+        < num_channels
     {
         let id_gen = &mut ui.widget_id_generator();
         ids.source_editor_selected_channel_layout_channel_labels
@@ -1378,20 +1459,26 @@ pub fn set(
                 channels
                     .audio_output
                     .send(move |audio| {
-                        for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
-                            if let audio::sound::Installations::Set(ref mut set) = sound.installations {
+                        for (_, sound) in
+                            audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id)
+                        {
+                            if let audio::sound::Installations::Set(ref mut set) =
+                                sound.installations
+                            {
                                 set.insert(installation);
                             }
                         }
                     })
-                    .expect("failed to send assigned installation to sounds on audio output thread");
+                    .expect(
+                        "failed to send assigned installation to sounds on audio output thread",
+                    );
             }
 
             // A scrollable list showing each of the assigned installations.
-            let mut selected_installations = source_installations.iter().cloned().collect::<Vec<_>>();
-            selected_installations.sort_by(|a, b| {
-                installations[&a].name.cmp(&installations[&b].name)
-            });
+            let mut selected_installations =
+                source_installations.iter().cloned().collect::<Vec<_>>();
+            selected_installations
+                .sort_by(|a, b| installations[&a].name.cmp(&installations[&b].name));
             let (mut items, scrollbar) = widget::List::flow_down(selected_installations.len())
                 .item_size(ITEM_HEIGHT)
                 .h(INSTALLATION_LIST_H)
@@ -1417,12 +1504,14 @@ pub fn set(
 
                 // If the button or any of its children are capturing the mouse, display
                 // the `remove` button.
-                let show_remove_button = ui.global_input()
+                let show_remove_button = ui
+                    .global_input()
                     .current
                     .widget_capturing_mouse
                     .map(|id| {
                         id == item.widget_id
-                            || ui.widget_graph()
+                            || ui
+                                .widget_graph()
                                 .does_recursive_depth_edge_exist(item.widget_id, id)
                     })
                     .unwrap_or(false);
@@ -1474,8 +1563,12 @@ pub fn set(
                 channels
                     .audio_output
                     .send(move |audio| {
-                        for (_, sound) in audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id) {
-                            if let audio::sound::Installations::Set(ref mut set) = sound.installations {
+                        for (_, sound) in
+                            audio.sounds_mut().filter(|&(_, ref s)| s.source_id() == id)
+                        {
+                            if let audio::sound::Installations::Set(ref mut set) =
+                                sound.installations
+                            {
                                 set.remove(&inst);
                             }
                         }
@@ -1514,8 +1607,7 @@ pub fn set(
             fn expect_soundscape_mut<'a>(
                 sources: &'a mut project::SourcesMap,
                 id: &audio::source::Id,
-            ) -> &'a mut audio::source::Soundscape
-            {
+            ) -> &'a mut audio::source::Soundscape {
                 sources
                     .get_mut(id)
                     .unwrap()
@@ -1535,7 +1627,10 @@ pub fn set(
                 .align_left()
                 .down(PAD * 2.0)
                 .font_size(SMALL_FONT_SIZE)
-                .set(ids.source_editor_selected_soundscape_occurrence_rate_text, ui);
+                .set(
+                    ids.source_editor_selected_soundscape_occurrence_rate_text,
+                    ui,
+                );
 
             // A range slider for constraining the occurrence rate.
             let max_hz = utils::ms_interval_to_hz(occurrence_rate.min);
@@ -1551,7 +1646,7 @@ pub fn set(
                     .kid_area_w_of(ids.source_editor_selected_soundscape_canvas)
                     .h(SLIDER_H)
                     .label_font_size(SMALL_FONT_SIZE)
-                    .color(ui::color::LIGHT_CHARCOAL)
+                    .color(color::LIGHT_CHARCOAL)
             };
 
             for (edge, value) in range_slider(min_hz, max_hz, total_min_hz, total_max_hz)
@@ -1559,7 +1654,10 @@ pub fn set(
                 .align_left()
                 .label(&label)
                 .down(PAD * 2.0)
-                .set(ids.source_editor_selected_soundscape_occurrence_rate_slider, ui)
+                .set(
+                    ids.source_editor_selected_soundscape_occurrence_rate_slider,
+                    ui,
+                )
             {
                 let hz = {
                     let (unit, times_per_unit) = utils::human_readable_hz(value as _);
@@ -1573,7 +1671,7 @@ pub fn set(
                         widget::range_slider::Edge::Start => {
                             let ms = utils::hz_to_ms_interval(hz);
                             soundscape.occurrence_rate.max = ms;
-                        },
+                        }
                         widget::range_slider::Edge::End => {
                             let ms = utils::hz_to_ms_interval(hz);
                             soundscape.occurrence_rate.min = ms;
@@ -1601,7 +1699,10 @@ pub fn set(
                 .align_left()
                 .down(PAD * 2.0)
                 .font_size(SMALL_FONT_SIZE)
-                .set(ids.source_editor_selected_soundscape_simultaneous_sounds_text, ui);
+                .set(
+                    ids.source_editor_selected_soundscape_simultaneous_sounds_text,
+                    ui,
+                );
 
             let range = simultaneous_sounds;
             let label = format!("{} to {} sounds at once", range.min, range.max);
@@ -1614,7 +1715,10 @@ pub fn set(
                 .align_left()
                 .label(&label)
                 .down(PAD * 2.0)
-                .set(ids.source_editor_selected_soundscape_simultaneous_sounds_slider, ui)
+                .set(
+                    ids.source_editor_selected_soundscape_simultaneous_sounds_slider,
+                    ui,
+                )
             {
                 let num = value as _;
 
@@ -1624,7 +1728,7 @@ pub fn set(
                     match edge {
                         widget::range_slider::Edge::Start => {
                             soundscape.simultaneous_sounds.min = num;
-                        },
+                        }
                         widget::range_slider::Edge::End => {
                             soundscape.simultaneous_sounds.max = num;
                         }
@@ -1651,7 +1755,10 @@ pub fn set(
                 .align_left()
                 .down(PAD * 2.0)
                 .font_size(SMALL_FONT_SIZE)
-                .set(ids.source_editor_selected_soundscape_playback_duration_text, ui);
+                .set(
+                    ids.source_editor_selected_soundscape_playback_duration_text,
+                    ui,
+                );
 
             // The max duration depends on the kind of source:
             //
@@ -1663,13 +1770,17 @@ pub fn set(
                 audio::source::Kind::Wav(ref wav) => match wav.should_loop {
                     true => audio::source::MAX_PLAYBACK_DURATION,
                     false => wav.duration.to_ms(audio::SAMPLE_RATE),
-                }
+                },
             };
             let min_duration = Ms(0.0);
             let min_duration_ms = min_duration.ms();
             let max_duration_ms = max_duration.ms();
             let range = playback_duration;
-            let label = format!("{} to {}", duration_label(&range.min), duration_label(&range.max));
+            let label = format!(
+                "{} to {}",
+                duration_label(&range.min),
+                duration_label(&range.max)
+            );
             let start = range.min.ms() as f64;
             let end = range.max.ms() as f64;
             for (edge, value) in range_slider(start, end, min_duration_ms, max_duration_ms)
@@ -1677,7 +1788,10 @@ pub fn set(
                 .align_left()
                 .label(&label)
                 .down(PAD * 2.0)
-                .set(ids.source_editor_selected_soundscape_playback_duration_slider, ui)
+                .set(
+                    ids.source_editor_selected_soundscape_playback_duration_slider,
+                    ui,
+                )
             {
                 let duration = {
                     let (unit, value) = utils::human_readable_ms(&Ms(value as _));
@@ -1691,7 +1805,7 @@ pub fn set(
                     match edge {
                         widget::range_slider::Edge::Start => {
                             soundscape.playback_duration.min = duration;
-                        },
+                        }
                         widget::range_slider::Edge::End => {
                             soundscape.playback_duration.max = duration;
                         }
@@ -1718,14 +1832,21 @@ pub fn set(
                 .align_left()
                 .down(PAD * 2.0)
                 .font_size(SMALL_FONT_SIZE)
-                .set(ids.source_editor_selected_soundscape_attack_duration_text, ui);
+                .set(
+                    ids.source_editor_selected_soundscape_attack_duration_text,
+                    ui,
+                );
 
             let min_duration = Ms(0.0);
             let max_duration = audio::source::MAX_ATTACK_DURATION;
             let min_duration_ms = min_duration.ms();
             let max_duration_ms = max_duration.ms();
             let range = attack_duration;
-            let label = format!("{} to {}", duration_label(&range.min), duration_label(&range.max));
+            let label = format!(
+                "{} to {}",
+                duration_label(&range.min),
+                duration_label(&range.max)
+            );
             let start = range.min.ms() as f64;
             let end = range.max.ms() as f64;
             for (edge, value) in range_slider(start, end, min_duration_ms, max_duration_ms)
@@ -1733,7 +1854,10 @@ pub fn set(
                 .align_left()
                 .label(&label)
                 .down(PAD * 2.0)
-                .set(ids.source_editor_selected_soundscape_attack_duration_slider, ui)
+                .set(
+                    ids.source_editor_selected_soundscape_attack_duration_slider,
+                    ui,
+                )
             {
                 let duration = {
                     let (unit, value) = utils::human_readable_ms(&Ms(value as _));
@@ -1747,7 +1871,7 @@ pub fn set(
                     match edge {
                         widget::range_slider::Edge::Start => {
                             soundscape.attack_duration.min = duration;
-                        },
+                        }
                         widget::range_slider::Edge::End => {
                             soundscape.attack_duration.max = duration;
                         }
@@ -1774,14 +1898,21 @@ pub fn set(
                 .align_left()
                 .down(PAD * 2.0)
                 .font_size(SMALL_FONT_SIZE)
-                .set(ids.source_editor_selected_soundscape_release_duration_text, ui);
+                .set(
+                    ids.source_editor_selected_soundscape_release_duration_text,
+                    ui,
+                );
 
             let min_duration = Ms(0.0);
             let max_duration = audio::source::MAX_RELEASE_DURATION;
             let min_duration_ms = min_duration.ms();
             let max_duration_ms = max_duration.ms();
             let range = release_duration;
-            let label = format!("{} to {}", duration_label(&range.min), duration_label(&range.max));
+            let label = format!(
+                "{} to {}",
+                duration_label(&range.min),
+                duration_label(&range.max)
+            );
             let start = range.min.ms();
             let end = range.max.ms();
             for (edge, value) in range_slider(start, end, min_duration_ms, max_duration_ms)
@@ -1789,7 +1920,10 @@ pub fn set(
                 .align_left()
                 .label(&label)
                 .down(PAD * 2.0)
-                .set(ids.source_editor_selected_soundscape_release_duration_slider, ui)
+                .set(
+                    ids.source_editor_selected_soundscape_release_duration_slider,
+                    ui,
+                )
             {
                 let duration = {
                     let (unit, value) = utils::human_readable_ms(&Ms(value as _));
@@ -1803,7 +1937,7 @@ pub fn set(
                     match edge {
                         widget::range_slider::Edge::Start => {
                             soundscape.release_duration.min = duration;
-                        },
+                        }
                         widget::range_slider::Edge::End => {
                             soundscape.release_duration.max = duration;
                         }
@@ -1845,14 +1979,14 @@ pub fn set(
 
             let is_selected = |idx: usize| groups.contains(&groups_vec[idx].0);
             while let Some(event) = events.next(ui, &is_selected) {
-                use self::ui::widget::list_select::Event;
+                use widget::list_select::Event;
                 match event {
                     // Instantiate a button for each group.
                     Event::Item(item) => {
                         let selected = is_selected(item.i);
                         let (&group_id, _) = groups_vec[item.i];
                         let soundscape = expect_soundscape_mut(sources, &id);
-                        let color = if selected { ui::color::BLUE } else { ui::color::BLACK };
+                        let color = if selected { color::BLUE } else { color::BLACK };
                         let button = widget::Button::new()
                             .label(&groups_vec[item.i].1.name)
                             .label_font_size(SMALL_FONT_SIZE)
@@ -1880,7 +2014,6 @@ pub fn set(
                                 })
                                 .expect("failed to send source soundscape group update to soundscape thread");
                         }
-
                     }
                     _ => (),
                 }
@@ -1901,7 +2034,9 @@ pub fn set(
                 .set(ids.source_editor_selected_soundscape_movement_text, ui);
 
             // A rightward flowing list for the movement kinds.
-            let canvas_kid_area = ui.kid_area_of(ids.source_editor_selected_soundscape_canvas).unwrap();
+            let canvas_kid_area = ui
+                .kid_area_of(ids.source_editor_selected_soundscape_canvas)
+                .unwrap();
             let n_items = audio::source::Movement::VARIANT_COUNT;
             let item_w = canvas_kid_area.w() / n_items as Scalar;
             let (mut events, _scrollbar) = widget::ListSelect::single(n_items)
@@ -1915,12 +2050,16 @@ pub fn set(
             let selected_index = movement.to_index();
             let is_selected = |i| i == selected_index;
             while let Some(event) = events.next(ui, &is_selected) {
-                use nannou::ui::widget::list_select::Event;
+                use widget::list_select::Event;
                 match event {
                     Event::Item(item) => {
                         let index = item.i;
                         let selected = is_selected(index);
-                        let color = if selected { color::BLUE } else { color::DARK_CHARCOAL };
+                        let color = if selected {
+                            color::BLUE
+                        } else {
+                            color::DARK_CHARCOAL
+                        };
                         let label = audio::source::Movement::label_from_index(index);
                         let button = widget::Button::new()
                             .label(&label)
@@ -1947,7 +2086,7 @@ pub fn set(
                                 })
                                 .expect("could not update movement field on soundscape thread");
                         }
-                    },
+                    }
                     _ => (),
                 }
             }
@@ -1955,7 +2094,6 @@ pub fn set(
             // Depending on the selected movement, display the relevant widgets.
             let generative = match movement {
                 audio::source::Movement::Fixed(position) => {
-
                     /////////////////////
                     // POSITION XY PAD //
                     /////////////////////
@@ -1969,14 +2107,20 @@ pub fn set(
                         .value_font_size(SMALL_FONT_SIZE)
                         .w(w)
                         .h(h)
-                        .down_from(ids.source_editor_selected_soundscape_movement_mode_list, PAD)
+                        .down_from(
+                            ids.source_editor_selected_soundscape_movement_mode_list,
+                            PAD,
+                        )
                         .align_left_of(ids.source_editor_selected_soundscape_movement_mode_list)
-                        .color(ui::color::DARK_CHARCOAL)
-                        .set(ids.source_editor_selected_soundscape_movement_fixed_point, ui)
+                        .color(color::DARK_CHARCOAL)
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_fixed_point,
+                            ui,
+                        )
                     {
                         // Update the local copy.
                         let soundscape = expect_soundscape_mut(sources, &id);
-                        let point = pt2(new_x, new_y);
+                        let point = Point2::new(new_x, new_y);
                         let movement = audio::source::Movement::Fixed(point);
                         soundscape.movement = movement.clone();
 
@@ -1991,7 +2135,7 @@ pub fn set(
                     }
 
                     return area.id;
-                },
+                }
                 audio::source::Movement::Generative(generative) => generative,
             };
 
@@ -2004,21 +2148,31 @@ pub fn set(
             let item_w = canvas_kid_area.w() / n_items as Scalar;
             let (mut events, _scrollbar) = widget::ListSelect::single(n_items)
                 .flow_right()
-                .down_from(ids.source_editor_selected_soundscape_movement_mode_list, PAD)
+                .down_from(
+                    ids.source_editor_selected_soundscape_movement_mode_list,
+                    PAD,
+                )
                 .align_left_of(ids.source_editor_selected_soundscape_movement_mode_list)
                 .w(canvas_kid_area.w())
                 .h(BUTTON_H)
                 .item_size(item_w)
-                .set(ids.source_editor_selected_soundscape_movement_generative_list, ui);
+                .set(
+                    ids.source_editor_selected_soundscape_movement_generative_list,
+                    ui,
+                );
             let selected_index = generative.to_index();
             let is_selected = |i| i == selected_index;
             while let Some(event) = events.next(ui, &is_selected) {
-                use nannou::ui::widget::list_select::Event;
+                use widget::list_select::Event;
                 match event {
                     Event::Item(item) => {
                         let index = item.i;
                         let selected = is_selected(index);
-                        let color = if selected { color::BLUE } else { color::DARK_CHARCOAL };
+                        let color = if selected {
+                            color::BLUE
+                        } else {
+                            color::DARK_CHARCOAL
+                        };
                         let label = audio::source::movement::Generative::label_from_index(index);
                         let button = widget::Button::new()
                             .label(&label)
@@ -2046,7 +2200,7 @@ pub fn set(
                                 })
                                 .expect("could not update movement field on soundscape thread");
                         }
-                    },
+                    }
                     _ => (),
                 }
             }
@@ -2068,8 +2222,11 @@ pub fn set(
                         .down(PAD * 2.0)
                         .h(ITEM_HEIGHT)
                         .w(canvas_kid_area.w())
-                        .color(ui::color::LIGHT_CHARCOAL)
-                        .set(ids.source_editor_selected_soundscape_movement_agent_directional, ui)
+                        .color(color::LIGHT_CHARCOAL)
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_agent_directional,
+                            ui,
+                        )
                     {
                         // Update local copy.
                         agent.directional = new_directional;
@@ -2089,7 +2246,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let agent = match *gen {
-                                        soundscape::movement::Generative::Agent(ref mut agent) => agent,
+                                        soundscape::movement::Generative::Agent(ref mut agent) => {
+                                            agent
+                                        }
                                         _ => return,
                                     };
                                     agent.directional = new_directional;
@@ -2102,7 +2261,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let agent = match *gen {
-                                        audio::source::movement::Generative::Agent(ref mut agent) => agent,
+                                        audio::source::movement::Generative::Agent(
+                                            ref mut agent,
+                                        ) => agent,
                                         _ => return,
                                     };
                                     agent.directional = new_directional;
@@ -2119,7 +2280,10 @@ pub fn set(
                         .mid_left_of(ids.source_editor_selected_soundscape_canvas)
                         .down(PAD * 2.0)
                         .font_size(SMALL_FONT_SIZE)
-                        .set(ids.source_editor_selected_soundscape_movement_agent_max_speed_text, ui);
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_agent_max_speed_text,
+                            ui,
+                        );
 
                     let min = agent.max_speed.min;
                     let max = agent.max_speed.max;
@@ -2131,7 +2295,10 @@ pub fn set(
                         .align_left()
                         .label(&label)
                         .down(PAD * 2.0)
-                        .set(ids.source_editor_selected_soundscape_movement_agent_max_speed_slider, ui)
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_agent_max_speed_slider,
+                            ui,
+                        )
                     {
                         match edge {
                             widget::range_slider::Edge::Start => agent.max_speed.min = value,
@@ -2156,7 +2323,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let agent = match *gen {
-                                        soundscape::movement::Generative::Agent(ref mut agent) => agent,
+                                        soundscape::movement::Generative::Agent(ref mut agent) => {
+                                            agent
+                                        }
                                         _ => return,
                                     };
                                     agent.max_speed = new_max_speed.clamp(agent.max_speed);
@@ -2169,7 +2338,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let agent = match *gen {
-                                        audio::source::movement::Generative::Agent(ref mut agent) => agent,
+                                        audio::source::movement::Generative::Agent(
+                                            ref mut agent,
+                                        ) => agent,
                                         _ => return,
                                     };
                                     agent.max_speed = new_max_speed;
@@ -2186,7 +2357,10 @@ pub fn set(
                         .mid_left_of(ids.source_editor_selected_soundscape_canvas)
                         .down(PAD * 2.0)
                         .font_size(SMALL_FONT_SIZE)
-                        .set(ids.source_editor_selected_soundscape_movement_agent_max_force_text, ui);
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_agent_max_force_text,
+                            ui,
+                        );
 
                     let min = agent.max_force.min;
                     let max = agent.max_force.max;
@@ -2198,7 +2372,10 @@ pub fn set(
                         .align_left()
                         .label(&label)
                         .down(PAD * 2.0)
-                        .set(ids.source_editor_selected_soundscape_movement_agent_max_force_slider, ui)
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_agent_max_force_slider,
+                            ui,
+                        )
                     {
                         match edge {
                             widget::range_slider::Edge::Start => agent.max_force.min = value,
@@ -2223,7 +2400,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let agent = match *gen {
-                                        soundscape::movement::Generative::Agent(ref mut agent) => agent,
+                                        soundscape::movement::Generative::Agent(ref mut agent) => {
+                                            agent
+                                        }
                                         _ => return,
                                     };
                                     agent.max_force = new_max_force.clamp(agent.max_force);
@@ -2236,7 +2415,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let agent = match *gen {
-                                        audio::source::movement::Generative::Agent(ref mut agent) => agent,
+                                        audio::source::movement::Generative::Agent(
+                                            ref mut agent,
+                                        ) => agent,
                                         _ => return,
                                     };
                                     agent.max_force = new_max_force;
@@ -2253,7 +2434,10 @@ pub fn set(
                         .mid_left_of(ids.source_editor_selected_soundscape_canvas)
                         .down(PAD * 2.0)
                         .font_size(SMALL_FONT_SIZE)
-                        .set(ids.source_editor_selected_soundscape_movement_agent_max_rotation_text, ui);
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_agent_max_rotation_text,
+                            ui,
+                        );
 
                     let min = agent.max_rotation.min;
                     let max = agent.max_rotation.max;
@@ -2311,11 +2495,10 @@ pub fn set(
                             })
                             .expect("failed to send movement update to soundscape thread");
                     }
-                },
+                }
 
                 // Ngon-specific widgets.
                 audio::source::movement::Generative::Ngon(mut ngon) => {
-
                     //////////////
                     // Vertices //
                     //////////////
@@ -2324,7 +2507,10 @@ pub fn set(
                         .mid_left_of(ids.source_editor_selected_soundscape_canvas)
                         .down(PAD * 2.0)
                         .font_size(SMALL_FONT_SIZE)
-                        .set(ids.source_editor_selected_soundscape_movement_ngon_vertices_text, ui);
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_ngon_vertices_text,
+                            ui,
+                        );
 
                     let min = ngon.vertices.min as f64;
                     let max = ngon.vertices.max as f64;
@@ -2336,7 +2522,10 @@ pub fn set(
                         .align_left()
                         .label(&label)
                         .down(PAD * 2.0)
-                        .set(ids.source_editor_selected_soundscape_movement_ngon_vertices_slider, ui)
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_ngon_vertices_slider,
+                            ui,
+                        )
                     {
                         let value = value as usize;
                         match edge {
@@ -2362,7 +2551,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let ngon = match *gen {
-                                        soundscape::movement::Generative::Ngon(ref mut ngon) => ngon,
+                                        soundscape::movement::Generative::Ngon(ref mut ngon) => {
+                                            ngon
+                                        }
                                         _ => return,
                                     };
                                     ngon.vertices = new_vertices.clamp(ngon.vertices);
@@ -2375,7 +2566,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let ngon = match *gen {
-                                        audio::source::movement::Generative::Ngon(ref mut ngon) => ngon,
+                                        audio::source::movement::Generative::Ngon(ref mut ngon) => {
+                                            ngon
+                                        }
                                         _ => return,
                                     };
                                     ngon.vertices = new_vertices;
@@ -2392,7 +2585,10 @@ pub fn set(
                         .mid_left_of(ids.source_editor_selected_soundscape_canvas)
                         .down(PAD * 2.0)
                         .font_size(SMALL_FONT_SIZE)
-                        .set(ids.source_editor_selected_soundscape_movement_ngon_step_text, ui);
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_ngon_step_text,
+                            ui,
+                        );
 
                     let min = ngon.nth.min as f64;
                     let max = ngon.nth.max as f64;
@@ -2404,7 +2600,10 @@ pub fn set(
                         .align_left()
                         .label(&label)
                         .down(PAD * 2.0)
-                        .set(ids.source_editor_selected_soundscape_movement_ngon_step_slider, ui)
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_ngon_step_slider,
+                            ui,
+                        )
                     {
                         let value = value as usize;
                         match edge {
@@ -2430,7 +2629,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let ngon = match *gen {
-                                        soundscape::movement::Generative::Ngon(ref mut ngon) => ngon,
+                                        soundscape::movement::Generative::Ngon(ref mut ngon) => {
+                                            ngon
+                                        }
                                         _ => return,
                                     };
                                     ngon.nth = new_nth.clamp(ngon.nth);
@@ -2443,7 +2644,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let ngon = match *gen {
-                                        audio::source::movement::Generative::Ngon(ref mut ngon) => ngon,
+                                        audio::source::movement::Generative::Ngon(ref mut ngon) => {
+                                            ngon
+                                        }
                                         _ => return,
                                     };
                                     ngon.nth = new_nth;
@@ -2451,7 +2654,6 @@ pub fn set(
                             })
                             .expect("failed to send movement update to soundscape thread");
                     }
-
 
                     ////////////////
                     // Dimensions //
@@ -2461,30 +2663,41 @@ pub fn set(
                         .mid_left_of(ids.source_editor_selected_soundscape_canvas)
                         .down(PAD * 2.0)
                         .font_size(SMALL_FONT_SIZE)
-                        .set(ids.source_editor_selected_soundscape_movement_ngon_dimensions_text, ui);
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_ngon_dimensions_text,
+                            ui,
+                        );
 
                     let slider = |value, min, max| {
                         widget::Slider::new(value, min, max)
                             .h(SLIDER_H)
                             .w(canvas_kid_area.w())
                             .label_font_size(SMALL_FONT_SIZE)
-                            .color(ui::color::LIGHT_CHARCOAL)
+                            .color(color::LIGHT_CHARCOAL)
                     };
 
                     ///////////
                     // Width //
                     ///////////
 
-                    let label = format!("{:.2}% of installation width", ngon.normalised_dimensions.x * 100.0);
+                    let label = format!(
+                        "{:.2}% of installation width",
+                        ngon.normalised_dimensions.x * 100.0
+                    );
                     for new_width in slider(ngon.normalised_dimensions.x, 0.0, 1.0)
                         .align_left()
                         .label(&label)
                         .down(PAD * 2.0)
-                        .set(ids.source_editor_selected_soundscape_movement_ngon_width_slider, ui)
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_ngon_width_slider,
+                            ui,
+                        )
                     {
                         // Update local copy.
                         let soundscape = expect_soundscape_mut(sources, &id);
-                        if let audio::source::Movement::Generative(ref mut gen) = soundscape.movement {
+                        if let audio::source::Movement::Generative(ref mut gen) =
+                            soundscape.movement
+                        {
                             if let audio::source::movement::Generative::Ngon(ref mut ngon) = *gen {
                                 ngon.normalised_dimensions.x = new_width;
                             }
@@ -2501,7 +2714,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let ngon = match *gen {
-                                        soundscape::movement::Generative::Ngon(ref mut ngon) => ngon,
+                                        soundscape::movement::Generative::Ngon(ref mut ngon) => {
+                                            ngon
+                                        }
                                         _ => return,
                                     };
                                     ngon.normalised_dimensions.x = new_width;
@@ -2513,7 +2728,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let ngon = match *gen {
-                                        audio::source::movement::Generative::Ngon(ref mut ngon) => ngon,
+                                        audio::source::movement::Generative::Ngon(ref mut ngon) => {
+                                            ngon
+                                        }
                                         _ => return,
                                     };
                                     ngon.normalised_dimensions.x = new_width;
@@ -2526,16 +2743,24 @@ pub fn set(
                     // Height //
                     ////////////
 
-                    let label = format!("{:.2}% of installation height", ngon.normalised_dimensions.y * 100.0);
+                    let label = format!(
+                        "{:.2}% of installation height",
+                        ngon.normalised_dimensions.y * 100.0
+                    );
                     for new_height in slider(ngon.normalised_dimensions.y, 0.0, 1.0)
                         .align_left()
                         .label(&label)
                         .down(PAD)
-                        .set(ids.source_editor_selected_soundscape_movement_ngon_height_slider, ui)
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_ngon_height_slider,
+                            ui,
+                        )
                     {
                         // Update local copy.
                         let soundscape = expect_soundscape_mut(sources, &id);
-                        if let audio::source::Movement::Generative(ref mut gen) = soundscape.movement {
+                        if let audio::source::Movement::Generative(ref mut gen) =
+                            soundscape.movement
+                        {
                             if let audio::source::movement::Generative::Ngon(ref mut ngon) = *gen {
                                 ngon.normalised_dimensions.y = new_height;
                             }
@@ -2552,7 +2777,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let ngon = match *gen {
-                                        soundscape::movement::Generative::Ngon(ref mut ngon) => ngon,
+                                        soundscape::movement::Generative::Ngon(ref mut ngon) => {
+                                            ngon
+                                        }
                                         _ => return,
                                     };
                                     ngon.normalised_dimensions.y = new_height;
@@ -2564,7 +2791,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let ngon = match *gen {
-                                        audio::source::movement::Generative::Ngon(ref mut ngon) => ngon,
+                                        audio::source::movement::Generative::Ngon(ref mut ngon) => {
+                                            ngon
+                                        }
                                         _ => return,
                                     };
                                     ngon.normalised_dimensions.y = new_height;
@@ -2581,7 +2810,10 @@ pub fn set(
                         .mid_left_of(ids.source_editor_selected_soundscape_canvas)
                         .down(PAD * 2.0)
                         .font_size(SMALL_FONT_SIZE)
-                        .set(ids.source_editor_selected_soundscape_movement_ngon_radians_text, ui);
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_ngon_radians_text,
+                            ui,
+                        );
 
                     let min = ngon.radians_offset.min;
                     let max = ngon.radians_offset.max;
@@ -2592,7 +2824,10 @@ pub fn set(
                         .align_left()
                         .label(&label)
                         .down(PAD * 2.0)
-                        .set(ids.source_editor_selected_soundscape_movement_ngon_radians_slider, ui)
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_ngon_radians_slider,
+                            ui,
+                        )
                     {
                         match edge {
                             widget::range_slider::Edge::Start => ngon.radians_offset.min = value,
@@ -2617,10 +2852,13 @@ pub fn set(
                                         _ => return,
                                     };
                                     let ngon = match *gen {
-                                        soundscape::movement::Generative::Ngon(ref mut ngon) => ngon,
+                                        soundscape::movement::Generative::Ngon(ref mut ngon) => {
+                                            ngon
+                                        }
                                         _ => return,
                                     };
-                                    ngon.radians_offset = new_radians_offset.clamp(ngon.radians_offset);
+                                    ngon.radians_offset =
+                                        new_radians_offset.clamp(ngon.radians_offset);
                                 });
 
                                 // Update the source.
@@ -2630,7 +2868,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let ngon = match *gen {
-                                        audio::source::movement::Generative::Ngon(ref mut ngon) => ngon,
+                                        audio::source::movement::Generative::Ngon(ref mut ngon) => {
+                                            ngon
+                                        }
                                         _ => return,
                                     };
                                     ngon.radians_offset = new_radians_offset;
@@ -2647,7 +2887,10 @@ pub fn set(
                         .mid_left_of(ids.source_editor_selected_soundscape_canvas)
                         .down(PAD * 2.0)
                         .font_size(SMALL_FONT_SIZE)
-                        .set(ids.source_editor_selected_soundscape_movement_ngon_speed_text, ui);
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_ngon_speed_text,
+                            ui,
+                        );
 
                     let min = ngon.speed.min;
                     let max = ngon.speed.max;
@@ -2659,7 +2902,10 @@ pub fn set(
                         .align_left()
                         .label(&label)
                         .down(PAD * 2.0)
-                        .set(ids.source_editor_selected_soundscape_movement_ngon_speed_slider, ui)
+                        .set(
+                            ids.source_editor_selected_soundscape_movement_ngon_speed_slider,
+                            ui,
+                        )
                     {
                         match edge {
                             widget::range_slider::Edge::Start => ngon.speed.min = value,
@@ -2684,7 +2930,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let ngon = match *gen {
-                                        soundscape::movement::Generative::Ngon(ref mut ngon) => ngon,
+                                        soundscape::movement::Generative::Ngon(ref mut ngon) => {
+                                            ngon
+                                        }
                                         _ => return,
                                     };
                                     ngon.speed = new_speed.clamp(ngon.speed);
@@ -2697,7 +2945,9 @@ pub fn set(
                                         _ => return,
                                     };
                                     let ngon = match *gen {
-                                        audio::source::movement::Generative::Ngon(ref mut ngon) => ngon,
+                                        audio::source::movement::Generative::Ngon(ref mut ngon) => {
+                                            ngon
+                                        }
                                         _ => return,
                                     };
                                     ngon.speed = new_speed;
@@ -2705,18 +2955,16 @@ pub fn set(
                             })
                             .expect("failed to send movement update to soundscape thread");
                     }
-                },
+                }
             }
-        },
+        }
 
         // For interactive sounds, allow the user specify the location. NOTE: Option - just work
         // this sound out from the location of the speakers?
-        Some(Role::Interactive) => {
-        },
+        Some(Role::Interactive) => {}
 
         // For scribbles, allow a specific location from which the speaking appears.
-        Some(Role::Scribbles) => {
-        },
+        Some(Role::Scribbles) => {}
 
         // If it has no role, no specific stuff to be done.
         None => (),

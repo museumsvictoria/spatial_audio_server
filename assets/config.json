@@ -13,9 +13,24 @@
       0,
       0,
       0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
       0
-    ]
+    ],
+    "proximity_limit_2": 49.0
   },
-  "selected_project_slug": "my-project-1",
-  "cpu_saving_mode": false
+  "selected_project_slug": "my-project",
+  "cpu_saving_mode": false,
+  "target_input_device_name": "",
+  "target_output_device_name": ""
 }

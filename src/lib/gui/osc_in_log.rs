@@ -1,12 +1,10 @@
-use gui::{collapsible_area, info_text, Gui};
-use nannou::ui::prelude::*;
-use project::Project;
+use crate::gui::{collapsible_area, info_text, Gui};
+use crate::project::Project;
+use conrod_core as ui;
+use nannou_conrod::prelude::*;
+use ui::{color, widget};
 
-pub fn set(
-    last_area_id: widget::Id,
-    gui: &mut Gui,
-    project: &Project,
-) -> widget::Id {
+pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &Project) -> widget::Id {
     let is_open = gui.state.is_open.osc_in_log;
     let log_canvas_h = 200.0;
     let (area, event) = collapsible_area(is_open, "OSC Input Log", gui.ids.side_menu)
