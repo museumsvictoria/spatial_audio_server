@@ -263,7 +263,7 @@ impl Model {
         let in_window = [Complex::<f32>::zero(); FFT_WINDOW_LEN];
         let out_window = [Complex::<f32>::zero(); FFT_WINDOW_LEN];
         let fft = Fft::new(in_window, out_window);
-        let inverse = false;
+        let _inverse = false;
         let fft_planner = fft::Planner::new();
         let fft_direction = rustfft::FftDirection::Inverse;
 

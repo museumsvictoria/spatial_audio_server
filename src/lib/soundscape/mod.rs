@@ -672,7 +672,7 @@ pub fn spawn(
     frame_count: Arc<AtomicUsize>,
     seed: Seed,
     tx: mpsc::Sender<Message>,
-    rx: mpsc::Receiver<Message>,
+    _rx: mpsc::Receiver<Message>,
     wav_reader: audio::source::wav::reader::Handle,
     audio_input_stream: audio::input::Stream,
     audio_output_stream: audio::output::Stream,
@@ -726,7 +726,7 @@ pub fn spawn(
     let active_sounds_per_installation = Default::default();
     let available_groups = Default::default();
     let available_sources = Default::default();
-    let model = Model {
+    let _model = Model {
         frame_count,
         realtime_source_latency,
         seed,
