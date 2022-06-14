@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["mitchmindtree <mitchell.nordine@gmail.com>"]
 resolver = "2"
 edition = "2021"
+include = ["src/**/*", "README.md"]
 
 [profile.release]
 debug = true
