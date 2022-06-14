@@ -59,8 +59,9 @@ pub fn spawn(app_proxy: nannou::app::Proxy) -> io::Result<Spawned> {
             // waking up.
             // Attempt to forward every message and wakeup the GUI when successful.
             'run: while !is_closed_2.load(atomic::Ordering::Relaxed) {
-                let msg = audio_rx.pop().unwrap();
-                gui_tx.push(msg);
+                if let Some(msg) = audio_rx.pop() {
+                    gui_tx.push(msg);
+                }
                 // Proxy is currently buggy on linux so we only enable this for macos.
                 if cfg!(target_os = "macos") {
                     if app_proxy.wakeup().is_err() {

@@ -612,21 +612,22 @@ fn run(tx: Tx, rx: Rx) {
 /// the parent thread in their processed form.
 fn run_child(child_msg_queue: Arc<ChildMessageQueue>, parent_tx: Tx) {
     loop {
-        let msg = child_msg_queue.pop().unwrap(); // TODO (ando: 2022-06-09): check if unwrap logic is correct
-        match msg {
-            // Play the given sound and return the resulting `Sound` to the parent.
-            ChildMessage::Play(sound_id, play) => {
-                let sound = play_sound(play);
-                let msg = Message::PlayComplete(sound_id, sound);
-                parent_tx.push(msg);
-            }
+        if let Some(msg) = child_msg_queue.pop() {
+            match msg {
+                // Play the given sound and return the resulting `Sound` to the parent.
+                ChildMessage::Play(sound_id, play) => {
+                    let sound = play_sound(play);
+                    let msg = Message::PlayComplete(sound_id, sound);
+                    parent_tx.push(msg);
+                }
 
-            // Process the next buffer and return the resulting `Sound` to the parent thread.
-            ChildMessage::NextBuffer(sound_id, mut sound, buffer) => {
-                next_buffer(sound_id, &mut sound, buffer, &parent_tx)
-                    .expect("failed to process next buffer");
-                let msg = Message::NextBufferComplete(sound_id, sound);
-                parent_tx.push(msg);
+                // Process the next buffer and return the resulting `Sound` to the parent thread.
+                ChildMessage::NextBuffer(sound_id, mut sound, buffer) => {
+                    next_buffer(sound_id, &mut sound, buffer, &parent_tx)
+                        .expect("failed to process next buffer");
+                    let msg = Message::NextBufferComplete(sound_id, sound);
+                    parent_tx.push(msg);
+                }
             }
         }
     }

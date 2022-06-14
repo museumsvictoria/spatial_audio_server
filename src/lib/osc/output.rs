@@ -125,9 +125,10 @@ fn run(msg_rx: Rx, log_tx: mpsc::Sender<Log>) {
     std::thread::Builder::new()
         .name("osc_output_msg_to_update".into())
         .spawn(move || loop {
-            let msg = msg_rx.pop().unwrap();
-            if update_tx.send(Update::Msg(msg)).is_err() {
-                break;
+            if let Some(msg) = msg_rx.pop() {
+                if update_tx.send(Update::Msg(msg)).is_err() {
+                    break;
+                }
             }
         })
         .unwrap();
