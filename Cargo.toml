@@ -21,27 +21,27 @@ path = "src/lib/lib.rs"
 conrod_core = "0.76.1"
 conrod_derive = "0.76.1"
 crossbeam = "0.8.1"
-custom_derive = "0.1"
+custom_derive = "0.1.7"
 dasp = { version = "0.11.0", features = ["all"] }
-fxhash = "0.2"
-hound = "3.3"
-mindtree_utils = "0.4"
-newtype_derive = "0.1"
+fxhash = "0.2.1"
+hound = "3.4.0"
+mindtree_utils = "0.4.0"
+newtype_derive = "0.1.6"
 nannou = "0.18.1"
 nannou_audio = "0.18.0"
 nannou_conrod = "0.18.0"
 nannou_osc = "0.18.0"
-num_cpus = "1.8"
+num_cpus = "1.13.1"
 pitch_calc = "0.12.0"
 rand_xorshift = "0.3.0"
 rustfft = "6.0.1"
-serde = { version = "1.0", features = ["rc"] }
-serde_derive = "1.0"
-serde_json = "1.0"
-slug = "0.1"
-time_calc = { version = "0.13", features = ["serde"] }
-threadpool = "1.7"
-walkdir = "2"
+serde = { version = "1.0.137", features = ["rc"] }
+serde_derive = "1.0.137"
+serde_json = "1.0.81"
+slug = "0.1.4"
+time_calc = { version = "0.13.0", features = ["serde"] }
+threadpool = "1.8.1"
+walkdir = "2.3.2"
 
 [features]
 asio = ["nannou_audio/asio"]
