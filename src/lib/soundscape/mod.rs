@@ -185,7 +185,7 @@ pub struct Model {
     /// A handle for submitting new sounds to the output stream.
     audio_output_stream: audio::output::Stream,
     // A handle to the ticker thread.
-    _tick_thread: thread::JoinHandle<()>,
+    tick_thread: thread::JoinHandle<()>,
 }
 
 // Data related to the suitability of a group or source for selection of use within the soundscape.
@@ -672,7 +672,7 @@ pub fn spawn(
     frame_count: Arc<AtomicUsize>,
     seed: Seed,
     tx: mpsc::Sender<Message>,
-    _rx: mpsc::Receiver<Message>,
+    rx: mpsc::Receiver<Message>,
     wav_reader: audio::source::wav::reader::Handle,
     audio_input_stream: audio::input::Stream,
     audio_output_stream: audio::output::Stream,
@@ -683,7 +683,7 @@ pub fn spawn(
     // Spawn a thread to generate and send ticks.
     let tick_tx = tx.clone();
     let tick_is_playing = is_playing.clone();
-    let _tick_thread = thread::Builder::new()
+    let tick_thread = thread::Builder::new()
         .name("soundscape_ticker".into())
         .spawn(move || {
             let mut last = time::Instant::now();
@@ -726,7 +726,7 @@ pub fn spawn(
     let active_sounds_per_installation = Default::default();
     let available_groups = Default::default();
     let available_sources = Default::default();
-    let _model = Model {
+    let model = Model {
         frame_count,
         realtime_source_latency,
         seed,
@@ -749,16 +749,16 @@ pub fn spawn(
         audio_input_stream,
         audio_output_stream,
         sound_id_gen,
-        _tick_thread,
+        tick_thread,
     };
 
     // Spawn the soundscape thread.
     /*
     let thread = thread::Builder::new()
         .name("soundscape".into())
-        .spawn(move || run(model, rx))
+        .spawn(|| run(model, rx))
         .unwrap();
-    // */
+    */
     let thread = Arc::new(Mutex::new(None));
     Soundscape {
         tx,
@@ -768,7 +768,7 @@ pub fn spawn(
 }
 
 // A blocking function that is run on the unique soundscape thread (called by spawn).
-fn run(mut model: Model, msg_rx: mpsc::Receiver<Message>) {
+pub fn run(mut model: Model, msg_rx: mpsc::Receiver<Message>) {
     // Wait for messages.
     for msg in msg_rx {
         match msg {
