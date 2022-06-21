@@ -216,6 +216,7 @@ struct ChannelLevels {
 }
 
 /// A message sent from the audio thread with some audio levels.
+#[derive(Debug)]
 pub enum AudioMonitorMessage {
     Master { peak: f32 },
     ActiveSound(audio::sound::Id, ActiveSoundMessage),
@@ -223,6 +224,7 @@ pub enum AudioMonitorMessage {
 }
 
 /// A message related to an active sound.
+#[derive(Debug)]
 pub enum ActiveSoundMessage {
     Start {
         normalised_progress: Option<f64>,
@@ -478,10 +480,12 @@ impl Model {
 
         // Update the map of active sounds.
         loop {
+            println!("audio active sounds loop entry");
             let msg = match channels.audio_monitor_msg_rx.pop() {
                 None => break,
                 Some(msg) => msg,
             };
+            println!("got some msg. {:?}", msg);
 
             match msg {
                 AudioMonitorMessage::Master { peak } => {
@@ -550,7 +554,7 @@ impl Model {
         }
 
         // Check that all active sounds are still valid in case the GUI switched the project.
-        match *project {
+        match project {
             Some((ref mut project, _)) => audio_monitor.clear_invalid(project),
             None => audio_monitor.clear(),
         }
@@ -560,7 +564,8 @@ impl Model {
 
         // Check for `Ctrl+S` or `Cmd+S` for saving, or `Ctrl+Space` for cpu saving mode.
         for event in ui.global_input().events().ui() {
-            if let ui::event::Ui::Press(_, press) = *event {
+            println!("{:?}", event);
+            if let ui::event::Ui::Press(_, press) = event {
                 match press.button {
                     ui::event::Button::Keyboard(ui::input::Key::S) => {
                         let save_mod = press
@@ -570,7 +575,7 @@ impl Model {
                                 .modifiers
                                 .contains(ui::input::keyboard::ModifierKey::GUI);
                         if save_mod {
-                            if let Some((ref project, _)) = *project {
+                            if let Some((ref project, _)) = project {
                                 project
                                     .save(assets)
                                     .expect("failed to save project on keyboard shortcut");

@@ -131,7 +131,7 @@ pub enum Message {
 ///
 /// When this buffer is depleted, the allocated `Vec` gets sent back to the reader thread for
 /// re-use.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Buffer {
     samples: Vec<f32>,
     sound_id: sound::Id,
@@ -159,6 +159,7 @@ pub struct Play {
 }
 
 /// A handle to a WAV that receives the buffered samples for use on the audio thread.
+#[derive(Debug)]
 pub struct SamplesStream {
     buffer_rx: BufferRx,
     buffer: RefCell<Option<Buffer>>,

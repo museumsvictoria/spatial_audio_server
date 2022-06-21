@@ -34,6 +34,7 @@ type Channel = usize;
 type DbapSpeakerGains = FxHashMap<sound::Id, FxHashMap<Channel, FxHashMap<speaker::Id, f32>>>;
 
 /// A sound that is currently active on the audio thread.
+#[derive(Debug)]
 pub struct ActiveSound {
     sound: Sound,
     total_duration_frames: Option<Samples>,

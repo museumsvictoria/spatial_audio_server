@@ -16,6 +16,7 @@ type Point2 = nannou::glam::DVec2;
 /// 1. **Source**: for generating audio data (via oscillator, wave, audio input, etc).
 /// 2. **Pre-spatial effects processing**: E.g. fades.
 /// 3. **Spatial Output**: maps the sound from a position in space to the output channels.
+#[derive(Debug)]
 pub struct Sound {
     // State shared with the handles.
     pub shared: Arc<Shared>,

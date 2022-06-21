@@ -59,6 +59,7 @@ pub struct Source {
 /// A **Signal** yielding interleaved samples.
 ///
 /// **Signal**s are produced by **Source**s and played back on the output thread via **Sound**s.
+#[derive(Debug)]
 pub struct Signal {
     pub kind: SignalKind,
     attack: Attack,
@@ -72,6 +73,7 @@ pub struct Signal {
 /// The kind of the **Signal**.
 ///
 /// Indicates whether the signal is sourced from a `Wav` or `Realtime` source.
+#[derive(Debug)]
 pub enum SignalKind {
     Wav {
         samples: wav::reader::SamplesStream,

@@ -28,6 +28,7 @@ pub struct Realtime {
 ///
 /// Returns `None` as soon as the inner receiver either runs out of samples due to falling behind
 /// or if the channel is disconneceted as the sound has played out its duration.
+#[derive(Debug)]
 pub struct Signal {
     pub buffer_rx: BufferRx,
     pub buffer_tx: BufferTx,
