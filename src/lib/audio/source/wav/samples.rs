@@ -1,18 +1,18 @@
 use hound;
-use nannou_audio::sample::{FromSample, Sample};
+use nannou_audio::dasp_sample::{FromSample, Sample};
 use std::io;
 
 /// Retrieve the next sample from the given wav reader samples iterator and yield it in the sample
 /// format type `S`.
-pub fn next<'a, R, H, S>(samples: &mut hound::WavSamples<'a, R, H>) -> Option<Result<S, hound::Error>>
+pub fn next<'a, R, H, S>(
+    samples: &mut hound::WavSamples<'a, R, H>,
+) -> Option<Result<S, hound::Error>>
 where
     H: hound::Sample + Sample,
     S: Sample + FromSample<H>,
     hound::WavSamples<'a, R, H>: Iterator<Item = Result<H, hound::Error>>,
 {
-    samples
-        .next()
-        .map(|r| r.map(Sample::to_sample))
+    samples.next().map(|r| r.map(Sample::to_sample))
 }
 
 /// The number of remaining samples in the reader from its current position.

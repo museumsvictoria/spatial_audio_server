@@ -1,12 +1,13 @@
+use crate::installation;
+use crate::metres::Metres;
+use crate::soundscape;
+use crate::utils::{self, Range};
 use fxhash::FxHashSet;
-use installation;
-use metres::Metres;
 use nannou::math::map_range;
 use nannou::rand::Rng;
-use soundscape;
+use serde::{Deserialize, Serialize};
 use std::ops;
 use time_calc::{Ms, Samples};
-use utils::{self, Range};
 
 pub use self::movement::Movement;
 pub use self::realtime::Realtime;
@@ -58,6 +59,7 @@ pub struct Source {
 /// A **Signal** yielding interleaved samples.
 ///
 /// **Signal**s are produced by **Source**s and played back on the output thread via **Sound**s.
+#[derive(Debug)]
 pub struct Signal {
     pub kind: SignalKind,
     attack: Attack,
@@ -71,6 +73,7 @@ pub struct Signal {
 /// The kind of the **Signal**.
 ///
 /// Indicates whether the signal is sourced from a `Wav` or `Realtime` source.
+#[derive(Debug)]
 pub enum SignalKind {
     Wav {
         samples: wav::reader::SamplesStream,
@@ -154,9 +157,12 @@ pub struct Soundscape {
 
 /// Items related to the movement of a source's associated sounds within a soundscape.
 pub mod movement {
-    use nannou::geom::{Point2, Vector2};
+    use crate::utils::Range;
+    use nannou::glam::DVec2 as Vector2;
+    use nannou::glam::DVec2 as Point2;
     use nannou::prelude::PI_F64;
-    use utils::Range;
+    use serde::Deserialize;
+    use serde::Serialize;
 
     /// The absolute maximum speed of an agent.
     pub const MAX_SPEED: f64 = 20.0;
@@ -192,7 +198,7 @@ pub mod movement {
     #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
     pub enum Movement {
         /// The position normalised to the constraints of the installation.
-        Fixed(Point2<f64>),
+        Fixed(Point2),
         Generative(Generative),
     }
 
@@ -234,7 +240,7 @@ pub mod movement {
         ///
         /// `0.0` means all points will be in the center.
         /// `1.0` means all points will extend to the bounds of the installation area.
-        pub normalised_dimensions: Vector2<f64>,
+        pub normalised_dimensions: Vector2,
         /// Some rotation that is applied to the Ngon's points around the centre.
         #[serde(default = "super::default::radians_offset")]
         pub radians_offset: Range<f64>,
@@ -352,7 +358,12 @@ where
     let range_duration = range.max - range.min;
     let skew = playback_duration_skew(range_duration);
     let skewed_normalised_value = rng.gen::<f64>().powf(skew as f64);
-    Ms(utils::unskew_and_unnormalise(skewed_normalised_value, range.min.0, range.max.0, skew))
+    Ms(utils::unskew_and_unnormalise(
+        skewed_normalised_value,
+        range.min.0,
+        range.max.0,
+        skew,
+    ))
 }
 
 impl Source {
@@ -368,7 +379,10 @@ impl Attack {
     /// Construct an `Attack` from its duration in frames.
     pub fn from_duration_frames(duration_frames: Samples) -> Self {
         let current_frame = Samples(0);
-        Attack { duration_frames, current_frame }
+        Attack {
+            duration_frames,
+            current_frame,
+        }
     }
 }
 
@@ -376,7 +390,10 @@ impl Release {
     /// Construct a `Release` from its duration in frames.
     pub fn from_duration_frames(duration_frames: Samples) -> Self {
         let frame_countdown = duration_frames;
-        Release { duration_frames, frame_countdown }
+        Release {
+            duration_frames,
+            frame_countdown,
+        }
     }
 }
 
@@ -384,7 +401,10 @@ impl Duration {
     /// Construct a `Duration` from its frames.
     pub fn from_frames(duration_frames: Samples) -> Self {
         let current_frame = Samples(0);
-        Duration { duration_frames, current_frame }
+        Duration {
+            duration_frames,
+            current_frame,
+        }
     }
 }
 
@@ -408,7 +428,9 @@ impl SignalKind {
     /// Borrow the inner iterator yielding samples.
     pub fn samples(&mut self) -> &mut dyn Iterator<Item = f32> {
         match *self {
-            SignalKind::Wav { ref mut samples, .. } => samples as _,
+            SignalKind::Wav {
+                ref mut samples, ..
+            } => samples as _,
             SignalKind::Realtime { ref mut samples } => samples as _,
         }
     }
@@ -420,7 +442,12 @@ impl Signal {
         let attack = Attack::from_duration_frames(attack_frames);
         let release = Release::from_duration_frames(release_frames);
         let duration = None;
-        Signal { kind, attack, release, duration }
+        Signal {
+            kind,
+            attack,
+            release,
+            duration,
+        }
     }
 
     /// Specify the duration of the signal in frames in the `Signal`.
@@ -465,7 +492,7 @@ impl Signal {
                     release.frame_countdown = ::std::cmp::min(release.frame_countdown, frames);
                 }
                 frames_until_release
-            },
+            }
             None => Samples(::std::i64::MAX),
         };
 
@@ -606,28 +633,41 @@ pub mod skew {
 }
 
 pub mod default {
-    use metres::Metres;
-    use nannou::geom::{Point2, Vector2};
     use super::{movement, Movement};
+    use crate::metres::Metres;
+    use crate::utils::{Range, HR_MS};
+    use nannou::glam::DVec2 as Vector2;
+    use nannou::glam::{const_dvec2, DVec2 as Point2};
     use time_calc::Ms;
-    use utils::{HR_MS, Range};
 
-    pub const SPREAD: Metres = Metres(2.5);
+    pub const SPREAD: Metres = 2.5;
     // Rotate the channel radians 90deg so that stereo channels are to the side by default.
     pub const CHANNEL_RADIANS: f32 = ::std::f32::consts::PI * 0.5;
     pub const VOLUME: f32 = 0.6;
-    pub const OCCURRENCE_RATE: Range<Ms> = Range { min: Ms(500.0), max: Ms(HR_MS as _) };
+    pub const OCCURRENCE_RATE: Range<Ms> = Range {
+        min: Ms(500.0),
+        max: Ms(HR_MS as _),
+    };
     pub const SIMULTANEOUS_SOUNDS: Range<usize> = Range { min: 0, max: 1 };
     // Assume that the user wants to play back the sound endlessly at first.
     pub const PLAYBACK_DURATION: Range<Ms> = Range {
         min: super::MAX_PLAYBACK_DURATION,
         max: super::MAX_PLAYBACK_DURATION,
     };
-    pub const ATTACK_DURATION: Range<Ms> = Range { min: Ms(0.0), max: Ms(0.0) };
-    pub const RELEASE_DURATION: Range<Ms> = Range { min: Ms(0.0), max: Ms(0.0) };
-    pub const FIXED: Point2<f64> = Point2 { x: 0.5, y: 0.5 };
+    pub const ATTACK_DURATION: Range<Ms> = Range {
+        min: Ms(0.0),
+        max: Ms(0.0),
+    };
+    pub const RELEASE_DURATION: Range<Ms> = Range {
+        min: Ms(0.0),
+        max: Ms(0.0),
+    };
+    pub const FIXED: Point2 = const_dvec2!([0.5, 0.5]);
     pub const MAX_SPEED: Range<f64> = Range { min: 1.0, max: 5.0 };
-    pub const MAX_FORCE: Range<f64> = Range { min: 0.04, max: 0.06 };
+    pub const MAX_FORCE: Range<f64> = Range {
+        min: 0.04,
+        max: 0.06,
+    };
     pub const MAX_ROTATION: Range<f64> = Range {
         min: super::movement::MAX_ROTATION,
         max: super::movement::MAX_ROTATION,
@@ -643,11 +683,8 @@ pub mod default {
     pub const NTH: Range<usize> = Range { min: 1, max: 3 };
     pub const NORMALISED_WIDTH: f64 = 1.0;
     pub const NORMALISED_HEIGHT: f64 = 1.0;
-    pub const NORMALISED_DIMENSIONS: Vector2<f64> = Vector2 {
-        x: NORMALISED_WIDTH,
-        y: NORMALISED_HEIGHT,
-    };
-    pub const RADIANS_OFFSET: Range<f64> = Range {
+    pub const NORMALISED_DIMENSIONS: Vector2 = const_dvec2!([NORMALISED_WIDTH, NORMALISED_HEIGHT]);
+    pub const RADIANS_OFFSET: Range<f64> = Range::<f64> {
         min: ::std::f64::consts::PI * 0.5,
         max: ::std::f64::consts::PI * 0.5,
     };

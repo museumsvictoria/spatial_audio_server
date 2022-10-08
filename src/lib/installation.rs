@@ -4,9 +4,9 @@
 //! hard-coded and rather identified via dynamically generated unique IDs. Otherwise, most
 //! of the logic should remain the same.
 
-use serde::{Deserialize, Deserializer};
+use crate::utils::Range;
+use serde::{Deserialize, Deserializer, Serialize};
 use slug::slugify;
-use utils::Range;
 
 /// All known beyond perception installations (used by default).
 pub const BEYOND_PERCEPTION_NAMES: &'static [&'static str] = &[
@@ -53,8 +53,11 @@ impl<'de> Deserialize<'de> for Id {
             serde_json::Value::Number(n) => {
                 let u = n.as_u64().expect("could not deserialize Id number to u64") as usize;
                 Ok(Id(u))
-            },
-            err => panic!("failed to deserialize `Id`: expected String or Int, found {:?}", err),
+            }
+            err => panic!(
+                "failed to deserialize `Id`: expected String or Int, found {:?}",
+                err
+            ),
         }
     }
 }
@@ -81,7 +84,11 @@ impl Default for Installation {
         let name = default::name().into();
         let computers = Default::default();
         let soundscape = Default::default();
-        Installation { name, computers, soundscape }
+        Installation {
+            name,
+            computers,
+            soundscape,
+        }
     }
 }
 
@@ -95,7 +102,9 @@ pub struct Soundscape {
 impl Default for Soundscape {
     fn default() -> Self {
         let simultaneous_sounds = default::SIMULTANEOUS_SOUNDS;
-        Soundscape { simultaneous_sounds }
+        Soundscape {
+            simultaneous_sounds,
+        }
     }
 }
 
@@ -123,7 +132,7 @@ pub fn beyond_perception_default_num_computers(name: &str) -> Option<usize> {
 
 /// Default soundscape constraints.
 pub mod default {
-    use utils::Range;
+    use crate::utils::Range;
 
     pub const SIMULTANEOUS_SOUNDS: Range<usize> = Range { min: 1, max: 8 };
 
@@ -143,6 +152,7 @@ pub mod default {
 /// State related to the computers available to an installation.
 pub mod computer {
     use fxhash::FxHashMap;
+    use serde::{Deserialize, Serialize};
     use std::net;
 
     /// A unique identifier for a single computer within an installation.

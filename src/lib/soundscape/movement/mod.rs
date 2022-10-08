@@ -1,12 +1,13 @@
-use audio;
-use metres::Metres;
-use nannou::prelude::*;
+use crate::audio;
+use crate::metres::Metres;
 
 pub use self::agent::Agent;
 pub use self::ngon::Ngon;
 
 pub mod agent;
 pub mod ngon;
+
+type Point2 = nannou::glam::DVec2;
 
 /// Whether the sound has fixed movement or generative movement.
 #[derive(Debug)]
@@ -39,7 +40,7 @@ pub struct BoundingRect {
 #[derive(Copy, Clone, Debug)]
 pub struct Area {
     pub bounding_rect: BoundingRect,
-    pub centroid: Point2<Metres>,
+    pub centroid: Point2,
 }
 
 impl Generative {
@@ -64,7 +65,7 @@ impl Movement {
 
 impl BoundingRect {
     /// Initialise a bounding box at a single point in space.
-    pub fn from_point(p: Point2<Metres>) -> Self {
+    pub fn from_point(p: Point2) -> Self {
         BoundingRect {
             left: p.x,
             right: p.x,
@@ -76,7 +77,7 @@ impl BoundingRect {
     /// Determine the movement area bounds on the given set of points.
     pub fn from_points<I>(points: I) -> Option<Self>
     where
-        I: IntoIterator<Item = Point2<Metres>>,
+        I: IntoIterator<Item = Point2>,
     {
         let mut points = points.into_iter();
         points.next().map(|p| {
@@ -86,7 +87,7 @@ impl BoundingRect {
     }
 
     /// Extend the bounding box to include the given point.
-    pub fn with_point(self, p: Point2<Metres>) -> Self {
+    pub fn with_point(self, p: Point2) -> Self {
         BoundingRect {
             left: p.x.min(self.left),
             right: p.x.max(self.right),
@@ -96,12 +97,12 @@ impl BoundingRect {
     }
 
     /// The middle of the bounding box.
-    pub fn middle(&self) -> Point2<Metres> {
+    pub fn middle(&self) -> Point2 {
         let width = self.width();
         let height = self.height();
         let x = self.left + width * 0.5;
         let y = self.bottom + height * 0.5;
-        Point2 { x, y }
+        Point2::new(x, y)
     }
 
     pub fn width(&self) -> Metres {

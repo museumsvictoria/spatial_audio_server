@@ -1,8 +1,9 @@
-use audio;
+use crate::audio;
+use crate::installation;
 use fxhash::FxHashSet;
-use installation;
-use metres::Metres;
-use nannou::geom::Point2;
+use nannou::glam::DVec2 as Point2;
+use serde::Deserialize;
+use serde::Serialize;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct Id(pub u64);
@@ -13,7 +14,7 @@ pub struct Id(pub u64);
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Speaker {
     // The location of the speaker within the space.
-    pub point: Point2<Metres>,
+    pub point: Point2,
     // The channel on which the output is rendered.
     pub channel: usize,
     // Installations assigned to this speaker.
@@ -25,8 +26,7 @@ pub struct Speaker {
 pub fn dbap_weight(
     sound_installations: &audio::sound::Installations,
     speaker_installations: &FxHashSet<installation::Id>,
-) -> f64
-{
+) -> f64 {
     match *sound_installations {
         audio::sound::Installations::All => 1.0,
         audio::sound::Installations::Set(ref set) => {
@@ -34,6 +34,6 @@ pub fn dbap_weight(
                 Some(_) => 1.0,
                 None => 0.0,
             }
-        },
+        }
     }
 }

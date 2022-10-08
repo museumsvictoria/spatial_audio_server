@@ -1,19 +1,22 @@
-use audio::{input, output, source, Source, SAMPLE_RATE};
-use crossbeam::sync::SegQueue;
+use crate::audio::{input, output, source, Source, SAMPLE_RATE};
+use crate::installation;
+use crate::metres::Metres;
+use crossbeam::queue::SegQueue;
 use fxhash::FxHashSet;
-use installation;
-use metres::Metres;
-use nannou::geom::Point2;
+use serde::{Deserialize, Serialize};
 use std::ops;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{self, AtomicBool};
+use std::sync::{Arc, Mutex};
 use time_calc::{Ms, Samples};
+
+type Point2 = nannou::glam::DVec2;
 
 /// `Sound`s can be thought of as a stack of three primary components:
 ///
 /// 1. **Source**: for generating audio data (via oscillator, wave, audio input, etc).
 /// 2. **Pre-spatial effects processing**: E.g. fades.
 /// 3. **Spatial Output**: maps the sound from a position in space to the output channels.
+#[derive(Debug)]
 pub struct Sound {
     // State shared with the handles.
     pub shared: Arc<Shared>,
@@ -51,7 +54,7 @@ pub struct Sound {
 #[derive(Copy, Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Position {
     /// The location within the exhibition within metres.
-    pub point: Point2<Metres>,
+    pub point: Point2,
     /// The orientation of the sound.
     #[serde(default)]
     pub radians: f32,
@@ -67,9 +70,7 @@ pub struct Handle {
 #[derive(Debug)]
 pub enum SourceHandle {
     Wav,
-    Realtime {
-        is_capturing: Arc<AtomicBool>,
-    },
+    Realtime { is_capturing: Arc<AtomicBool> },
 }
 
 // State shared between multiple handles to a single sound.
@@ -115,7 +116,9 @@ impl Handle {
         if let SourceHandle::Realtime { ref is_capturing } = self.shared.source {
             is_capturing.store(false, atomic::Ordering::Relaxed);
         }
-        self.shared.is_playing.store(false, atomic::Ordering::Relaxed);
+        self.shared
+            .is_playing
+            .store(false, atomic::Ordering::Relaxed);
         result
     }
 
@@ -127,7 +130,9 @@ impl Handle {
         if let SourceHandle::Realtime { ref is_capturing } = self.shared.source {
             is_capturing.store(true, atomic::Ordering::Relaxed);
         }
-        self.shared.is_playing.store(true, atomic::Ordering::Relaxed);
+        self.shared
+            .is_playing
+            .store(true, atomic::Ordering::Relaxed);
         result
     }
 
@@ -154,51 +159,46 @@ pub fn spawn_from_source(
     input_stream: &input::Stream,
     output_stream: &output::Stream,
     latency: Ms,
-) -> Handle
-{
+) -> Handle {
     let installations = source.role.clone().into();
     match source.kind {
-        source::Kind::Wav(ref wav) => {
-            spawn_from_wav(
-                id,
-                source_id,
-                wav,
-                source.spread,
-                source.volume,
-                source.muted,
-                position,
-                source.channel_radians,
-                installations,
-                attack_duration_frames,
-                release_duration_frames,
-                continuous_preview,
-                max_duration_frames,
-                frame_count,
-                wav_reader,
-                output_stream,
-            )
-        },
+        source::Kind::Wav(ref wav) => spawn_from_wav(
+            id,
+            source_id,
+            wav,
+            source.spread,
+            source.volume,
+            source.muted,
+            position,
+            source.channel_radians,
+            installations,
+            attack_duration_frames,
+            release_duration_frames,
+            continuous_preview,
+            max_duration_frames,
+            frame_count,
+            wav_reader,
+            output_stream,
+        ),
 
-        source::Kind::Realtime(ref realtime) => {
-            spawn_from_realtime(
-                id,
-                source_id,
-                realtime,
-                source.spread,
-                source.volume,
-                source.muted,
-                position,
-                source.channel_radians,
-                installations,
-                attack_duration_frames,
-                release_duration_frames,
-                continuous_preview,
-                max_duration_frames,
-                input_stream,
-                output_stream,
-                latency,
-            )
-        },
+        source::Kind::Realtime(ref realtime) => spawn_from_realtime(
+            id,
+            source_id,
+            realtime,
+            source.spread,
+            source.volume,
+            source.muted,
+            position,
+            source.channel_radians,
+            installations,
+            attack_duration_frames,
+            release_duration_frames,
+            continuous_preview,
+            max_duration_frames,
+            input_stream,
+            output_stream,
+            latency,
+        ),
     }
 }
 
@@ -220,13 +220,22 @@ pub fn spawn_from_wav(
     frame_count: u64,
     wav_reader: &source::wav::reader::Handle,
     audio_output: &output::Stream,
-) -> Handle
-{
+) -> Handle {
     // The wave samples iterator.
-    let samples = wav_reader.play(id, &wav.path, frame_count, wav.should_loop || continuous_preview)
+    let samples = wav_reader
+        .play(
+            id,
+            &wav.path,
+            frame_count,
+            wav.should_loop || continuous_preview,
+        )
         .unwrap_or_else(|err| {
-            panic!("failed to send new wav \"{}\"to wav_reader thread: {:?}: {}",
-                   wav.path.display(), err, err);
+            panic!(
+                "failed to send new wav \"{}\"to wav_reader thread: {:?}: {}",
+                wav.path.display(),
+                err,
+                err
+            );
         });
 
     // The source signal.
@@ -262,9 +271,7 @@ pub fn spawn_from_wav(
     };
 
     // Create the handle to the sound.
-    let handle = Handle {
-        shared,
-    };
+    let handle = Handle { shared };
 
     // The output stream active sound.
     let output_active_sound = sound.into();
@@ -369,9 +376,7 @@ pub fn spawn_from_realtime(
     };
 
     // State shared between the handles to a realtime sound.
-    let source_handle = SourceHandle::Realtime {
-        is_capturing,
-    };
+    let source_handle = SourceHandle::Realtime { is_capturing };
 
     // State shared between the handles to the sound.
     let shared = Arc::new(Shared {
@@ -395,9 +400,7 @@ pub fn spawn_from_realtime(
     };
 
     // Create the handle to the sound.
-    let handle = Handle {
-        shared,
-    };
+    let handle = Handle { shared };
 
     // The output stream active sound.
     let output_active_sound = sound.into();
@@ -427,13 +430,19 @@ impl Sound {
     /// The location of the channel at the given index.
     ///
     /// Returns `None` if there is no channel for the given index.
-    pub fn channel_point(&self, index: usize) -> Option<Point2<Metres>> {
+    pub fn channel_point(&self, index: usize) -> Option<Point2> {
         if self.channels <= index {
             return None;
         }
         let point = self.position.point;
         let radians = self.position.radians + self.channel_radians;
-        Some(super::output::channel_point(point, index, self.channels, self.spread, radians))
+        Some(super::output::channel_point(
+            point,
+            index,
+            self.channels,
+            self.spread,
+            radians,
+        ))
     }
 
     /// Produce an iterator yielding the location of each channel around the sound.
@@ -469,7 +478,7 @@ impl From<source::Role> for Installations {
 }
 
 impl ops::Deref for Position {
-    type Target = Point2<Metres>;
+    type Target = Point2;
     fn deref(&self) -> &Self::Target {
         &self.point
     }
@@ -482,14 +491,12 @@ impl ops::DerefMut for Position {
 }
 
 impl<'a> Iterator for ChannelPoints<'a> {
-    type Item = Point2<Metres>;
+    type Item = Point2;
     fn next(&mut self) -> Option<Self::Item> {
-        self.sound
-            .channel_point(self.index)
-            .map(|point| {
-                self.index +=1 ;
-                point
-            })
+        self.sound.channel_point(self.index).map(|point| {
+            self.index += 1;
+            point
+        })
     }
 }
 
@@ -514,7 +521,9 @@ impl IdGenerator {
     }
 
     pub fn generate_next(&self) -> Id {
-        let mut next = self.next.lock()
+        let mut next = self
+            .next
+            .lock()
             .expect("failed to acquire mutex for generating new `sound::Id`");
         let id = *next;
         *next = Id(id.0.wrapping_add(1));

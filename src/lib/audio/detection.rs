@@ -6,16 +6,17 @@
 //! - RMS and Peak per Speaker channel.
 //! - FFT and avg RMS and Peak per installation.
 
-use audio::{MAX_CHANNELS, FRAMES_PER_BUFFER};
-use audio::{fft, sound, speaker};
-use audio::detector::{EnvDetector, Fft, FftDetector, FFT_WINDOW_LEN};
-use crossbeam::sync::SegQueue;
+use super::detector::{EnvDetector, Fft, FftDetector, FFT_WINDOW_LEN};
+use super::{fft, sound, speaker};
+use super::{FRAMES_PER_BUFFER, MAX_CHANNELS};
+use crate::gui;
+use crate::installation;
+use crate::osc;
+use crossbeam::queue::SegQueue;
 use fxhash::{FxHashMap, FxHashSet};
-use gui;
-use installation;
-use osc;
 use rustfft::num_complex::Complex;
 use rustfft::num_traits::Zero;
+use rustfft::FftDirection;
 use std::ops;
 use std::sync::{Arc, Mutex};
 use std::{thread, time};
@@ -141,6 +142,8 @@ pub struct Model {
 
     /// The FFT planner used to prepare the FFT calculations and share data between them.
     fft_planner: fft::Planner,
+    /// The FFT Planner direction
+    fft_direction: FftDirection,
     /// The FFT to re-use by each of the `Detector`s.
     fft: Fft,
     /// A buffer for retrieving the frequency amplitudes from the `fft`.
@@ -209,15 +212,14 @@ impl Handle {
 
     /// Pop the next available sound buffer for use off the queue.
     pub fn pop_sound_buffer(&self) -> Vec<f32> {
-        let mut buffer = self.sound_buffer_rx.try_pop().unwrap_or_else(Vec::new);
+        let mut buffer = self.sound_buffer_rx.pop().unwrap_or_else(Vec::new);
         buffer.clear();
         buffer
     }
 
     /// Pop the next available output buffer for use off the queue.
     pub fn pop_output_buffer(&self) -> (Vec<f32>, OutputInfo) {
-        let (mut buffer, mut info) = self.output_buffer_rx.try_pop()
-            .unwrap_or_else(Default::default);
+        let (mut buffer, mut info) = self.output_buffer_rx.pop().unwrap_or_else(Default::default);
         buffer.clear();
         info.clear();
         (buffer, info)
@@ -261,8 +263,9 @@ impl Model {
         let in_window = [Complex::<f32>::zero(); FFT_WINDOW_LEN];
         let out_window = [Complex::<f32>::zero(); FFT_WINDOW_LEN];
         let fft = Fft::new(in_window, out_window);
-        let inverse = false;
-        let fft_planner = fft::Planner::new(inverse);
+        let _inverse = false;
+        let fft_planner = fft::Planner::new();
+        let fft_direction = rustfft::FftDirection::Inverse;
 
         // A buffer for retrieving the frequency amplitudes from the `fft`.
         let fft_frequency_amplitudes_2 = Box::new([0.0; FFT_WINDOW_LEN / 2]);
@@ -283,6 +286,7 @@ impl Model {
             fft_planner,
             fft,
             fft_frequency_amplitudes_2,
+            fft_direction,
         }
     }
 }
@@ -321,12 +325,23 @@ pub fn spawn(
     let thread = thread::Builder::new()
         .name("audio_detection".into())
         .spawn(move || {
-            run(gui_audio_monitor_msg_tx, osc_output_msg_tx, rx, sound_buffer_tx, output_buffer_tx);
+            run(
+                gui_audio_monitor_msg_tx,
+                osc_output_msg_tx,
+                rx,
+                sound_buffer_tx,
+                output_buffer_tx,
+            );
         })
         .unwrap();
     let thread = Arc::new(Mutex::new(Some(thread)));
 
-    Handle { tx, thread, sound_buffer_rx, output_buffer_rx }
+    Handle {
+        tx,
+        thread,
+        sound_buffer_rx,
+        output_buffer_rx,
+    }
 }
 
 /// The main loop for the detection thread.
@@ -363,19 +378,18 @@ fn run(
 
     // Begin the loop.
     loop {
-        let msg = match rx.try_pop() {
+        let msg = match rx.pop() {
             // If there are no messages waiting, sleep for a tiny bit to avoid rinsing cpu.
             None => {
                 thread::sleep(time::Duration::from_millis(1));
                 continue;
-            },
+            }
             Some(msg) => msg,
         };
 
         match msg {
             // Insert the new sound into the map.
             Message::AddSound(sound_id, channels) => {
-
                 let sound = new_sound(channels);
                 model.sounds.insert(sound_id, sound);
 
@@ -389,7 +403,7 @@ fn run(
                         model.num_active_sound_buffers += 1;
                     }
                 }
-            },
+            }
 
             // Update the detection for the sound with the given `Id`.
             Message::UpdateSound(sound_id, buffer) => {
@@ -406,7 +420,7 @@ fn run(
                         let Buffer { samples, .. } = buffer;
                         sound_buffer_tx.push(samples);
                         continue;
-                    },
+                    }
                     Some(sound) => sound,
                 };
 
@@ -432,36 +446,38 @@ fn run(
                     let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, sound_msg);
                     gui_audio_monitor_msg_tx.push(msg);
                 }
-            },
+            }
 
             // The sound has ended and its state should be removed.
             Message::RemoveSound(sound_id) => {
                 model.sounds.remove(&sound_id);
-            },
+            }
 
             // Initialise detection state for the given installation if it does not already exit.
             Message::AddInstallation(installation_id, computers) => {
-                let installation = model
-                    .installations
-                    .entry(installation_id)
-                    .or_insert_with(|| {
-                        let speaker_analyses = Vec::with_capacity(MAX_CHANNELS);
-                        let summed_samples_of_all_channels = Vec::with_capacity(FRAMES_PER_BUFFER);
-                        let fft_detector = FftDetector::new();
-                        Installation {
-                            speaker_analyses,
-                            summed_samples_of_all_channels,
-                            fft_detector,
-                            computers,
-                        }
-                    });
+                let installation =
+                    model
+                        .installations
+                        .entry(installation_id)
+                        .or_insert_with(|| {
+                            let speaker_analyses = Vec::with_capacity(MAX_CHANNELS);
+                            let summed_samples_of_all_channels =
+                                Vec::with_capacity(FRAMES_PER_BUFFER);
+                            let fft_detector = FftDetector::new();
+                            Installation {
+                                speaker_analyses,
+                                summed_samples_of_all_channels,
+                                fft_detector,
+                                computers,
+                            }
+                        });
                 installation.computers = computers;
-            },
+            }
 
             // Remove the given detection state for the given installation.
             Message::RemoveInstallation(installation_id) => {
                 model.installations.remove(&installation_id);
-            },
+            }
 
             // Perform analysis for the output buffer.
             //
@@ -475,6 +491,7 @@ fn run(
                     ref mut installations,
                     ref mut fft,
                     ref mut fft_planner,
+                    fft_direction,
                     ref mut fft_frequency_amplitudes_2,
                     ref gui_audio_monitor_msg_tx,
                     ref osc_output_msg_tx,
@@ -484,7 +501,9 @@ fn run(
                 } = model;
 
                 let Buffer { samples, channels } = buffer;
-                let OutputInfo { speakers: speaker_infos } = info;
+                let OutputInfo {
+                    speakers: speaker_infos,
+                } = info;
 
                 // The number of frames in the buffer.
                 let len_frames = samples.len() / channels;
@@ -492,8 +511,13 @@ fn run(
                 // Initialise the detection state for each installation.
                 for installation in installations.values_mut() {
                     installation.speaker_analyses.clear();
-                    installation.summed_samples_of_all_channels.resize(len_frames, 0.0);
-                    installation.summed_samples_of_all_channels.iter_mut().for_each(|s| *s = 0.0);
+                    installation
+                        .summed_samples_of_all_channels
+                        .resize(len_frames, 0.0);
+                    installation
+                        .summed_samples_of_all_channels
+                        .iter_mut()
+                        .for_each(|s| *s = 0.0);
                 }
 
                 // For each speaker, feed its amplitude into its detectors.
@@ -504,9 +528,9 @@ fn run(
                     }
 
                     // Retrieve the detector state for the speaker.
-                    let state = speakers
-                        .entry(id)
-                        .or_insert_with(|| Speaker { env_detector: EnvDetector::new() });
+                    let state = speakers.entry(id).or_insert_with(|| Speaker {
+                        env_detector: EnvDetector::new(),
+                    });
 
                     // Only update the envelope detector if CPU saving is not enabled.
                     let mut rms = 0.0;
@@ -594,6 +618,7 @@ fn run(
                             fft_planner,
                             fft,
                             &mut fft_frequency_amplitudes_2[..],
+                            fft_direction,
                         );
 
                         // Retrieve the LMH representation.
@@ -631,10 +656,13 @@ fn run(
 
                     // Sort the speakers by channel index as the OSC output thread assumes that
                     // speakers are in order of index.
-                    installation.speaker_analyses.sort_by(|a, b| a.index.cmp(&b.index));
+                    installation
+                        .speaker_analyses
+                        .sort_by(|a, b| a.index.cmp(&b.index));
 
                     // Collect the speaker data.
-                    let speakers = installation.speaker_analyses
+                    let speakers = installation
+                        .speaker_analyses
                         .drain(..)
                         .map(|s| osc::output::Speaker {
                             rms: s.rms,
@@ -656,25 +684,25 @@ fn run(
                 }
 
                 // Send buffer and output info back to audio thread for re-use.
-                let info = OutputInfo { speakers: speaker_infos };
+                let info = OutputInfo {
+                    speakers: speaker_infos,
+                };
                 output_buffer_tx.push((samples, info));
-            },
+            }
 
             // Clear all project-specific detection data.
             Message::ClearProjectSpecificData => {
                 model.sounds.clear();
                 model.speakers.clear();
                 model.installations.clear();
-            },
+            }
 
             Message::CpuSavingEnabled(enabled) => {
                 model.cpu_saving_enabled = enabled;
             }
 
             // Exit the loop as the app has exited.
-            Message::Exit => {
-                break
-            },
+            Message::Exit => break,
         }
     }
 }

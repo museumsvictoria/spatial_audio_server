@@ -1,4 +1,6 @@
-use project;
+use serde::{Deserialize, Serialize};
+
+use crate::project;
 use std::ops::Deref;
 
 /// Various configuration parameters for a single project.
@@ -53,7 +55,7 @@ impl Deref for Config {
 }
 
 mod default {
-    use project;
+    use crate::project;
     use slug::slugify;
     pub fn project_slug() -> String {
         slugify(project::default_project_name())

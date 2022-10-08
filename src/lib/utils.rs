@@ -1,12 +1,12 @@
 use nannou::math::map_range;
 use nannou::math::num_traits::{Float, NumCast};
-use serde;
+use serde::{self, Deserialize, Serialize};
 use serde_json;
-use std::{cmp, fmt, fs, io};
 use std::error::Error;
 use std::io::Write;
 use std::path::Path;
 use std::time;
+use std::{cmp, fmt, fs, io};
 use time_calc::Ms;
 
 pub const SEC_MS: f64 = 1_000.0;
@@ -339,64 +339,4 @@ where
 {
     let rquot: F = (numer / denom).floor();
     numer - rquot * denom
-}
-
-pub mod pt2 {
-    use metres::Metres;
-    use nannou::geom::Point2;
-
-    /// Maps the given point to some new type over the dimensions.
-    pub fn convert<T, U>(p: Point2<T>) -> Point2<U>
-    where
-        T: Into<U>,
-    {
-        let Point2 { x, y } = p;
-        let x = x.into();
-        let y = y.into();
-        Point2 { x, y }
-    }
-
-    pub fn to_f64<T>(p: Point2<T>) -> Point2<f64>
-    where
-        T: Into<f64>,
-    {
-        convert(p)
-    }
-
-    pub fn to_metres<T>(p: Point2<T>) -> Point2<Metres>
-    where
-        T: Into<Metres>,
-    {
-        convert(p)
-    }
-}
-
-pub mod vt2 {
-    use metres::Metres;
-    use nannou::geom::Vector2;
-
-    /// Maps the given vector to some new type over the dimensions.
-    pub fn convert<T, U>(p: Vector2<T>) -> Vector2<U>
-    where
-        T: Into<U>,
-    {
-        let Vector2 { x, y } = p;
-        let x = x.into();
-        let y = y.into();
-        Vector2 { x, y }
-    }
-
-    pub fn to_f64<T>(v: Vector2<T>) -> Vector2<f64>
-    where
-        T: Into<f64>,
-    {
-        convert(v)
-    }
-
-    pub fn to_metres<T>(v: Vector2<T>) -> Vector2<Metres>
-    where
-        T: Into<Metres>,
-    {
-        convert(v)
-    }
 }

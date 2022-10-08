@@ -1,15 +1,22 @@
 //! A visual representation of a `Sound` for displaying over the floorplan.
 
-use metres::Metres;
-use nannou::ui::Color;
-use nannou::ui::prelude::*;
+use crate::metres::Metres;
+use conrod_core::Positionable;
+use conrod_core::WidgetCommon;
+use conrod_core::WidgetStyle;
+use nannou_conrod as ui;
 use std;
-use utils;
+use ui::widget_ids;
+use ui::Color;
+use ui::Colorable;
+use ui::FontSize;
+use ui::Scalar;
+use ui::Widget;
 
 #[derive(Clone, WidgetCommon)]
 pub struct Sound<'a> {
     #[conrod(common_builder)]
-    common: widget::CommonBuilder,
+    common: ui::widget::CommonBuilder,
     style: Style,
     // Amplitude per channel.
     channels: &'a [f32],
@@ -46,19 +53,19 @@ pub struct State {
 }
 
 pub fn dimension_metres(amplitude: f32) -> Metres {
-    let min = Sound::MIN_DIMENSION.0;
-    let max = Sound::MAX_DIMENSION.0;
-    Metres(min + (max - min) * amplitude as Scalar)
+    let min = Sound::MIN_DIMENSION;
+    let max = Sound::MAX_DIMENSION;
+    min + (max - min) * amplitude as Scalar
 }
 
 impl<'a> Sound<'a> {
-    pub const DEFAULT_COLOR: Color = color::BLUE;
-    pub const MIN_DIMENSION: Metres = Metres(0.5);
-    pub const MAX_DIMENSION: Metres = Metres(1.0);
+    pub const DEFAULT_COLOR: Color = ui::color::BLUE;
+    pub const MIN_DIMENSION: Metres = 0.5;
+    pub const MAX_DIMENSION: Metres = 1.0;
 
     pub fn new(channels: &'a [f32], spread: Scalar, radians: f64, channel_radians: f64) -> Self {
         Sound {
-            common: widget::CommonBuilder::default(),
+            common: ui::widget::CommonBuilder::default(),
             style: Style::default(),
             channels,
             spread,
@@ -80,7 +87,7 @@ impl<'a> Widget for Sound<'a> {
     type Style = Style;
     type Event = ();
 
-    fn init_state(&self, id_gen: widget::id::Generator) -> Self::State {
+    fn init_state(&self, id_gen: ui::widget::id::Generator) -> Self::State {
         State {
             ids: Ids::new(id_gen),
         }
@@ -90,10 +97,10 @@ impl<'a> Widget for Sound<'a> {
         self.style.clone()
     }
 
-    fn update(self, args: widget::UpdateArgs<Self>) -> Self::Event {
+    fn update(self, args: ui::widget::UpdateArgs<Self>) -> Self::Event {
         use std::f64::consts::PI;
 
-        let widget::UpdateArgs {
+        let ui::widget::UpdateArgs {
             id,
             state,
             style,
@@ -115,18 +122,20 @@ impl<'a> Widget for Sound<'a> {
 
         let color = style.color(&ui.theme);
         let color = match ui.widget_input(id).mouse() {
-            Some(mouse) => if mouse.buttons.left().is_down() {
-                color.clicked()
-            } else {
-                color.highlighted()
-            },
+            Some(mouse) => {
+                if mouse.buttons.left().is_down() {
+                    color.clicked()
+                } else {
+                    color.highlighted()
+                }
+            }
             None => color,
         };
 
         // The circle used as a progress bar for the sound.
         if let Some(progress) = progress {
             let section = -progress * PI * 2.0;
-            widget::Circle::fill(radius)
+            ui::widget::Circle::fill(radius)
                 .section(section)
                 .offset_radians(PI * 0.5)
                 .x_y(x, y)
@@ -138,7 +147,7 @@ impl<'a> Widget for Sound<'a> {
 
         // The circle of the sound's source position.
         let inner_radius = radius * 0.75;
-        widget::Circle::fill(inner_radius)
+        ui::widget::Circle::fill(inner_radius)
             .x_y(x, y)
             .color(color)
             .graphics_for(id)
@@ -163,7 +172,7 @@ impl<'a> Widget for Sound<'a> {
                 let phase = channel_index as f64 / total_channels as f64;
                 let channel_radians_offset = phase * std::f64::consts::PI * 2.0;
                 let radians = radians + channel_radians_offset;
-                let (rel_x, rel_y) = utils::rad_mag_to_x_y(radians, spread);
+                let (rel_x, rel_y) = crate::utils::rad_mag_to_x_y(radians, spread);
                 let x = sound_x + rel_x;
                 let y = sound_y + rel_y;
                 (x, y)
@@ -191,7 +200,7 @@ impl<'a> Widget for Sound<'a> {
             let base_thickness = 1.0;
             let amp_thickness = amp as f64 * 10.0;
             let thickness = base_thickness + amp_thickness;
-            widget::Line::abs([x, y], [ch_x, ch_y])
+            ui::widget::Line::abs([x, y], [ch_x, ch_y])
                 .color(color.alpha(0.5))
                 .thickness(thickness)
                 .graphics_for(id)
@@ -200,7 +209,7 @@ impl<'a> Widget for Sound<'a> {
 
             let radius_amp = radius * (amp as f64) * 1.2;
             let channel_radius = radius * 0.6 + radius_amp;
-            widget::Circle::fill(channel_radius)
+            ui::widget::Circle::fill(channel_radius)
                 .x_y(ch_x, ch_y)
                 .color(color)
                 .graphics_for(id)
@@ -208,7 +217,7 @@ impl<'a> Widget for Sound<'a> {
                 .set(circle_id, ui);
 
             let label = format!("{}", i + 1);
-            widget::Text::new(&label)
+            ui::widget::Text::new(&label)
                 .font_size((radius * 0.8) as FontSize)
                 .x_y(ch_x, ch_y + radius / 6.0)
                 .color(color.plain_contrast())
@@ -223,19 +232,19 @@ impl<'a> Widget for Sound<'a> {
         let br_radians = radians + front_to_back_radians;
         let bl_radians = radians - front_to_back_radians;
         let rel_front = {
-            let (x, y) = utils::rad_mag_to_x_y(radians, tri_radius);
+            let (x, y) = crate::utils::rad_mag_to_x_y(radians, tri_radius);
             [x, y]
         };
         let rel_back_right = {
-            let (x, y) = utils::rad_mag_to_x_y(bl_radians, tri_radius);
+            let (x, y) = crate::utils::rad_mag_to_x_y(bl_radians, tri_radius);
             [x, y]
         };
         let rel_back_left = {
-            let (x, y) = utils::rad_mag_to_x_y(br_radians, tri_radius);
+            let (x, y) = crate::utils::rad_mag_to_x_y(br_radians, tri_radius);
             [x, y]
         };
         let points = [rel_front, rel_back_right, rel_back_left];
-        widget::Polygon::centred_fill(points.iter().cloned())
+        ui::widget::Polygon::centred_fill(points.iter().cloned())
             .x_y(x, y)
             .color(color.plain_contrast().alpha(0.5))
             .graphics_for(id)

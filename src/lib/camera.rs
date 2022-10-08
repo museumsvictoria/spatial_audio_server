@@ -1,9 +1,9 @@
-use metres::Metres;
-use nannou::geom::Point2;
-use nannou::ui::Scalar;
+use crate::metres::Metres;
+use serde::{Deserialize, Serialize};
+type Scalar = f64;
 
 /// A 2D camera location in exhibition space.
-pub type Point = Point2<Metres>;
+pub type Point = nannou::glam::DVec2;
 
 /// Items related to the camera that provides a view of the floorplan.
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,13 +33,13 @@ pub struct Camera {
 
 impl Camera {
     /// Convert from metres to the GUI scalar value.
-    pub fn metres_to_scalar(&self, Metres(metres): Metres) -> Scalar {
+    pub fn metres_to_scalar(&self, metres: Metres) -> Scalar {
         self.zoom * metres * self.floorplan_pixels_per_metre
     }
 
     /// Convert from the GUI scalar value to metres.
     pub fn scalar_to_metres(&self, scalar: Scalar) -> Metres {
-        Metres((scalar / self.zoom) / self.floorplan_pixels_per_metre)
+        ((scalar / self.zoom) / self.floorplan_pixels_per_metre) as Metres
     }
 }
 
@@ -48,12 +48,16 @@ impl Default for Camera {
         let position = default_position();
         let zoom = default_zoom();
         let floorplan_pixels_per_metre = default_floorplan_pixels_per_metre();
-        Camera { position, zoom, floorplan_pixels_per_metre }
+        Camera {
+            position,
+            zoom,
+            floorplan_pixels_per_metre,
+        }
     }
 }
 
 fn default_position() -> Point {
-    [Metres(0.0), Metres(0.0)].into()
+    [(0.0), (0.0)].into()
 }
 
 fn default_zoom() -> f64 {

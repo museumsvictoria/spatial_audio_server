@@ -1,13 +1,12 @@
-use crossbeam::sync::MsQueue;
+use crate::installation;
+use crossbeam::queue::SegQueue;
 use fxhash::FxHashMap;
-use installation;
 use nannou_osc as osc;
 use nannou_osc::Type::{Float, Int};
-use std;
 use std::iter::once;
 use std::sync::{mpsc, Arc};
 
-pub type MessageQueue = Arc<MsQueue<Message>>;
+pub type MessageQueue = Arc<SegQueue<Message>>;
 pub type Tx = MessageQueue;
 type Rx = MessageQueue;
 
@@ -79,7 +78,7 @@ pub struct Log {
 
 /// Spawn the osc sender thread.
 pub fn spawn() -> (std::thread::JoinHandle<()>, Tx, mpsc::Receiver<Log>) {
-    let msg_queue = Arc::new(MsQueue::new());
+    let msg_queue = Arc::new(SegQueue::new());
     let msg_tx = msg_queue.clone();
     let msg_rx = msg_queue;
     let (log_tx, log_rx) = mpsc::channel();
@@ -125,9 +124,8 @@ fn run(msg_rx: Rx, log_tx: mpsc::Sender<Log>) {
     // Start a thread for converting `Message`s to `Update`s.
     std::thread::Builder::new()
         .name("osc_output_msg_to_update".into())
-        .spawn(move || {
-            loop {
-                let msg = msg_rx.pop();
+        .spawn(move || loop {
+            if let Some(msg) = msg_rx.pop() {
                 if update_tx.send(Update::Msg(msg)).is_err() {
                     break;
                 }
@@ -146,7 +144,7 @@ fn run(msg_rx: Rx, log_tx: mpsc::Sender<Log>) {
                     last_received.clear();
                     last_sent.clear();
                     osc_txs.clear();
-                },
+                }
                 // Audio data received that is to be delivered to the given installation.
                 Message::Audio(installation, data) => {
                     last_received.insert(installation, data);
@@ -166,7 +164,7 @@ fn run(msg_rx: Rx, log_tx: mpsc::Sender<Log>) {
                                     // If we couldn't find the exising socket, we skip it.
                                     None => continue,
                                 }
-                            },
+                            }
                         };
                         osc_txs
                             .entry(installation_id)
@@ -191,81 +189,83 @@ fn run(msg_rx: Rx, log_tx: mpsc::Sender<Log>) {
                 },
             },
 
-            Update::SendOsc => for (installation, data) in last_received.drain() {
-                let AudioFrameData {
-                    avg_peak,
-                    avg_rms,
-                    avg_fft,
-                    speakers,
-                } = data;
+            Update::SendOsc => {
+                for (installation, data) in last_received.drain() {
+                    let AudioFrameData {
+                        avg_peak,
+                        avg_rms,
+                        avg_fft,
+                        speakers,
+                    } = data;
 
-                let targets = match osc_txs.get(&installation) {
-                    Some(targets) => targets,
-                    None => continue,
-                };
-
-                // The buffer used to collect arguments.
-                let mut args = Vec::new();
-
-                // Push the analysis of the averaged channels.
-                args.push(Float(avg_peak));
-                args.push(Float(avg_rms));
-                let lmh = avg_fft.lmh.iter().map(|&f| Float(f));
-                args.extend(lmh);
-                let bins = avg_fft.bins.iter().map(|&f| Float(f));
-                args.extend(bins);
-
-                // Push the Peak and RMS per speaker.
-                let speakers = speakers.into_iter().enumerate().flat_map(|(i, s)| {
-                    once(Int(i as _))
-                        .chain(once(Float(s.peak)))
-                        .chain(once(Float(s.rms)))
-                });
-                args.extend(speakers);
-
-                // Retrieve the OSC sender for each computer in the installation.
-                for target in targets.iter() {
-                    let (
-                        &computer,
-                        &Target {
-                            ref osc_tx,
-                            ref osc_addr,
-                        },
-                    ) = target;
-                    let addr = &osc_addr[..];
-
-                    // Send the message!
-                    let msg = osc::Message {
-                        addr: addr.into(),
-                        args: Some(args.clone()),
+                    let targets = match osc_txs.get(&installation) {
+                        Some(targets) => targets,
+                        None => continue,
                     };
 
-                    // If the message is the same as the last one we sent for this computer, don't
-                    // bother sending it again.
-                    if last_sent.get(&(installation, computer)) == Some(&msg) {
-                        continue;
+                    // The buffer used to collect arguments.
+                    let mut args = Vec::new();
+
+                    // Push the analysis of the averaged channels.
+                    args.push(Float(avg_peak));
+                    args.push(Float(avg_rms));
+                    let lmh = avg_fft.lmh.iter().map(|&f| Float(f));
+                    args.extend(lmh);
+                    let bins = avg_fft.bins.iter().map(|&f| Float(f));
+                    args.extend(bins);
+
+                    // Push the Peak and RMS per speaker.
+                    let speakers = speakers.into_iter().enumerate().flat_map(|(i, s)| {
+                        once(Int(i as _))
+                            .chain(once(Float(s.peak)))
+                            .chain(once(Float(s.rms)))
+                    });
+                    args.extend(speakers);
+
+                    // Retrieve the OSC sender for each computer in the installation.
+                    for target in targets.iter() {
+                        let (
+                            &computer,
+                            &Target {
+                                ref osc_tx,
+                                ref osc_addr,
+                            },
+                        ) = target;
+                        let addr = &osc_addr[..];
+
+                        // Send the message!
+                        let msg = osc::Message {
+                            addr: addr.into(),
+                            args: Some(args.clone()),
+                        };
+
+                        // If the message is the same as the last one we sent for this computer, don't
+                        // bother sending it again.
+                        if last_sent.get(&(installation, computer)) == Some(&msg) {
+                            continue;
+                        }
+
+                        // Send the OSC.
+                        let error = osc_tx.send(msg.clone()).err();
+
+                        // Update the `last_sent` map if there were no errors.
+                        if error.is_none() {
+                            last_sent.insert((installation, computer), msg.clone());
+                        }
+
+                        // Log the message for displaying in the GUI.
+                        let addr = osc_tx.remote_addr();
+                        let log = Log {
+                            installation,
+                            computer,
+                            addr,
+                            msg,
+                            error,
+                        };
+                        log_tx.send(log).ok();
                     }
-
-                    // Send the OSC.
-                    let error = osc_tx.send(msg.clone()).err();
-
-                    // Update the `last_sent` map if there were no errors.
-                    if error.is_none() {
-                        last_sent.insert((installation, computer), msg.clone());
-                    }
-
-                    // Log the message for displaying in the GUI.
-                    let addr = osc_tx.remote_addr();
-                    let log = Log {
-                        installation,
-                        computer,
-                        addr,
-                        msg,
-                        error,
-                    };
-                    log_tx.send(log).ok();
                 }
-            },
+            }
         }
     }
 }

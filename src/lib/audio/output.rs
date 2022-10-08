@@ -3,24 +3,24 @@
 //! The render function is passed to `nannou::App`'s build output stream method and describes how
 //! audio should be rendered to the output.
 
-use audio::{DISTANCE_BLUR, FRAMES_PER_BUFFER, MAX_CHANNELS, MAX_SOUNDS};
-use audio::{Sound, Speaker};
-use audio::{dbap, detection, source, sound, speaker};
+use crate::audio::{dbap, detection, sound, source, speaker};
+use crate::audio::{Sound, Speaker};
+use crate::audio::{DISTANCE_BLUR, FRAMES_PER_BUFFER, MAX_CHANNELS, MAX_SOUNDS};
+use crate::gui;
+use crate::installation;
+use crate::metres::Metres;
+use crate::osc;
+use crate::soundscape;
+use crate::utils;
 use fxhash::{FxHashMap, FxHashSet};
-use gui;
-use installation;
-use metres::Metres;
 use nannou_audio::Buffer;
-use nannou::geom::Point2;
-use nannou::math::MetricSpace;
-use osc;
-use soundscape;
 use std;
 use std::ops::{self, Deref, DerefMut};
-use std::sync::{atomic, mpsc, Arc};
 use std::sync::atomic::AtomicUsize;
+use std::sync::{atomic, mpsc, Arc};
 use time_calc::Samples;
-use utils;
+
+type Point2 = nannou::glam::DVec2;
 
 /// Simplified type alias for the nannou audio output stream used by the audio server.
 pub type Stream = nannou_audio::Stream<Model>;
@@ -34,6 +34,7 @@ type Channel = usize;
 type DbapSpeakerGains = FxHashMap<sound::Id, FxHashMap<Channel, FxHashMap<speaker::Id, f32>>>;
 
 /// A sound that is currently active on the audio thread.
+#[derive(Debug)]
 pub struct ActiveSound {
     sound: Sound,
     total_duration_frames: Option<Samples>,
@@ -98,7 +99,7 @@ impl ActiveSound {
             (Some(Samples(remaining)), Some(Samples(total))) => {
                 let current_frame = total - remaining;
                 Some(current_frame as f64 / total as f64)
-            },
+            }
             _ => None,
         };
         normalised_progress
@@ -194,7 +195,6 @@ pub struct Model {
     /// The current value of proximity limit. The limit in meters
     /// for a speaker to be considered in the dbap calculations
     pub proximity_limit_2: Metres,
-
 }
 
 struct Channels {
@@ -346,7 +346,8 @@ impl Model {
 
     /// Inserts the speaker and sends an `Add` message to the GUI.
     pub fn insert_speaker(&mut self, id: speaker::Id, speaker: Speaker) -> Option<Speaker> {
-        let old_speaker = self.speakers
+        let old_speaker = self
+            .speakers
             .remove(&id)
             .map(|ActiveSpeaker { speaker }| speaker);
         let speaker = ActiveSpeaker { speaker };
@@ -359,7 +360,8 @@ impl Model {
 
     /// Removes the speaker and sends a `Removed` message to the GUI.
     pub fn remove_speaker(&mut self, id: speaker::Id) -> Option<Speaker> {
-        let removed = self.speakers
+        let removed = self
+            .speakers
             .remove(&id)
             .map(|ActiveSpeaker { speaker }| speaker);
         if removed.is_some() {
@@ -379,7 +381,11 @@ impl Model {
     }
 
     /// Removes the installation from the speaker with the given `speaker::Id`.
-    pub fn remove_speaker_installation(&mut self, id: speaker::Id, inst: &installation::Id) -> bool {
+    pub fn remove_speaker_installation(
+        &mut self,
+        id: speaker::Id,
+        inst: &installation::Id,
+    ) -> bool {
         self.speakers
             .get_mut(&id)
             .map(|active| active.speaker.installations.remove(inst))
@@ -419,7 +425,7 @@ impl Model {
             Some(active) => {
                 update(&mut active.sound);
                 true
-            },
+            }
         }
     }
 
@@ -442,7 +448,9 @@ impl Model {
     ///
     /// Returns the number of sounds that were updated.
     pub fn remove_sounds_with_source(&mut self, id: &source::Id) -> usize {
-        let ids: Vec<_> = self.sounds.iter()
+        let ids: Vec<_> = self
+            .sounds
+            .iter()
             .filter(|&(_, s)| s.source_id() == *id)
             .map(|(&id, _)| id)
             .collect();
@@ -486,7 +494,11 @@ impl Model {
         self.soloed.clear();
         self.speakers.clear();
 
-        let Model { ref mut sounds, ref channels, .. } = *self;
+        let Model {
+            ref mut sounds,
+            ref channels,
+            ..
+        } = *self;
         for (sound_id, sound) in sounds.drain() {
             // Notify threads of sound removal.
             channels.notify_sound_end(sound_id, sound);
@@ -505,7 +517,9 @@ impl Channels {
         let update = move |soundscape: &mut soundscape::Model| {
             soundscape.remove_active_sound(&id);
         };
-        self.soundscape_tx.send(soundscape::UpdateFn::from(update).into()).ok();
+        self.soundscape_tx
+            .send(soundscape::UpdateFn::from(update).into())
+            .ok();
 
         // Detection thread.
         self.detection.remove_sound(id);
@@ -586,7 +600,9 @@ pub fn render(model: &mut Model, buffer: &mut Buffer) {
     // `unmixed_sounds` buffer.
     for (sound_i, ordered_sound) in sounds_ordered.iter_mut().enumerate() {
         let sound_id = ordered_sound.id;
-        let sound = sounds.get_mut(&sound_id).expect("no sound for the given `Id`");
+        let sound = sounds
+            .get_mut(&sound_id)
+            .expect("no sound for the given `Id`");
 
         // Update the ordered sound.
         ordered_sound.channels = sound.channels;
@@ -605,10 +621,7 @@ pub fn render(model: &mut Model, buffer: &mut Buffer) {
         let msg = gui::AudioMonitorMessage::ActiveSound(sound_id, update);
         channels.gui_audio_monitor_msg_tx.push(msg);
 
-        let ActiveSound {
-            ref mut sound,
-            ..
-        } = *sound;
+        let ActiveSound { ref mut sound, .. } = *sound;
 
         // The number of samples to request from the sound for this buffer.
         let num_samples = buffer.len_frames() * sound.channels;
@@ -648,7 +661,9 @@ pub fn render(model: &mut Model, buffer: &mut Buffer) {
             if !cpu_saving_enabled {
                 let mut detection_buffer = channels.detection.pop_sound_buffer();
                 detection_buffer.extend(ordered_sound.unmixed_samples.iter().cloned());
-                channels.detection.update_sound(sound_id, detection_buffer, n_channels);
+                channels
+                    .detection
+                    .update_sound(sound_id, detection_buffer, n_channels);
             }
 
             // If we didn't write the expected number of samples, the sound has been exhausted.
@@ -692,32 +707,21 @@ pub fn render(model: &mut Model, buffer: &mut Buffer) {
                 let speaker_point = &active.speaker.point;
 
                 // Get the current gain by performing DBAP calc.
-                let channel_point_f = Point2 {
-                    x: channel_point.x.0,
-                    y: channel_point.y.0,
-                };
-                let speaker_point_f = Point2 {
-                    x: speaker_point.x.0,
-                    y: speaker_point.y.0,
-                };
+                let channel_point_f = Point2::new(channel_point.x, channel_point.y);
+                let speaker_point_f = Point2::new(speaker_point.x, speaker_point.y);
 
                 // Get the squared distance between the channel and speaker.
-                let distance_2 = dbap::blurred_distance_2(
-                    channel_point_f,
-                    speaker_point_f,
-                    DISTANCE_BLUR,
-                );
+                let distance_2 =
+                    dbap::blurred_distance_2(channel_point_f, speaker_point_f, DISTANCE_BLUR);
 
                 // If this speaker is not within proximity, skip it.
-                if proximity_limit_2 < Metres(distance_2) {
+                if proximity_limit_2 < distance_2 {
                     continue;
                 }
 
                 // Weight the speaker based on whether or not it is assigned.
-                let weight = speaker::dbap_weight(
-                    &sound.installations,
-                    &active.speaker.installations,
-                );
+                let weight =
+                    self::speaker::dbap_weight(&sound.installations, &active.speaker.installations);
 
                 // TODO: Possibly skip speakers with a weight of 0 (as below)?
                 // Uncertain how this will affect DBAP, but may drastically improve CPU.
@@ -746,7 +750,10 @@ pub fn render(model: &mut Model, buffer: &mut Buffer) {
 
                 // Create the `dbap::Speaker` so that we may determine the current gain. This
                 // is done following this loop.
-                let speaker = dbap::Speaker { distance: distance_2, weight };
+                let speaker = dbap::Speaker {
+                    distance: distance_2,
+                    weight,
+                };
                 dbap_speakers.push(speaker);
                 dbap_speaker_infos.push(dbap_speaker_info);
             }
@@ -827,17 +834,17 @@ pub fn render(model: &mut Model, buffer: &mut Buffer) {
     let (mut detection_buffer, mut output_info) = channels.detection.pop_output_buffer();
     detection_buffer.extend(buffer.iter().cloned());
     output_info.speakers.extend({
-        speakers
-            .iter()
-            .map(|(&id, speaker)| {
-                let info = detection::SpeakerInfo {
-                    channel: speaker.channel,
-                    installations: speaker.installations.clone(),
-                };
-                (id, info)
-            })
+        speakers.iter().map(|(&id, speaker)| {
+            let info = detection::SpeakerInfo {
+                channel: speaker.channel,
+                installations: speaker.installations.clone(),
+            };
+            (id, info)
+        })
     });
-    channels.detection.update_output(detection_buffer, buffer.channels(), output_info);
+    channels
+        .detection
+        .update_output(detection_buffer, buffer.channels(), output_info);
 
     // Remove all sounds that have been exhausted.
     for sound_id in exhausted_sounds.drain(..) {
@@ -856,19 +863,21 @@ pub fn render(model: &mut Model, buffer: &mut Buffer) {
 
     // Find the peak amplitude and send it via the monitor channel.
     let peak = buffer.iter().fold(0.0, |peak, &s| s.max(peak));
-    channels.gui_audio_monitor_msg_tx.push(gui::AudioMonitorMessage::Master { peak });
+    channels
+        .gui_audio_monitor_msg_tx
+        .push(gui::AudioMonitorMessage::Master { peak });
 
     // Step the frame count.
     frame_count.fetch_add(buffer.len_frames(), atomic::Ordering::Relaxed);
 }
 
 pub fn channel_point(
-    sound_point: Point2<Metres>,
+    sound_point: Point2,
     channel_index: usize,
     total_channels: usize,
     spread: Metres,
     radians: f32,
-) -> Point2<Metres> {
+) -> Point2 {
     assert!(channel_index < total_channels);
     if total_channels == 1 {
         sound_point
@@ -876,25 +885,22 @@ pub fn channel_point(
         let phase = channel_index as f32 / total_channels as f32;
         let channel_radians_offset = phase * std::f32::consts::PI * 2.0;
         let radians = (radians + channel_radians_offset) as f64;
-        let (rel_x, rel_y) = utils::rad_mag_to_x_y(radians, spread.0);
-        let x = sound_point.x + Metres(rel_x);
-        let y = sound_point.y + Metres(rel_y);
-        Point2 { x, y }
+        let (rel_x, rel_y) = utils::rad_mag_to_x_y(radians, spread);
+        let x: Metres = sound_point.x + (rel_x);
+        let y: Metres = sound_point.y + (rel_y);
+        Point2::new(x, y)
     }
 }
 
 /// Tests whether or not the given speaker position is within the `PROXIMITY_LIMIT` distance of the
 /// given `point` (normally a `Sound`'s channel position).
-pub fn speaker_is_in_proximity(point: &Point2<Metres>, speaker: &Point2<Metres>,
-                               proximity_limit_2: Metres) -> bool {
-    let point_f = Point2 {
-        x: point.x.0,
-        y: point.y.0,
-    };
-    let speaker_f = Point2 {
-        x: speaker.x.0,
-        y: speaker.y.0,
-    };
-    let distance_2 = Metres(point_f.distance2(speaker_f));
+pub fn speaker_is_in_proximity(
+    point: &Point2,
+    speaker: &Point2,
+    proximity_limit_2: Metres,
+) -> bool {
+    let point_f = Point2::new(point.x, point.y);
+    let speaker_f = Point2::new(speaker.x, speaker.y);
+    let distance_2 = point_f.distance(speaker_f);
     distance_2 < proximity_limit_2
 }

@@ -2,12 +2,12 @@
 //!
 //! The input stream has a number of `Source`s that read from one or more of the stream's channels.
 
-use audio::source;
+use crate::audio::source;
 use fxhash::FxHashMap;
 use nannou_audio::Buffer;
 use std::cmp;
-use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
+use std::sync::Arc;
 
 /// Simplified type alias for the nannou audio input stream used by the audio server.
 pub type Stream = nannou_audio::Stream<Model>;
@@ -106,17 +106,17 @@ pub fn capture(model: &mut Model, buffer: &Buffer) {
             }
 
             // Retrieve the empty buffer to use for sending samples.
-            let mut samples = match sound.buffer_rx.try_pop() {
+            let mut samples = match sound.buffer_rx.pop() {
                 // This branch should never be hit but is here just in case.
                 None => {
                     let samples_len = frames_to_take * realtime.channels.len();
                     Vec::with_capacity(samples_len)
-                },
+                }
                 // There should always be a buffer waiting in this channel.
                 Some(mut samples) => {
                     samples.clear();
                     samples
-                },
+                }
             };
 
             // Get the channel range and ensure it is no greater than the buffer len.

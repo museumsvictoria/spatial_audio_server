@@ -1,5 +1,7 @@
-use metres::Metres;
-use utils::Seed;
+use serde::{Deserialize, Serialize};
+
+use crate::metres::Metres;
+use crate::utils::Seed;
 
 /// Various configuration parameters for a single project.
 #[derive(Copy, Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -62,8 +64,8 @@ impl Default for Config {
 
 // Fallback parameters in the case that they are missing from the file or invalid.
 pub mod default {
-    use metres::Metres;
-    use utils::Seed;
+    use crate::metres::Metres;
+    use crate::utils::Seed;
 
     pub fn window_width() -> u32 {
         1280
@@ -87,10 +89,10 @@ pub mod default {
         148.0
     }
     pub fn min_speaker_radius_metres() -> Metres {
-        Metres(0.25)
+        0.25
     }
     pub fn max_speaker_radius_metres() -> Metres {
-        Metres(1.0)
+        1.0
     }
 
     pub fn seed() -> Seed {
@@ -98,6 +100,6 @@ pub mod default {
     }
 
     pub fn proximity_limit() -> Metres {
-        ::audio::DEFAULT_PROXIMITY_LIMIT_2
+        crate::audio::DEFAULT_PROXIMITY_LIMIT_2
     }
 }

@@ -1,40 +1,12 @@
 // Extend the macro recursion limit to allow for many GUI widget IDs.
 #![recursion_limit = "256"]
 
-#[macro_use]
-extern crate conrod_core;
-#[macro_use]
-extern crate conrod_derive;
-extern crate crossbeam;
-#[macro_use]
-extern crate custom_derive;
-extern crate fxhash;
-extern crate hound; // wav loading
-extern crate nannou;
-extern crate nannou_audio;
-extern crate nannou_osc;
-#[macro_use]
-extern crate newtype_derive;
-extern crate num_cpus;
-extern crate pitch_calc;
-extern crate rand_xorshift;
-extern crate rustfft;
-extern crate serde; // serialization
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-extern crate slug;
-extern crate time_calc;
-extern crate threadpool;
-extern crate utils as mindtree_utils;
-extern crate walkdir;
-
 use config::Config;
 use nannou::prelude::*;
 use soundscape::Soundscape;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc};
 use std::sync::atomic::AtomicUsize;
+use std::sync::{mpsc, Arc};
 
 mod audio;
 mod camera;
@@ -43,8 +15,8 @@ mod gui;
 mod installation;
 mod master;
 mod metres;
-mod project;
 mod osc;
+mod project;
 mod soundscape;
 mod utils;
 
@@ -87,42 +59,53 @@ fn model(app: &App) -> Model {
         // We will wake it up if it is necessary to re-instantiate and redraw the GUI.
         app.set_loop_mode(LoopMode::Wait);
     }
+    println!("Starting ...");
 
     // Find the assets directory.
-    let assets = app.assets_path()
-        .expect("could not find assets directory");
+    let assets = app.assets_path().expect("could not find assets directory");
+    println!("Found assets");
 
     // Load the configuration struct.
     let config_path = config_path(&assets);
     let config: Config = utils::load_from_json_or_default(&config_path);
+    println!("Found config");
 
     // Spawn the OSC input thread.
-    let osc_receiver = nannou_osc::receiver(config.osc_input_port)
-        .unwrap_or_else(|err| {
-            panic!("failed to create OSC receiver bound to port {}: {}", config.osc_input_port, err)
-        });
+    let osc_receiver = nannou_osc::receiver(config.osc_input_port).unwrap_or_else(|err| {
+        panic!(
+            "failed to create OSC receiver bound to port {}: {}",
+            config.osc_input_port, err
+        )
+    });
     let (_osc_in_thread_handle, osc_in_log_rx, control_rx) = osc::input::spawn(osc_receiver);
+    println!("spawned osc input thread");
 
     // Spawn the OSC output thread.
     let (_osc_out_thread_handle, osc_out_msg_tx, osc_out_log_rx) = osc::output::spawn();
+    println!("spawned osc output thread");
 
     // A channel for sending active sound info from the audio thread to the GUI.
     let app_proxy = app.create_proxy();
-    let (audio_monitor, audio_monitor_tx, audio_monitor_rx) = gui::monitor::spawn(app_proxy)
-        .expect("failed to spawn audio_monitor thread");
+    let (audio_monitor, audio_monitor_tx, audio_monitor_rx) =
+        gui::monitor::spawn(app_proxy).expect("failed to spawn audio_monitor thread");
+    println!("Spawned gui audio_monitor thread");
 
     // Spawn the thread used for reading wavs.
     let wav_reader = audio::source::wav::reader::spawn();
+    println!("spawned wav file reader");
 
     // A channel for sending and receiving on the soundscape thread.
     let (soundscape_tx, soundscape_rx) = mpsc::channel();
+    println!("created soundscape mpsc channel");
 
     // The playhead frame count shared between GUI, soundscape and audio output thread for
     // synchronising continuous WAV soures.
     let frame_count = Arc::new(AtomicUsize::new(0));
+    println!("made a frame_count Arc<AtomicUsize>");
 
     // Retrieve the audio host.
     let audio_host = audio::host();
+    println!("retrieved the audio host");
 
     // Initialise the audio input model and create the input stream.
     let input_device = audio::find_input_device(&audio_host, &config.target_input_device_name)
@@ -140,6 +123,7 @@ fn model(app: &App) -> Model {
         .device(input_device)
         .build()
         .expect("failed to build audio input stream");
+    println!("created audio input stream");
 
     // Initialise the audio output model and create the output stream.
     let output_device = audio::find_output_device(&audio_host, &config.target_output_device_name)
@@ -163,10 +147,12 @@ fn model(app: &App) -> Model {
         .device(output_device)
         .build()
         .expect("failed to build audio output stream");
+    println!("created audio output stream");
 
     // To be shared between the `Composer` and `GUI` threads as both are responsible for creating
     // sounds and sending them to the audio thread.
     let sound_id_gen = audio::sound::IdGenerator::new();
+    println!("created shared sound id generator");
 
     // Spawn the composer thread.
     let soundscape = soundscape::spawn(
@@ -179,13 +165,16 @@ fn model(app: &App) -> Model {
         audio_output_stream.clone(),
         sound_id_gen.clone(),
     );
+    println!("spawned soundscape thread");
 
     // Create a window.
-    let window = app.new_window()
+    let window = app
+        .new_window()
         .title("Audio Server")
         .size(config.window_width, config.window_height)
         .build()
         .expect("failed to create window");
+    println!("created window");
 
     // Initalise the GUI model.
     let gui_channels = gui::Channels::new(
@@ -210,6 +199,7 @@ fn model(app: &App) -> Model {
         audio_input_channels,
         audio_output_channels,
     );
+    println!("initialised the gui model");
 
     // Now that everything is initialized, kick off the input and output streams.
     //
@@ -222,6 +212,7 @@ fn model(app: &App) -> Model {
     if let Err(err) = audio_output_stream.play() {
         eprintln!("Failed to start playing the audio output stream: {}", err);
     }
+    println!("Started the audio input and audio output streams");
 
     Model {
         soundscape,
@@ -234,13 +225,21 @@ fn model(app: &App) -> Model {
 
 // Update the application in accordance with the given event.
 fn update(_app: &App, model: &mut Model, _update: Update) {
-    let Model { ref mut gui, ref config, .. } = *model;
+    let Model {
+        ref mut gui,
+        ref config,
+        ..
+    } = *model;
     gui.update(&config.project_default);
 }
 
 // Draw the state of the application to the screen.
 fn view(app: &App, model: &Model, frame: Frame) {
-    model.gui.ui.draw_to_frame_if_changed(app, &frame).expect("failed to draw to frame");
+    model
+        .gui
+        .ui
+        .draw_to_frame_if_changed(app, &frame)
+        .expect("failed to draw to frame");
 }
 
 // Re-join with spawned threads on application exit.
@@ -281,13 +280,19 @@ fn exit(app: &App, model: Model) {
     // Wait for the audio monitoring thread to close
     //
     // This should be instant as `GUI` has exited and the receiving channel should be dropped.
-    audio_monitor.join().expect("failed to join audio_monitor thread when exiting");
+    audio_monitor
+        .join()
+        .expect("failed to join audio_monitor thread when exiting");
 
     // Send exit signal to the composer thread.
     let soundscape_thread = soundscape.exit().expect("failed to exit soundscape thread");
-    soundscape_thread.join().expect("failed to join the soundscape thread when exiting");
+    soundscape_thread
+        .join()
+        .expect("failed to join the soundscape thread when exiting");
 
     // Send exit signal to the wav reader thread.
     let wav_reader_thread = wav_reader.exit().expect("failed to exit wav_reader thread");
-    wav_reader_thread.join().expect("failed to join the wav_reader thread when exiting");
+    wav_reader_thread
+        .join()
+        .expect("failed to join the wav_reader thread when exiting");
 }

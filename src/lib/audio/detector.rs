@@ -2,9 +2,11 @@
 //!
 //! Detects RMS and Peak envelopes.
 
-use audio;
-use nannou_audio::sample::{self, ring_buffer};
-use rustfft::num_complex::Complex;
+use dasp::{self as sample};
+use rustfft::{num_complex::Complex, FftDirection};
+use sample::ring_buffer;
+
+use super::SAMPLE_RATE;
 
 // The frame type used within the detectors.
 type FrameType = [f32; 1];
@@ -30,7 +32,7 @@ pub type FftPlanner = super::fft::Planner;
 // RMS is monitored for visualisation, so we want a window size roughly the duration of one frame.
 //
 // A new visual frame is displayed roughly 60 times per second compared to 44_100 audio frames.
-const WINDOW_SIZE: usize = audio::SAMPLE_RATE as usize / 60;
+const WINDOW_SIZE: usize = SAMPLE_RATE as usize / 60;
 
 // The number of frames used to smooth the attack/release of the RMS detection.
 const RMS_ATTACK_FRAMES: f32 = 0.0;
@@ -42,7 +44,7 @@ const PEAK_RELEASE_FRAMES: f32 = WINDOW_SIZE as f32 / 8.0;
 pub const FFT_WINDOW_LEN: usize = 512;
 
 /// The step between each frequency bin is equal to `samplerate / 2 * windowlength`.
-pub const FFT_BIN_STEP_HZ: f64 = audio::SAMPLE_RATE / (2.0 * FFT_WINDOW_LEN as f64);
+pub const FFT_BIN_STEP_HZ: f64 = super::SAMPLE_RATE / (2.0 * FFT_WINDOW_LEN as f64);
 
 /// An envelope detector for a single channel.
 ///
@@ -113,7 +115,13 @@ impl FftDetector {
         fft_planner: &mut FftPlanner,
         fft: &mut Fft,
         freq_amps: &mut [f32],
+        direction: FftDirection,
     ) {
-        fft.process(fft_planner, self.fft_samples.iter().cloned(), freq_amps);
+        fft.process(
+            fft_planner,
+            self.fft_samples.iter().cloned(),
+            freq_amps,
+            direction,
+        );
     }
 }

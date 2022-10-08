@@ -1,5 +1,6 @@
-use audio;
+use crate::audio;
 use hound;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use time_calc::{Ms, SampleHz, Samples};
 
@@ -52,8 +53,12 @@ impl Wav {
         let spec = reader.spec();
         let channels = spec.channels as usize;
         let sample_hz = spec.sample_rate as _;
-        assert_eq!(sample_hz, audio::SAMPLE_RATE,
-                   "WAV files must have a sample rate of {}", audio::SAMPLE_RATE);
+        assert_eq!(
+            sample_hz,
+            audio::SAMPLE_RATE,
+            "WAV files must have a sample rate of {}",
+            audio::SAMPLE_RATE
+        );
         let duration = Samples(reader.duration() as _);
         let playback = default_playback();
         let should_loop = default_should_loop();

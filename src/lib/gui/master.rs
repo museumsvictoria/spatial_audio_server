@@ -1,12 +1,12 @@
 //! A "Master" side-bar widget providing control over master volume and input latency.
 
-use gui::{collapsible_area, Gui};
-use gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
-use project::{self, Project};
-use nannou::ui;
-use nannou::ui::prelude::*;
+use crate::gui::{collapsible_area, Gui};
+use crate::gui::{ITEM_HEIGHT, SMALL_FONT_SIZE};
+use crate::project::{self, Project};
+use nannou_conrod as ui;
+use nannou_conrod::prelude::*;
 use time_calc::Ms;
-use metres::Metres;
+use ui::{widget, Scalar};
 
 pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> widget::Id {
     let Gui {
@@ -18,10 +18,7 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> wi
         ..
     } = *gui;
     let Project {
-        state: project::State {
-            ref mut master,
-            ..
-        },
+        state: project::State { ref mut master, .. },
         ..
     } = *project;
 
@@ -31,7 +28,8 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> wi
     const LATENCY_H: Scalar = ITEM_HEIGHT;
     const DECIBEL_H: Scalar = ITEM_HEIGHT;
     const PROXIMITY_H: Scalar = ITEM_HEIGHT;
-    const MASTER_H: Scalar = PAD + MASTER_VOLUME_H + PAD + LATENCY_H + PAD + DECIBEL_H + PAD + PROXIMITY_H + PAD;
+    const MASTER_H: Scalar =
+        PAD + MASTER_VOLUME_H + PAD + LATENCY_H + PAD + DECIBEL_H + PAD + PROXIMITY_H + PAD;
 
     // The collapsible area widget.
     let is_open = state.is_open.master;
@@ -108,7 +106,10 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> wi
     }
 
     // The realtime source latency slider.
-    let label = format!("Realtime Source Latency: {:.2} ms", master.realtime_source_latency.ms());
+    let label = format!(
+        "Realtime Source Latency: {:.2} ms",
+        master.realtime_source_latency.ms()
+    );
     let max_latency_ms = 2_000.0;
     let ms = master.realtime_source_latency.ms();
     for new_latency in widget::Slider::new(ms, 0.0, max_latency_ms)
@@ -155,11 +156,14 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> wi
             })
             .expect("failed to send updated DBAP rolloff to audio output thread");
     }
-    
+
     // The proximity slider.
     // Proximity limit is stored as a squared value so sqrt() is called here
-    let label = format!("Proximity Limit: {:.2} metres", master.proximity_limit_2.0.sqrt());
-    for new_proximity in widget::Slider::new(master.proximity_limit_2.0.sqrt(), 0.0, 10.0)
+    let label = format!(
+        "Proximity Limit: {:.2} metres",
+        master.proximity_limit_2.sqrt()
+    );
+    for new_proximity in widget::Slider::new(master.proximity_limit_2.sqrt(), 0.0, 10.0)
         .label(&label)
         .label_font_size(SMALL_FONT_SIZE)
         .h(PROXIMITY_H)
@@ -167,20 +171,19 @@ pub fn set(last_area_id: widget::Id, gui: &mut Gui, project: &mut Project) -> wi
         .align_middle_x_of(area.id)
         .down(PAD)
         .set(ids.master_proximity_limit, ui)
-        {
-            // Update the local rolloff.
-            master.proximity_limit_2 = Metres(new_proximity * new_proximity);
+    {
+        // Update the local rolloff.
+        master.proximity_limit_2 = new_proximity * new_proximity;
 
-            // Update the audio output thread's rolloff.
-            channels
-                .audio_output
-                .send(move |audio| {
-                    // The proximity squared (for more efficient distance comparisons).
-                    audio.proximity_limit_2 = Metres(new_proximity * new_proximity);
-                })
+        // Update the audio output thread's rolloff.
+        channels
+            .audio_output
+            .send(move |audio| {
+                // The proximity squared (for more efficient distance comparisons).
+                audio.proximity_limit_2 = new_proximity * new_proximity;
+            })
             .expect("failed to send updated proximity limit to audio output thread");
-        }
-
+    }
 
     area.id
 }

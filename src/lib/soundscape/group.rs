@@ -2,8 +2,9 @@
 //!
 //! Soundscape groups allow for describing rules/constraints for multiple sounds at once.
 
+use crate::utils::Range;
+use serde::{Deserialize, Serialize};
 use time_calc::Ms;
-use utils::Range;
 
 /// A name for a soundscape group.
 #[derive(Clone, Debug, Eq, PartialOrd, Ord, PartialEq, Hash, Deserialize, Serialize)]
@@ -21,8 +22,8 @@ pub struct Group {
 }
 
 pub mod default {
+    use crate::utils::{Range, HR_MS};
     use time_calc::Ms;
-    use utils::{Range, HR_MS};
     pub const OCCURRENCE_RATE: Range<Ms> = Range {
         min: Ms(0.0),
         max: Ms(HR_MS as _),

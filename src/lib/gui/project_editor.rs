@@ -1,13 +1,16 @@
 //! A "Projects" side-bar widget providing allowing the user to create and remove new projects.
 
-use gui::{collapsible_area, Gui, ProjectState, State, TEXT_PAD, ITEM_HEIGHT, SMALL_FONT_SIZE};
-use project::{self, Project};
-use nannou::ui;
-use nannou::ui::prelude::*;
-use osc;
+use crate::gui::{
+    collapsible_area, Gui, ProjectState, State, ITEM_HEIGHT, SMALL_FONT_SIZE, TEXT_PAD,
+};
+use crate::osc;
+use crate::project::{self, Project};
+use nannou_conrod as ui;
+use nannou_conrod::prelude::*;
 use slug::slugify;
 use std::fs;
 use std::path::Path;
+use ui::{color, position, widget, Scalar};
 
 /// State related to the project editor GUI.
 #[derive(Default)]
@@ -26,11 +29,12 @@ pub fn set(
         ref ids,
         ref channels,
         ref assets,
-        state: &mut State {
-            ref mut is_open,
-            ref mut project_editor,
-            ..
-        },
+        state:
+            &mut State {
+                ref mut is_open,
+                ref mut project_editor,
+                ..
+            },
         ..
     } = *gui;
 
@@ -58,11 +62,13 @@ pub fn set(
     area.set(canvas, ui);
 
     let button_w = ui.kid_area_of(area.id).unwrap().w() / 3.0;
-    let button = || widget::Button::new()
-        .color(super::DARK_A)
-        .label_font_size(SMALL_FONT_SIZE)
-        .w(button_w)
-        .h(BUTTON_H);
+    let button = || {
+        widget::Button::new()
+            .color(super::DARK_A)
+            .label_font_size(SMALL_FONT_SIZE)
+            .w(button_w)
+            .h(BUTTON_H)
+    };
 
     // Show the plus button at the bottom of the editor.
     for _click in button()
@@ -80,7 +86,9 @@ pub fn set(
 
         // Create a new default project.
         let new_project = Project::new(assets, default_project_config);
-        new_project.save(assets).expect("failed to create new project directory");
+        new_project
+            .save(assets)
+            .expect("failed to create new project directory");
         new_project.reset_and_sync_all_threads(channels);
         audio_monitor.clear();
         let new_project_state = ProjectState::default();
@@ -105,7 +113,9 @@ pub fn set(
             // Create a new default project.
             let mut new_project = old_project;
             new_project.name = format!("{} copy", new_project.name);
-            new_project.save(assets).expect("failed to create new project directory");
+            new_project
+                .save(assets)
+                .expect("failed to create new project directory");
             new_project.reset_and_sync_all_threads(channels);
             audio_monitor.clear();
             let new_project_state = ProjectState::default();
@@ -140,7 +150,7 @@ pub fn set(
                 .center_justify()
                 .set(ids.project_editor_none, ui);
             return area.id;
-        },
+        }
     };
 
     // If there are no projects, say so!
@@ -218,12 +228,14 @@ pub fn set(
 
                 // If the button or any of its children are capturing the mouse, display
                 // the `remove` button.
-                let show_remove_button = ui.global_input()
+                let show_remove_button = ui
+                    .global_input()
                     .current
                     .widget_capturing_mouse
                     .map(|id| {
                         id == item.widget_id
-                            || ui.widget_graph()
+                            || ui
+                                .widget_graph()
                                 .does_recursive_depth_edge_exist(item.widget_id, id)
                     })
                     .unwrap_or(false);
@@ -264,14 +276,15 @@ pub fn set(
                 }
 
                 // Load the project.
-                let loaded_project = Project::load(assets, &project_directory, default_project_config);
+                let loaded_project =
+                    Project::load(assets, &project_directory, default_project_config);
                 loaded_project.reset_and_sync_all_threads(channels);
                 audio_monitor.clear();
                 let loaded_project_state = ProjectState::default();
                 selected_project_slug = Some(slugify(&loaded_project.name));
                 project_editor.text_box_name = loaded_project.name.clone();
                 *project = Some((loaded_project, loaded_project_state));
-            },
+            }
 
             _ => (),
         }
@@ -294,7 +307,11 @@ pub fn set(
 
         // Remove the project directory.
         if let Err(err) = fs::remove_dir_all(&directory) {
-            eprintln!("failed to remove project directory `{}`: \"{}\"", directory.display(), err);
+            eprintln!(
+                "failed to remove project directory `{}`: \"{}\"",
+                directory.display(),
+                err
+            );
         }
 
         // Select the next project if there is one.
@@ -317,15 +334,21 @@ pub fn set(
             channels
                 .soundscape
                 .send(move |soundscape| soundscape.clear_project_specific_data())
-                .expect("failed to send `clear_project_specific_data` message to soundscape thread");
+                .expect(
+                    "failed to send `clear_project_specific_data` message to soundscape thread",
+                );
             channels
                 .audio_input
                 .send(move |audio| audio.clear_project_specific_data())
-                .expect("failed to send `clear_project_specific_data` message to audio input thread");
+                .expect(
+                    "failed to send `clear_project_specific_data` message to audio input thread",
+                );
             channels
                 .audio_output
                 .send(move |audio| audio.clear_project_specific_data())
-                .expect("failed to send `clear_project_specific_data` message to audio output thread");
+                .expect(
+                    "failed to send `clear_project_specific_data` message to audio output thread",
+                );
             channels
                 .osc_out_msg_tx
                 .push(osc::output::Message::ClearProjectSpecificData);
@@ -373,7 +396,8 @@ pub fn set(
                     let projects_directory = project::projects_directory(assets);
                     if is_name_valid(&projects_directory, &project_editor.text_box_name) {
                         let current_dir = projects_directory.join(slugify(&project.name));
-                        let renamed_dir = projects_directory.join(slugify(&project_editor.text_box_name));
+                        let renamed_dir =
+                            projects_directory.join(slugify(&project_editor.text_box_name));
                         if let Err(err) = fs::rename(&current_dir, &renamed_dir) {
                             eprintln!(
                                 "failed to rename \"{}\" to \"{}\": \"{}\"",
@@ -386,7 +410,7 @@ pub fn set(
                         }
                     }
                 }
-            },
+            }
         }
     }
 
